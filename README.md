@@ -273,25 +273,24 @@ Por ciclo `N`:
 
 ## 8. Diagrama do ciclo
 
-```text
-        ┌─────────────── Fase 0: PERGUNTAS (ask_user) ───────────────┐
-        │  objetivo · público · formato · escopo · ciclos máx · ...  │
-        └────────────────────────────┬───────────────────────────────┘
-                                     ▼
-                 Fase 1/2: brief.md + geração dos agentes .md
-                                     ▼
-   ┌──────────────────────────  CICLO N  ──────────────────────────────┐
-   │  1) Coordenador → AUTORES (paralelo) → escrevem em output\         │
-   │  2) Consolida output\<doc>.md  + cycle-0N-authors.md              │
-   │  3) Coordenador → REVISORES → notas D- a A+ por tópico            │
-   │     + sugestões → cycle-0N-review.md                             │
-   │  4) Coordenador → RUBBER DUCK → cycle-0N-rubberduck.md           │
-   │  5) Portão: todo tópico ≥ A  E  sem achado crítico?              │
-   └───────────────┬───────────────────────────────┬──────────────────┘
-          não ────►│ N+1, devolve melhorias          │◄──── sim
-        (tópicos < A + achados do duck)               ▼
-                                          Fase 4: ENTREGA (output + final-report)
-        bateu max_cycles sem aprovar tudo ─────► ESCALA AO USUÁRIO
+```mermaid
+flowchart TD
+    A["Fase 0<br/>Perguntas de enquadramento<br/><small>objetivo, público, formato, escopo, fontes, ciclos</small>"]
+    B["Fase 1<br/>Setup do swarm<br/><small>pastas + brief.md + tópicos avaliados</small>"]
+    C["Fase 2<br/>Gerar agentes declarativos<br/><small>autores, revisores, coordenador, rubber duck + modelos</small>"]
+    D["Autores<br/><small>pesquisam, escrevem seções e registram fontes</small>"]
+    E["Coordenador<br/><small>consolida output, índice e fontes</small>"]
+    F["Revisores<br/><small>nota D- a A+ por tópico + sugestão acionável</small>"]
+    G["Rubber duck<br/><small>audita lógica, lacunas, fontes e notas</small>"]
+    H{"Todos os tópicos >= A<br/>e sem achado crítico?"}
+    I["Ciclo N+1<br/><small>corrigir tópicos abaixo de A e achados do duck</small>"]
+    J["Fase 4<br/>Entrega final<br/><small>output + final-report</small>"]
+    K["Escala ao usuário<br/><small>max_cycles atingido sem aprovação</small>"]
+
+    A --> B --> C --> D --> E --> F --> G --> H
+    H -- "sim" --> J
+    H -- "não" --> I --> D
+    I -. "se bater max_cycles" .-> K
 ```
 
 ---
