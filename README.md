@@ -8,7 +8,8 @@
 Skill do **Copilot CLI** que monta um **enxame de agentes declarativos** (autores,
 revisores, coordenador e rubber duck) para produzir um documento de alta
 qualidade sobre **qualquer tema**, em **ciclos de melhoria iterativa** até que
-**todos os tópicos avaliados atinjam nota mínima A**.
+**todos os tópicos avaliados atinjam nota mínima A**. Ao enumerar os agentes, a
+skill também escolhe e registra o melhor modelo para cada um.
 
 > Skill (fonte da verdade): `SKILL.md` (na raiz deste repo)
 > Saída dos swarms: por padrão `<clone>\swarms\<YYYY-MM-DD>-SWARM-<XX>\`
@@ -69,12 +70,13 @@ inspirado em uma redação editorial:
 1. **Pergunta** o que precisa saber sobre o tema (enquadramento).
 2. **Identifica os perfis de autor** necessários para cobrir o assunto.
 3. **Identifica os perfis de revisão** (dimensões de qualidade).
-4. **Gera todos os agentes** como `.md` declarativos.
-5. O **coordenador** roda os autores → monta o documento → roda os revisores.
-6. Revisores dão **nota D‑ a A+ por tópico** + sugestão de melhoria.
-7. O coordenador **devolve aos autores** as melhorias e repete o ciclo.
-8. Um **rubber duck** revisa o trabalho de todos a cada ciclo.
-9. Encerra quando **todos os tópicos ficam ≥ A** (ou escala ao usuário).
+4. **Escolhe o melhor modelo para cada agente** e registra a justificativa.
+5. **Gera todos os agentes** como `.md` declarativos.
+6. O **coordenador** roda os autores → monta o documento → roda os revisores.
+7. Revisores dão **nota D‑ a A+ por tópico** + sugestão de melhoria.
+8. O coordenador **devolve aos autores** as melhorias e repete o ciclo.
+9. Um **rubber duck** revisa o trabalho de todos a cada ciclo.
+10. Encerra quando **todos os tópicos ficam ≥ A** (ou escala ao usuário).
 
 A premissa central: **qualidade vem de especialização + revisão iterativa com
 régua dura + evidência verificável**, não de uma única passada.
@@ -103,6 +105,11 @@ Todo agente é um arquivo `.md` autocontido com **frontmatter YAML** (metadados)
 corpo (persona, missão, como trabalhar, padrão de qualidade). O `.md` **é** a
 especificação do agente; a execução despacha esse `.md` como prompt de um
 subagente (`task`, tipo `general-purpose`).
+
+O frontmatter também declara o modelo escolhido para aquele agente
+(`model`, `reasoning_effort`, `context_tier` quando aplicável) e uma
+`model_rationale` curta. A decisão consolidada fica em
+`reports\agent-models.md`.
 
 | Agente | Quantos | Papel |
 |---|---|---|
@@ -136,6 +143,15 @@ Revisor transversal. Caça o que cada agente sozinho não vê: erros de lógica,
 contradições entre seções, vieses, lacunas de escopo, **notas mal calibradas** e
 **fontes que não sustentam as afirmações**. Um achado **Crítico** força novo
 ciclo mesmo com todos os tópicos em A.
+
+### 3.5 Seleção de modelo por agente
+
+Ao enumerar os agentes, a skill escolhe o melhor modelo para cada papel em vez de
+usar um padrão único para todos. A escolha considera: complexidade de raciocínio,
+volume de contexto, risco técnico/regulatório, necessidade editorial e diversidade
+entre autores, revisores e rubber duck. Revisores críticos e rubber duck devem,
+quando possível, usar uma família de modelo diferente dos autores principais para
+reduzir cegueira coletiva.
 
 ---
 
@@ -193,6 +209,7 @@ uma subpasta `<YYYY-MM-DD>-SWARM-<XX>` (`XX` sequencial **por dia**: `01`, `02`,
 │     ├─ reviewer-01-<slug>.md   # um por perfil de revisor
 │     └─ reviewer-02-<slug>.md
 ├─ reports\
+│  ├─ agent-models.md            # agente, modelo escolhido e justificativa
 │  ├─ cycle-01-authors.md        # o que cada autor entregou no ciclo
 │  ├─ cycle-01-review.md         # notas D- a A+ por tópico + sugestões
 │  ├─ cycle-01-rubberduck.md     # achados do rubber duck
@@ -222,21 +239,25 @@ ciclos** (padrão 5). Sem resposta → padrão sensato registrado no `brief.md`.
    importância"** (os itens que o portão A exige).
 
 ### Fase 2 — Perfis e geração dos agentes
-1. Identifica **3–6 autores** complementares → gera `.md` em `agents\authors\`.
-2. Identifica **3–5 revisores** (dimensões) → gera `.md` em `agents\reviewers\`.
-3. Gera `agents\coordinator.md`.
-4. Gera `agents\rubber-duck.md`.
+1. Identifica **3–6 autores** complementares, escolhe o modelo de cada um e gera
+   `.md` em `agents\authors\`.
+2. Identifica **3–5 revisores** (dimensões), escolhe o modelo de cada um e gera
+   `.md` em `agents\reviewers\`.
+3. Escolhe o modelo de coordenação e gera `agents\coordinator.md`.
+4. Escolhe o modelo do rubber duck e gera `agents\rubber-duck.md`.
+5. Registra a matriz completa em `reports\agent-models.md`.
 
 ### Fase 3 — Loop de produção (você é o Coordenador)
 Por ciclo `N`:
-1. **Despacha autores** (subagentes em paralelo quando independentes) com o
-   `.md` do autor + `brief.md` + tópicos dele + (ciclo ≥ 2) sugestões dos
-   revisores. Eles escrevem em `output\`.
+1. **Despacha autores** (subagentes em paralelo quando independentes) usando o
+   modelo declarado no frontmatter, com o `.md` do autor + `brief.md` + tópicos
+   dele + (ciclo ≥ 2) sugestões dos revisores. Eles escrevem em `output\`.
 2. **Consolida** `output\<doc>.md` + `reports\cycle-0N-authors.md`.
-3. **Despacha revisores** → notas D‑…A+ por tópico + sugestões →
-   `reports\cycle-0N-review.md` (matriz tópico × revisor + nota mínima).
-4. **Despacha rubber duck** → `reports\cycle-0N-rubberduck.md`. Achado crítico
-   vira melhoria obrigatória.
+3. **Despacha revisores** usando os modelos declarados → notas D‑…A+ por tópico +
+   sugestões → `reports\cycle-0N-review.md` (matriz tópico × revisor + nota
+   mínima).
+4. **Despacha rubber duck** usando o modelo declarado →
+   `reports\cycle-0N-rubberduck.md`. Achado crítico vira melhoria obrigatória.
 5. **Portão:** todos os tópicos ≥ A **e** sem achado crítico → Fase 4. Senão,
    `N+1` e volta ao passo 1 só com os tópicos < A + achados do rubber duck.
 6. **Trava:** ao bater `max_cycles` sem aprovar tudo, **para e escala ao
@@ -244,7 +265,8 @@ Por ciclo `N`:
 
 ### Fase 4 — Entrega
 1. Finaliza `output\<documento-final>.md` (índice + bibliografia).
-2. Escreve `reports\final-report.md` (ciclos, matriz final ≥ A, nº de fontes).
+2. Escreve `reports\final-report.md` (ciclos, matriz final ≥ A, nº de fontes,
+   perfis e modelos usados).
 3. Responde ao usuário com caminhos + resumo curto.
 
 ---
@@ -284,7 +306,10 @@ frontmatter de cada tipo:
 name: author-<XX>-<slug>
 kind: author
 role: <Perfil>
-model: claude-sonnet-4.6
+model: <modelo escolhido>
+reasoning_effort: <se suportado pelo modelo>
+context_tier: <default|long_context>
+model_rationale: "<por que este modelo é o melhor para este autor>"
 swarm: <swarm_id>
 sources_min: 5
 ```
@@ -294,7 +319,10 @@ sources_min: 5
 name: reviewer-<XX>-<slug>
 kind: reviewer
 role: <Dimensão>
-model: claude-sonnet-4.6
+model: <modelo escolhido>
+reasoning_effort: <se suportado pelo modelo>
+context_tier: <default|long_context>
+model_rationale: "<por que este modelo é o melhor para este revisor>"
 swarm: <swarm_id>
 sources_min: 5
 scale: "D- D D+ C- C C+ B- B B+ A- A A+"
@@ -305,7 +333,10 @@ gate: "A"
 ```yaml
 name: coordinator
 kind: coordinator
-model: claude-sonnet-4.6
+model: <modelo escolhido>
+reasoning_effort: <se suportado pelo modelo>
+context_tier: <default|long_context>
+model_rationale: "<por que este modelo é o melhor para coordenação>"
 swarm: <swarm_id>
 gate: "A"
 max_cycles: 5
@@ -315,7 +346,10 @@ max_cycles: 5
 ```yaml
 name: rubber-duck
 kind: rubber-duck
-model: claude-sonnet-4.6
+model: <modelo escolhido>
+reasoning_effort: <se suportado pelo modelo>
+context_tier: <default|long_context>
+model_rationale: "<por que este modelo é o melhor para auditoria transversal>"
 swarm: <swarm_id>
 ```
 
@@ -386,7 +420,10 @@ público de arquitetos de segurança"*.
 
 - [ ] Pasta do swarm criada com a árvore completa.
 - [ ] `brief.md` com perguntas respondidas e tópicos de importância.
-- [ ] 3–6 autores + 3–5 revisores + coordenador + rubber duck, todos `.md`.
+- [ ] 3–6 autores + 3–5 revisores + coordenador + rubber duck, todos `.md`, cada
+      um com modelo escolhido e justificativa.
+- [ ] `reports\agent-models.md` com agente, papel, modelo, esforço/contexto e
+      justificativa.
 - [ ] Ciclos registrados em `reports\` (authors, review, rubberduck por ciclo).
 - [ ] **Todos** os tópicos com nota final **≥ A** (ou escalonado).
 - [ ] Cada agente com **≥ 5 fontes verificadas (HTTP 200)** em

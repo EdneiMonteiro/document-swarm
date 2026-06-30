@@ -1,6 +1,6 @@
 ---
 name: document-swarm
-description: "Use this skill whenever the user asks to implement, create, or write a substantial document about any topic (whitepaper, technical guide, report, RFC, policy, comparison), OR to evolve/expand/update an EXISTING swarm document (add diagrams, sections, maturity models, templates, etc.). Triggers include: 'implemente um documento sobre <tema>', 'crie/escreva um documento sobre <tema>', 'monte um swarm para escrever sobre <tema>', 'preciso de um documento completo sobre <tema>', 'quero um whitepaper/relatório/guia técnico sobre <tema>', 'evolua o documento/playbook <id>', 'adicione <X> ao swarm <id>', 'atualize/expanda o documento existente'. The skill asks framing questions, identifies author profiles and turns each into a declarative .md agent, creates a coordinator and reviewer agents plus a rubber-duck agent, then runs author→review cycles grading each topic D- to A+ until all topics reach at least A. For existing documents it runs in EVOLUTION mode: assess whether new authors/reviewers are needed, generate them, then the coordinator re-activates ALL agents (existing + new) to keep the whole deliverable uniform. Output goes to the resolved output root (an explicit user-provided target, the DOCSWARM_ROOT env var, or by default a 'swarms' subfolder inside the document-swarm clone). Do NOT use for short text like a single paragraph or an email."
+description: "Use when the user asks for a substantial document (playbook, whitepaper, report, RFC, policy, technical guide, comparison) or to evolve an existing swarm document. The skill first asks framing questions, then creates declarative author, reviewer, coordinator and rubber-duck agents with an explicit model choice for each; runs evidence-based author-review cycles until every evaluated topic reaches at least A; and writes outputs under an explicit target, DOCSWARM_ROOT, or the clone's swarms folder. Do not use for short text such as a paragraph or email."
 ---
 
 # Document Swarm Skill
@@ -42,20 +42,23 @@ e revisão iterativa.
    duck) é materializado como um arquivo `.md` autocontido. O documento `.md` é a
    especificação do agente; a execução é feita despachando esse `.md` como prompt
    de um subagente (ferramenta `task`, tipo `general-purpose`).
-2. **Human-in-the-loop no início** — sempre faça as perguntas de enquadramento
+2. **Modelo explícito por agente** — ao enumerar os agentes necessários, escolha
+   e registre o **melhor modelo para cada agente** (não um padrão único cego),
+   incluindo a justificativa no frontmatter e no plano de agentes.
+3. **Human-in-the-loop no início** — sempre faça as perguntas de enquadramento
    ANTES de gerar qualquer agente. Não presuma escopo, público ou profundidade.
-3. **Evidência obrigatória** — **todo** agente (autores e revisores) deve
+4. **Evidência obrigatória** — **todo** agente (autores e revisores) deve
    consultar **no mínimo 5 fontes online funcionais e verificadas** (documentação
    oficial, blogs de referência, artigos acadêmicos, normas). Toda fonte citada
    precisa ter URL **verificado como acessível** (HTTP 200 via `web_fetch`) na
    data de uso. Fonte quebrada ou inventada é falha grave.
-4. **Qualidade com régua** — revisores dão nota de **D-** até **A+** por tópico,
+5. **Qualidade com régua** — revisores dão nota de **D-** até **A+** por tópico,
    com sugestão de melhoria acionável. O ciclo se repete até **todos** os tópicos
    avaliados ficarem **≥ A** (A ou A+; **A- não passa**).
-5. **Rubber duck transversal** — um agente rubber duck revisa o trabalho de
+6. **Rubber duck transversal** — um agente rubber duck revisa o trabalho de
    TODOS os agentes (coordenador, autores, revisores) a cada ciclo, caçando
    falhas de lógica, vieses, lacunas e contradições que escaparam.
-6. **Tudo rastreável** — cada ciclo produz relatórios versionados em `/reports`.
+7. **Tudo rastreável** — cada ciclo produz relatórios versionados em `/reports`.
 
 ## Estrutura de saída
 
@@ -91,6 +94,7 @@ raiz das entregas. Cada pedido ganha uma subpasta:
 │     ├─ reviewer-01-<slug>.md   # um por perfil de revisor
 │     └─ reviewer-02-<slug>.md
 ├─ reports\
+│  ├─ agent-models.md            # matriz: agente, modelo escolhido e motivo
 │  ├─ cycle-01-authors.md        # o que cada autor entregou no ciclo
 │  ├─ cycle-01-review.md         # notas D- a A+ por tópico + sugestões
 │  ├─ cycle-01-rubberduck.md     # achados do rubber duck
@@ -117,6 +121,44 @@ D-  D  D+   C-  C  C+   B-  B  B+   A-  A  A+
 - **A- NÃO passa** — exige mais um ciclo de melhoria naquele tópico.
 - Cada nota vem **sempre** acompanhada de: (a) justificativa curta, (b) sugestão
   de melhoria **acionável** (o que mudar, não só "melhore").
+
+## Seleção de modelo por agente
+
+Ao identificar perfis na Fase 2 ou novos agentes na Fase E, defina também o
+modelo ideal de cada agente. Use somente modelos disponíveis na ferramenta `task`
+da sessão atual; se um modelo preferido não estiver disponível, escolha o
+equivalente mais próximo e registre a substituição.
+
+Para cada agente, registre:
+
+- `model`: modelo escolhido.
+- `reasoning_effort`: esforço de raciocínio quando suportado pelo modelo
+  escolhido; omita quando não suportado.
+- `context_tier`: `default` ou `long_context`, conforme a quantidade de material
+  que o agente precisa ler.
+- `model_rationale`: uma frase curta explicando por que aquele modelo é o melhor
+  para a missão do agente.
+
+Critérios de escolha:
+
+| Necessidade do agente | Preferência de modelo |
+|---|---|
+| Coordenação, trade-offs difíceis, síntese de muitos achados | modelo forte de raciocínio; use esforço alto quando suportado |
+| Autor com pesquisa extensa, documento longo ou muitas fontes | modelo com boa escrita e `long_context` quando suportado |
+| Autor técnico/regulatório/arquitetural de alto risco | modelo de maior precisão e raciocínio disponível |
+| Revisor de precisão, segurança, governança ou fontes | modelo crítico, preferencialmente de família diferente dos autores principais |
+| Revisor de clareza, narrativa, didática ou UX do documento | modelo forte em linguagem e estrutura editorial |
+| Rubber duck transversal | modelo mais crítico disponível, idealmente diferente do coordenador, com esforço alto |
+
+Evite usar o mesmo modelo para todos sem justificativa. A diversidade entre
+autores, revisores e rubber duck reduz cegueira coletiva; quando repetir um
+modelo, explique que ele é a melhor opção para aquele papel específico.
+
+Grave a decisão em `reports\agent-models.md` antes de despachar agentes:
+
+| Agente | Papel | Modelo | Effort | Contexto | Justificativa |
+|---|---|---|---|---|---|
+| author-01-... | ... | ... | ... | ... | ... |
 
 ## Fluxo de execução
 
@@ -163,13 +205,19 @@ decide a composição do enxame para a evolução:
   esse perfil. Se a evolução exige uma especialidade nova (ex.: "diagramas de
   arquitetura" → **Arquiteto/Diagramador**; "modelo de maturidade + assessment" →
   **Especialista em Maturidade & Assessment**), **gere novos autores** com o
-  Template de Autor (numerando na sequência: `author-07`, `author-08`, ...).
+  Template de Autor (numerando na sequência: `author-07`, `author-08`, ...) e
+  escolha o melhor modelo para cada um usando a seção **Seleção de modelo por
+  agente**.
 - Da mesma forma, avalie se é preciso uma **nova dimensão de revisão** (ex.:
   **Revisor de Diagramas & Visualização** para validar sintaxe Mermaid e fidelidade
-  arquitetural). Se sim, gere `reviewer-06`, etc., com o Template de Revisor.
+  arquitetural). Se sim, gere `reviewer-06`, etc., com o Template de Revisor e
+  selecione o modelo ideal dessa dimensão de revisão.
 - Registre a decisão (quais agentes novos e por quê) em
-  `reports\evo-<MM>-plan.md`. Se nenhum agente novo for necessário, diga isso
-  explicitamente e justifique.
+  `reports\evo-<MM>-plan.md` e atualize `reports\agent-models.md` com agentes
+  novos, modelo, esforço/contexto e justificativa. Se nenhum agente novo for
+  necessário, diga isso explicitamente e justifique.
+- Se a evolução mudar substancialmente o papel de um agente existente, reavalie
+  também o modelo dele e registre a alteração em `reports\agent-models.md`.
 
 **E.2 — Atualizar o `brief.md`.** Acrescente uma seção "Evolução `<EVO-XX>`" com:
 a data, o pedido, os novos tópicos (se houver, ex.: `T13 Diagramas`,
@@ -224,7 +272,8 @@ evolução (o que mudou, agentes adicionados, novos tópicos e suas notas).
 1. **Autores:** a partir do tema, identifique de **3 a 6 perfis** complementares
    que, juntos, cobrem o assunto com profundidade (ex.: para "Zero Trust no
    Azure": Arquiteto de Identidade, Engenheiro de Rede, Especialista em
-   Compliance, Redator Técnico). Para CADA perfil, gere um `.md` em
+   Compliance, Redator Técnico). Para CADA perfil, escolha o melhor modelo,
+   registre a justificativa em `reports\agent-models.md`, e gere um `.md` em
    `agents\authors\` usando o **Template de Autor**.
 2. **Revisores:** identifique de **3 a 5 perfis de revisão** que cubram dimensões
    distintas de qualidade. Sugestão de base (ajuste ao tema):
@@ -233,12 +282,15 @@ evolução (o que mudou, agentes adicionados, novos tópicos e suas notas).
    - **Completude & escopo** (nada faltando, nada fora do escopo).
    - **Aderência ao público** (nível, tom, utilidade prática).
    - **Fontes & evidências** (≥5 fontes funcionais, citação correta, atualidade).
-   Para CADA perfil, gere um `.md` em `agents\reviewers\` usando o **Template de
-   Revisor**.
-3. **Coordenador:** gere `agents\coordinator.md` usando o **Template de
-   Coordenador**.
-4. **Rubber duck:** gere `agents\rubber-duck.md` usando o **Template de Rubber
-   Duck**.
+   Para CADA perfil, escolha o melhor modelo, registre a justificativa em
+   `reports\agent-models.md`, e gere um `.md` em `agents\reviewers\` usando o
+   **Template de Revisor**.
+3. **Coordenador:** escolha o modelo de coordenação, registre em
+   `reports\agent-models.md` e gere `agents\coordinator.md` usando o **Template
+   de Coordenador**.
+4. **Rubber duck:** escolha um modelo crítico/transversal (preferencialmente
+   diverso do coordenador), registre em `reports\agent-models.md` e gere
+   `agents\rubber-duck.md` usando o **Template de Rubber Duck**.
 
 ### Fase 3 — Loop de produção (você atua como Coordenador)
 
@@ -246,7 +298,8 @@ Você, executando a skill, **é o coordenador**. Siga o que `coordinator.md`
 declara. Para cada ciclo `N` (começando em 1):
 
 1. **Despachar autores.** Para cada autor, lance um subagente `task`
-   (`general-purpose`), passando o conteúdo do `.md` do autor como prompt, mais:
+   (`general-purpose`) usando `model`, `reasoning_effort` e `context_tier` do
+   frontmatter do agente, e passando o conteúdo do `.md` do autor como prompt, mais:
    o `brief.md`, a seção/tópicos sob responsabilidade dele e — a partir do ciclo
    2 — as **sugestões de melhoria** dos revisores para os tópicos dele. Cada
    autor escreve/atualiza sua parte direto no `output\` e registra suas fontes.
@@ -254,14 +307,16 @@ declara. Para cada ciclo `N` (começando em 1):
 2. **Montar o documento.** Consolide as contribuições em `output\<doc>.md` (TOC,
    seções na ordem certa, fontes unificadas em `sources\sources-index.md`).
    Registre `reports\cycle-0N-authors.md`.
-3. **Despachar revisores.** Para cada revisor, lance um subagente `task` passando
-   o `.md` do revisor + o documento atual. Cada revisor devolve, para **cada
-   tópico de importância** do `brief`, uma **nota D- a A+** + justificativa +
-   sugestão acionável. Consolide em `reports\cycle-0N-review.md` com uma matriz
-   tópico × revisor e a **nota mínima por tópico** (a que vale para o portão).
-4. **Despachar rubber duck.** Lance o subagente rubber duck para revisar o
-   trabalho de coordenador + autores + revisores do ciclo (consistência das
-   notas, fontes realmente verificadas, lacunas, vieses). Salve
+3. **Despachar revisores.** Para cada revisor, lance um subagente `task` usando
+   os parâmetros de modelo do frontmatter e passando o `.md` do revisor + o
+   documento atual. Cada revisor devolve, para **cada tópico de importância** do
+   `brief`, uma **nota D- a A+** + justificativa + sugestão acionável. Consolide
+   em `reports\cycle-0N-review.md` com uma matriz tópico × revisor e a **nota
+   mínima por tópico** (a que vale para o portão).
+4. **Despachar rubber duck.** Lance o subagente rubber duck usando os parâmetros
+   de modelo do frontmatter para revisar o trabalho de coordenador + autores +
+   revisores do ciclo (consistência das notas, fontes realmente verificadas,
+   lacunas, vieses). Salve
    `reports\cycle-0N-rubberduck.md`. Achados críticos do rubber duck viram
    melhorias obrigatórias no próximo ciclo, mesmo em tópicos já com A.
 5. **Avaliar o portão.** Se **todos** os tópicos estão **≥ A** E o rubber duck
@@ -276,7 +331,7 @@ declara. Para cada ciclo `N` (começando em 1):
 
 1. Finalize `output\<documento-final>.md` (limpo, com índice e bibliografia).
 2. Escreva `reports\final-report.md`: nº de ciclos, matriz final de notas (todas
-   ≥ A), nº de fontes verificadas, perfis usados e principais decisões.
+   ≥ A), nº de fontes verificadas, perfis/modelos usados e principais decisões.
 3. Responda ao usuário com o caminho do swarm, do documento e um resumo curto
    (não cole o documento inteiro no chat salvo pedido).
 
@@ -304,7 +359,10 @@ declara. Para cada ciclo `N` (começando em 1):
 name: author-<XX>-<slug>
 kind: author
 role: <Perfil, ex.: Arquiteto de Identidade>
-model: claude-sonnet-4.6
+model: <modelo escolhido>
+reasoning_effort: <se suportado pelo modelo; ex.: high>
+context_tier: <default|long_context>
+model_rationale: "<por que este modelo é o melhor para este autor>"
 swarm: <swarm_id>
 sources_min: 5
 ---
@@ -354,7 +412,10 @@ descrito em `brief.md`, no nível e tom definidos para o público-alvo.
 name: reviewer-<XX>-<slug>
 kind: reviewer
 role: <Dimensão, ex.: Precisão técnica>
-model: claude-sonnet-4.6
+model: <modelo escolhido>
+reasoning_effort: <se suportado pelo modelo; ex.: high>
+context_tier: <default|long_context>
+model_rationale: "<por que este modelo é o melhor para este revisor>"
 swarm: <swarm_id>
 sources_min: 5
 scale: "D- D D+ C- C C+ B- B B+ A- A A+"
@@ -397,7 +458,10 @@ próprias fontes (tabela ≥ 5, com verificação).
 ---
 name: coordinator
 kind: coordinator
-model: claude-sonnet-4.6
+model: <modelo escolhido>
+reasoning_effort: <se suportado pelo modelo; ex.: high>
+context_tier: <default|long_context>
+model_rationale: "<por que este modelo é o melhor para coordenação>"
 swarm: <swarm_id>
 gate: "A"
 max_cycles: <n, padrão 5>
@@ -410,15 +474,18 @@ Orquestrar autores, revisores e o rubber duck para entregar o documento do
 `brief.md` com **todos os tópicos de importância ≥ A**, no menor nº de ciclos.
 
 ## Loop (por ciclo N)
-1. **Autores:** despache cada autor (subagente `general-purpose`), passando o
+1. **Autores:** despache cada autor (subagente `general-purpose`) usando o
+   `model`, `reasoning_effort` e `context_tier` do frontmatter dele, passando o
    `.md` do autor + `brief.md` + tópicos dele + (ciclo ≥ 2) as sugestões dos
    revisores. Agentes independentes em paralelo. Eles escrevem em `output\`.
 2. **Consolidar:** monte `output\<doc>.md` (índice, ordem, fontes unificadas) e
    registre `reports\cycle-0N-authors.md`.
-3. **Revisores:** despache cada revisor com o documento atual. Colete notas
-   D-…A+ por tópico + sugestões. Consolide `reports\cycle-0N-review.md` com a
-   matriz tópico × revisor e a **nota mínima por tópico**.
-4. **Rubber duck:** despache o rubber duck sobre o trabalho de todos. Salve
+3. **Revisores:** despache cada revisor usando os parâmetros de modelo do
+   frontmatter dele com o documento atual. Colete notas D-…A+ por tópico +
+   sugestões. Consolide `reports\cycle-0N-review.md` com a matriz tópico ×
+   revisor e a **nota mínima por tópico**.
+4. **Rubber duck:** despache o rubber duck usando os parâmetros de modelo do
+   frontmatter dele sobre o trabalho de todos. Salve
    `reports\cycle-0N-rubberduck.md`. Achados críticos viram melhorias
    obrigatórias.
 5. **Portão:** se todo tópico ≥ A e sem achado crítico do rubber duck → entregar.
@@ -447,7 +514,10 @@ Orquestrar autores, revisores e o rubber duck para entregar o documento do
 ---
 name: rubber-duck
 kind: rubber-duck
-model: claude-sonnet-4.6
+model: <modelo escolhido>
+reasoning_effort: <se suportado pelo modelo; ex.: high>
+context_tier: <default|long_context>
+model_rationale: "<por que este modelo é o melhor para auditoria transversal>"
 swarm: <swarm_id>
 ---
 
@@ -485,7 +555,9 @@ fontes que não sustentam as afirmações.
       `output`).
 - [ ] `brief.md` com perguntas respondidas e tópicos de importância listados.
 - [ ] 3–6 agentes de autor + 3–5 agentes de revisor + coordenador + rubber duck,
-      todos como `.md` declarativos.
+      todos como `.md` declarativos, cada um com modelo escolhido e justificativa.
+- [ ] `reports\agent-models.md` registra agente, papel, modelo, esforço/contexto
+      e justificativa de escolha.
 - [ ] Ciclos registrados em `reports\` (authors, review, rubberduck por ciclo).
 - [ ] **Todos** os tópicos de importância com nota final **≥ A** (ou escalonado
       ao usuário se bater `max_cycles`).
@@ -502,6 +574,7 @@ Depois de concluir, responda com:
 Swarm concluído: `<OUTPUT_ROOT>\<swarm_id>\`
 
 Documento: `output\<doc>.md`
+Modelos dos agentes: `reports\agent-models.md`
 Ciclos: <N>   |   Tópicos avaliados: <k> (todos ≥ A)
 Autores: <lista de perfis>   |   Revisores: <lista de dimensões>
 Fontes verificadas: <total>
