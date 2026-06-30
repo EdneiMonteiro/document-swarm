@@ -1,5 +1,10 @@
 # Document Swarm 🐝
 
+[![ORCID](https://img.shields.io/badge/ORCID-0009--0006--0765--4201-A6CE39?logo=orcid&logoColor=white)](https://orcid.org/0009-0006-0765-4201)
+[![License: CC BY 4.0](https://img.shields.io/badge/License-CC%20BY%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)
+[![GitHub Copilot CLI](https://img.shields.io/badge/GitHub%20Copilot-CLI%20Skill-000000?logo=githubcopilot&logoColor=white)](https://github.com/github/copilot-cli)
+[![Last commit](https://img.shields.io/github/last-commit/EdneiMonteiro/document-swarm)](https://github.com/EdneiMonteiro/document-swarm/commits)
+
 Skill do **Copilot CLI** que monta um **enxame de agentes declarativos** (autores,
 revisores, coordenador e rubber duck) para produzir um documento de alta
 qualidade sobre **qualquer tema**, em **ciclos de melhoria iterativa** até que
@@ -8,6 +13,9 @@ qualidade sobre **qualquer tema**, em **ciclos de melhoria iterativa** até que
 > Skill (fonte da verdade): `SKILL.md` (na raiz deste repo)
 > Saída dos swarms: por padrão `<clone>\swarms\<YYYY-MM-DD>-SWARM-<XX>\`
 > (configurável — ver [Instalação](#instalação) e [Local de saída](#local-de-saída))
+
+> ⚠️ Repositório de uso pessoal/profissional, fornecido **no estado em que se
+> encontra**. Veja [DISCLAIMER.md](./DISCLAIMER.md) e [SUPPORT.md](./SUPPORT.md).
 
 ---
 
