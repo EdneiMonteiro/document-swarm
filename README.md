@@ -336,6 +336,11 @@ coordenador) · Saída: achados priorizados (Crítico/Importante/Menor) + veredi
 
 ## 10. Exemplo (ilustrativo)
 
+> 📒 **Estudo de caso real (ponta a ponta):** veja
+> [`docs/examples/coe-nuvem.md`](./docs/examples/coe-nuvem.md) — um playbook de
+> **CoE de Nuvem** criado do zero e depois **evoluído** com assessment de
+> maturidade e diagramas Mermaid (Modo Evolução / Fase E).
+
 Pedido: *"implemente um documento sobre arquitetura Zero Trust no Azure para um
 público de arquitetos de segurança"*.
 
@@ -373,6 +378,7 @@ público de arquitetos de segurança"*.
 | Instaladores | `scripts\install.ps1` · `scripts\install.sh` |
 | Saída dos swarms | `<OUTPUT_ROOT>\<YYYY-MM-DD>-SWARM-<XX>\` (default `<clone>\swarms`) |
 | Esta documentação | `README.md` (raiz deste repo) |
+| Estudo de caso (CoE de Nuvem) | `docs\examples\coe-nuvem.md` |
 
 ---
 
