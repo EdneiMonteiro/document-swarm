@@ -11,6 +11,11 @@ qualidade sobre **qualquer tema**, em **ciclos de melhoria iterativa** até que
 **todos os tópicos avaliados atinjam nota mínima A**. Ao enumerar os agentes, a
 skill também escolhe e registra o melhor modelo para cada um.
 
+Além de documentos Markdown, a skill tem um **Modo Apresentação** que entrega uma
+apresentação **PowerPoint (`.pptx`)** com os mesmos princípios — autores de slides, um
+**deck builder** (pptxgenjs), revisores de conteúdo e de **design** (que avaliam as
+imagens renderizadas dos slides). Ver a seção **Modo Apresentação (PPTX)** (§14).
+
 > Skill (fonte da verdade): `SKILL.md` (na raiz deste repo)
 > Saída dos swarms: por padrão `<clone>\swarms\<YYYY-MM-DD>-SWARM-<XX>\`
 > (configurável — ver [Instalação](#instalação) e [Local de saída](#local-de-saída))
@@ -29,6 +34,8 @@ A skill é distribuída como este repositório. Para instalar em qualquer máqui
 git clone <url-deste-repo> ~/Projects/document-swarm
 cd ~/Projects/document-swarm
 ./scripts/install.sh
+# opcional: instala também o toolchain do Modo Apresentação (PPTX):
+#   ./scripts/install.sh --with-presentation
 ```
 
 ```powershell
@@ -36,6 +43,8 @@ cd ~/Projects/document-swarm
 git clone <url-deste-repo> $HOME\Projects\document-swarm
 cd $HOME\Projects\document-swarm
 pwsh scripts\install.ps1
+# opcional: instala também o toolchain do Modo Apresentação (PPTX):
+#   pwsh scripts\install.ps1 -WithPresentation
 ```
 
 O instalador cria o symlink `~/.copilot/skills/document-swarm` → raiz deste repo,
@@ -44,6 +53,17 @@ para o Copilot CLI reconhecer a skill (confirme com `/skills` após reiniciar).
 > **Windows:** o symlink exige **Developer Mode** habilitado (Settings → Privacy &
 > security → For developers) ou terminal elevado; sem isso, o instalador cai
 > automaticamente para *junction*.
+
+### Toolchain do Modo Apresentação (PPTX)
+
+O **modo documento** funciona sem dependências extras. O **Modo Apresentação** (§14)
+precisa de: `pptxgenjs` (build), **LibreOffice** (`soffice`) + **Poppler** (`pdftoppm`)
+para o render da revisão de design, e `Pillow`/`markitdown` para QA.
+
+Ao final da instalação, o script **checa** esse toolchain e lista o que falta. Use
+`--with-presentation` (bash) ou `-WithPresentation` (PowerShell) para tentar instalar
+tudo automaticamente (npm + pip, e winget no Windows / apt · dnf · brew no Unix). Depois
+de instalar LibreOffice/Poppler, **reinicie o Copilot CLI/terminal** para o `PATH` valer.
 
 ### Local de saída
 
@@ -96,6 +116,10 @@ Use frases como:
 
 **Não dispara** para texto curto (um parágrafo, um e‑mail). O swarm é para
 entregas substanciais que se beneficiam de múltiplas especialidades e revisão.
+
+> 🎞️ Para **apresentações PowerPoint**, use frases como *"crie uma apresentação/deck/
+> pptx sobre `<tema>`"* — isso dispara o **Modo Apresentação** (§14), que gera um `.pptx`
+> em vez de um `.md`.
 
 ---
 
@@ -407,11 +431,12 @@ público de arquitetos de segurança"*.
 
 | Item | Caminho |
 |---|---|
-| Skill (fonte da verdade) | `SKILL.md` (raiz deste repo) |
+| Skill (fonte da verdade) | `SKILL.md` (raiz deste repo) — cobre modo documento e Modo Apresentação |
 | Instaladores | `scripts\install.ps1` · `scripts\install.sh` |
-| Saída dos swarms | `<OUTPUT_ROOT>\<YYYY-MM-DD>-SWARM-<XX>\` (default `<clone>\swarms`) |
+| Saída dos swarms | `<OUTPUT_ROOT>\<YYYY-MM-DD>-{SWARM,DECK}-<XX>\` (default `<clone>\swarms`) |
 | Esta documentação | `README.md` (raiz deste repo) |
 | Estudo de caso (CoE de Nuvem) | `docs\examples\coe-nuvem.md` |
+| Exemplo (Apresentação PPTX) | `docs\examples\deck-apresentacao.md` |
 
 ---
 
@@ -429,3 +454,91 @@ público de arquitetos de segurança"*.
       `sources\sources-index.md`.
 - [ ] Documento final em `output\` com índice e bibliografia.
 - [ ] `reports\final-report.md` escrito.
+
+---
+
+## 14. Modo Apresentação (PPTX) 🎞️
+
+Além de documentos, a skill entrega uma **apresentação PowerPoint (`.pptx`)** com o mesmo
+motor (agentes declarativos, modelo por agente, régua D‑…A+, rubber duck, portão ≥ A),
+usando a skill **`pptx`** para compilar e renderizar os slides.
+
+**Dispara com:** *"crie/monte uma apresentação sobre X"*, *"quero um deck/PowerPoint/pptx
+sobre X"*, *"monte um swarm de slides sobre X"*.
+
+### O que muda em relação ao modo documento
+
+- Os **autores produzem specs de slide** (título, mensagem‑chave, conteúdo, intenção
+  visual, dados, **speaker notes**, fontes) — não prosa corrida.
+- Um **Deck Builder** único detém o sistema visual (uma paleta, um motivo, uma dupla de
+  fontes) e **compila o `.pptx`** com **pptxgenjs**.
+- Entra uma camada de **revisão de design** que avalia as **imagens renderizadas** dos
+  slides (não o código).
+
+### Agentes (modo apresentação)
+
+| Agente | Quantos | Papel |
+|---|---|---|
+| **Autor de slides** | 3–6 | Destila o conteúdo em specs de slide (1 ideia/slide) + ≥5 fontes. |
+| **Deck Builder** | 1 | Sistema visual + compila `deck.pptx` (pptxgenjs) + renderiza as imagens. |
+| **Revisor de conteúdo** | 3–5 | Nota D‑…A+ **por tópico** (precisão, narrativa, escopo, público, fontes). |
+| **Revisor de design** | 2–3 | **Multimodal**: inspeciona as imagens; nota D‑…A+ **por slide** + dimensões do deck. |
+| **Coordenador** | 1 | Orquestra o loop e aplica o portão. |
+| **Rubber Duck** | 1 | Auditor transversal em **3 checkpoints** (pós‑autores, pós‑conteúdo, pós‑design). |
+
+### Revisão de design = screenshot nativo da `pptx` (não Playwright)
+
+Os slides viram imagem com o render **nativo da skill `pptx`**: `soffice → PDF → pdftoppm`
+(e a grade `thumbnail.py`). Os revisores de design abrem os `.jpg` com a ferramenta `view`
+— por isso precisam de **modelo multimodal**. Playwright **não** é usado: ele serve para
+páginas web, não para `.pptx`.
+
+### Portão (modo apresentação)
+
+Aprova só quando **todos os tópicos ≥ A** (conteúdo) **e** **todo slide ≥ A** (design)
+**e** as **dimensões do deck ≥ A** (coesão de paleta, motivo, tipografia, ritmo) **e** sem
+achado crítico do rubber duck.
+
+### Estrutura de saída (deck)
+
+```text
+<OUTPUT_ROOT>\<YYYY-MM-DD>-DECK-<XX>\
+├─ brief.md
+├─ agents\   # coordinator, rubber-duck, deck-builder, slide-authors\, content-reviewers\, design-reviewers\
+├─ reports\  # agent-models + cycle-0N-{authors,build,content-review,design-review,rubberduck} + final-report
+├─ sources\sources-index.md
+└─ output\
+   ├─ slides\            # specs por autor
+   ├─ build\deck.js      # pptxgenjs
+   ├─ renders\cycle-0N\slide-*.jpg
+   └─ deck.pptx          # a entrega (com speaker notes)
+```
+
+### Diagrama do ciclo (deck)
+
+```mermaid
+flowchart TD
+    A["Fase 0 — Perguntas (deck)<br/><small>ocasião, nº de slides, identidade visual</small>"]
+    B["Setup + brief.md<br/><small>tópicos + identidade visual</small>"]
+    C["Gerar agentes<br/><small>autores, deck builder, revisores de conteúdo e design + modelos</small>"]
+    D["Autores de slides<br/><small>specs + fontes</small>"]
+    RD1{"Rubber duck<br/>pós-autores"}
+    E["Deck Builder<br/><small>deck.js → deck.pptx → render</small>"]
+    F["Revisores de conteúdo<br/><small>nota por tópico</small>"]
+    RD2{"Rubber duck<br/>pós-conteúdo"}
+    G["Revisores de design<br/><small>nota por slide (imagens)</small>"]
+    RD3{"Rubber duck<br/>pós-design"}
+    H{"Tópicos >= A e slides >= A<br/>e sem achado crítico?"}
+    I["Ciclo N+1<br/><small>corrigir itens < A</small>"]
+    J["Entrega<br/><small>deck.pptx + final-report</small>"]
+
+    A --> B --> C --> D --> RD1 --> E --> F --> RD2 --> G --> RD3 --> H
+    H -- "sim" --> J
+    H -- "não" --> I --> D
+```
+
+### Ferramentas necessárias
+
+`pptxgenjs` (npm), **LibreOffice** (`soffice`), **Poppler** (`pdftoppm`), `Pillow`,
+`markitdown[pptx]`. Sem o render (soffice/pdftoppm) não há revisão de design — nesse caso
+a skill avisa em vez de improvisar.

@@ -1,6 +1,6 @@
 ---
 name: document-swarm
-description: "Use when the user asks for a substantial document (playbook, whitepaper, report, RFC, policy, technical guide, comparison) or to evolve an existing swarm document. The skill first asks framing questions, then creates declarative author, reviewer, coordinator and rubber-duck agents with an explicit model choice for each; runs evidence-based author-review cycles until every evaluated topic reaches at least A; and writes outputs under an explicit target, DOCSWARM_ROOT, or the clone's swarms folder. Do not use for short text such as a paragraph or email."
+description: "Use when the user asks for a substantial document (playbook, whitepaper, report, RFC, policy, technical guide, comparison) OR a slide presentation/deck (PPTX), or to evolve an existing swarm document or deck. The skill first asks framing questions, then creates declarative agents with an explicit model choice for each and runs evidence-based improvement cycles until every evaluated topic reaches at least A. In document mode it runs author + reviewer + coordinator + rubber-duck agents. In presentation mode it also runs slide authors, a single deck builder (which compiles the .pptx via pptxgenjs and renders slide images), content reviewers and design reviewers that grade the rendered slides. Outputs go under an explicit target, DOCSWARM_ROOT, or the clone's swarms folder. Do not use for short text such as a paragraph or email."
 ---
 
 # Document Swarm Skill
@@ -20,6 +20,20 @@ Use esta skill sempre que o usuário pedir algo como:
 - "preciso de um documento completo sobre <tema>"
 - "swarm de documentação sobre <tema>"
 - "quero um whitepaper/relatório/guia técnico sobre <tema>"
+
+Use no **Modo Apresentação (PPTX)** quando o pedido for uma **apresentação/deck de
+slides** em vez de um documento corrido, com frases como:
+
+- "crie/monte uma apresentação sobre <tema>"
+- "quero um deck/PowerPoint/pptx sobre <tema>"
+- "monte um swarm de slides sobre <tema>"
+- "preciso de uma apresentação completa sobre <tema>"
+- "transforme <este conteúdo/swarm> em uma apresentação"
+
+Nesse caso, siga a seção **"Modo Apresentação (PPTX) 🎞️"** (abaixo): o motor é o
+mesmo (agentes declarativos, modelo por agente, régua D-…A+, rubber duck, portão ≥ A),
+mas os autores produzem **specs de slide**, um **Deck Builder** compila o `.pptx` e há
+uma camada extra de **revisão de design** sobre as imagens renderizadas dos slides.
 
 Use também no **modo evolução** (documento já existente em um swarm), quando o
 usuário pedir algo como:
@@ -149,6 +163,9 @@ Critérios de escolha:
 | Revisor de precisão, segurança, governança ou fontes | modelo crítico, preferencialmente de família diferente dos autores principais |
 | Revisor de clareza, narrativa, didática ou UX do documento | modelo forte em linguagem e estrutura editorial |
 | Rubber duck transversal | modelo mais crítico disponível, idealmente diferente do coordenador, com esforço alto |
+| **(Deck)** Autor de slides | modelo forte em síntese e narrativa visual; enxuga e destila conteúdo denso em mensagens de slide |
+| **(Deck)** Deck Builder (pptxgenjs) | modelo forte em **código** e disciplina de design; gera/depura o `deck.js` e mantém paleta/motivo/tipografia consistentes; esforço alto |
+| **(Deck)** Revisor de design | modelo **multimodal** (precisa "ver" as imagens dos slides com a ferramenta `view`); preferencialmente de família diferente do Deck Builder |
 
 Evite usar o mesmo modelo para todos sem justificativa. A diversidade entre
 autores, revisores e rubber duck reduz cegueira coletiva; quando repetir um
@@ -548,7 +565,394 @@ fontes que não sustentam as afirmações.
   verificado).
 ```
 
-## Checklist antes de entregar
+---
+
+# Modo Apresentação (PPTX) 🎞️
+
+Variante da skill que entrega uma **apresentação `.pptx`** (via skill `pptx`) em vez de
+um documento `.md`. **O motor é o mesmo** — agentes declarativos, modelo explícito por
+agente, human-in-the-loop, evidência obrigatória, régua **D- … A+**, rubber duck
+transversal, rastreabilidade e **portão ≥ A**. O que muda:
+
+- Os **autores produzem specs de slide** (não prosa corrida).
+- Um **Deck Builder** único detém o sistema visual e **compila o `.pptx`** com pptxgenjs.
+- Há uma camada extra de **revisão de design** sobre as **imagens renderizadas** dos slides.
+- O **rubber duck roda em 3 checkpoints** por ciclo (pós-autores, pós-conteúdo, pós-design).
+
+## Princípios adicionais (além dos 7)
+
+8. **Conteúdo e forma são avaliados separadamente.** Revisores de **conteúdo** julgam a
+   mensagem (por tópico); revisores de **design** julgam o visual (por slide, olhando a
+   imagem renderizada). Um slide correto e feio não passa; um slide bonito e vazio também não.
+9. **Um só dono do sistema visual.** O **Deck Builder** escolhe **uma** paleta, **um**
+   motivo e **uma** dupla de fontes e os aplica em todos os slides (coesão > variedade).
+   Segue o guia de design da skill `pptx` (`~/.copilot/skills/pptx/SKILL.md`).
+10. **Design se avalia na imagem, não no código.** O julgamento de design é feito sobre os
+    `.jpg` renderizados (render nativo da `pptx`: `soffice → PDF → pdftoppm`), com
+    subagentes de **olhos frescos** usando a ferramenta `view` — nunca "confiando no code".
+11. **Speaker notes obrigatórias** por slide no `.pptx` final.
+
+## Pré-requisitos de ferramenta (toolchain)
+
+Antes do primeiro build, resolva o caminho da skill `pptx` e confirme as dependências;
+instale o que faltar. Descubra `<PPTX>` pelo alvo real do symlink da skill (análogo ao
+`<OUTPUT_ROOT>`):
+
+- Windows: `$PPTX = (Get-Item -Force "$env:USERPROFILE\.copilot\skills\pptx").Target`
+- Linux/macOS: `PPTX=$(readlink -f "$HOME/.copilot/skills/pptx")`
+
+Dependências (ver `pptx/SKILL.md` → *Dependencies*):
+
+- `pptxgenjs` (npm, criação do `.pptx`) · **LibreOffice** (`soffice`) · **Poppler**
+  (`pdftoppm`) · `Pillow` (grade de miniaturas) · `markitdown[pptx]` (QA de texto).
+
+Checagem rápida (Windows): `Get-Command node,soffice,pdftoppm`. Instalação, se faltar:
+
+- **pptxgenjs:** `npm i -g pptxgenjs` (ou local na pasta `output\build`).
+- **Pillow / markitdown:** `pip install Pillow "markitdown[pptx]"`.
+- **Windows:** `winget install TheDocumentFoundation.LibreOffice` e
+  `winget install oschwartz10612.Poppler` (garanta o `pdftoppm` no `PATH`).
+- **Debian/Ubuntu:** `apt-get install libreoffice poppler-utils`.
+- **macOS:** `brew install --cask libreoffice && brew install poppler`.
+
+**Leia `<PPTX>\pptxgenjs.md` antes de gerar o `deck.js`.** Se alguma ferramenta de render
+faltar e não puder ser instalada, **avise o usuário** — sem render não há revisão de
+design (não improvise com Playwright: ele é para páginas web, não para `.pptx`).
+
+## Estrutura de saída (deck)
+
+Use o id `<YYYY-MM-DD>-DECK-<XX>` (o `-DECK-` distingue de swarms de documento; `XX`
+sequencial por dia). `<OUTPUT_ROOT>` é resolvido igual ao modo documento.
+
+```text
+<OUTPUT_ROOT>\<YYYY-MM-DD>-DECK-<XX>\
+├─ brief.md                          # tema + respostas + tópicos + identidade visual + público/ocasião
+├─ agents\
+│  ├─ coordinator.md
+│  ├─ rubber-duck.md
+│  ├─ deck-builder.md                # dono do sistema visual + build + render
+│  ├─ slide-authors\
+│  │  ├─ author-01-<slug>.md          # um por bloco de slides/seção
+│  │  └─ author-02-<slug>.md
+│  ├─ content-reviewers\
+│  │  ├─ reviewer-01-<slug>.md        # dimensões de conteúdo (nota por tópico)
+│  │  └─ reviewer-02-<slug>.md
+│  └─ design-reviewers\
+│     ├─ design-01-<slug>.md          # dimensões de design (nota por slide) — multimodal
+│     └─ design-02-<slug>.md
+├─ reports\
+│  ├─ agent-models.md
+│  ├─ cycle-01-authors.md             # specs entregues por autor
+│  ├─ cycle-01-build.md               # log do build (pptxgenjs), erros, nº de slides
+│  ├─ cycle-01-content-review.md      # matriz tópico × revisor + nota mínima
+│  ├─ cycle-01-design-review.md       # matriz slide × revisor de design + nota + dimensões do deck
+│  ├─ cycle-01-rubberduck.md          # 3 blocos: pós-autores / pós-conteúdo / pós-design
+│  └─ final-report.md
+├─ sources\
+│  └─ sources-index.md
+└─ output\
+   ├─ slides\                         # spec declarativo por autor
+   │  ├─ 01-<slug>.md
+   │  └─ 02-<slug>.md
+   ├─ build\
+   │  └─ deck.js                      # script pptxgenjs gerado pelo Deck Builder
+   ├─ renders\
+   │  └─ cycle-01\slide-01.jpg …      # imagens renderizadas do ciclo (+ thumbnails.jpg)
+   └─ deck.pptx                       # a entrega
+```
+
+## Fases (deck)
+
+### Fase 0 (deck) — Perguntas de enquadramento
+Faça as perguntas gerais da Fase 0 e **acrescente** as específicas de apresentação:
+
+- **Ocasião/formato**: pitch, executivo, técnico, treinamento, comercial…
+- **Nº de slides alvo** e **tempo de apresentação**.
+- **Identidade visual**: paleta/cores da marca, logo, fontes, template `.pptx` a respeitar
+  (se houver), tom visual (sóbrio, ousado, minimalista…).
+- **Formatos de dado**: precisa de gráficos, tabelas, diagramas, imagens?
+- **Restrições de marca/template** e o que **não** pode aparecer.
+
+Registre tudo no `brief.md`, incluindo os **tópicos de importância** (cobertura de
+conteúdo) e a **identidade visual** definida.
+
+### Fase 1 (deck) — Setup
+`deck_id = <YYYY-MM-DD>-DECK-<XX>`; crie a árvore acima; escreva `brief.md`.
+
+### Fase 2 (deck) — Gerar agentes declarativos
+Escolha o melhor modelo de cada agente (seção **Seleção de modelo por agente**, incluindo
+as linhas **(Deck)**) e gere:
+
+1. **3–6 Autores de slides** (`agents\slide-authors\`) — Template de Autor de Slides.
+2. **3–5 Revisores de conteúdo** (`agents\content-reviewers\`) — Template de Revisor de
+   Conteúdo (slides). Dimensões: precisão técnica, clareza da mensagem/**arco narrativo**,
+   completude vs. escopo, aderência ao público/ocasião, fontes & evidências.
+3. **2–3 Revisores de design** (`agents\design-reviewers\`, **modelo multimodal**) —
+   Template de Revisor de Design.
+4. **Deck Builder** (`agents\deck-builder.md`) — Template de Deck Builder.
+5. **Coordenador** e **Rubber Duck** (mesmos templates do modo documento).
+
+Registre a matriz completa em `reports\agent-models.md`.
+
+### Fase 3 (deck) — Loop de produção (você é o Coordenador)
+Por ciclo `N`:
+
+1. **Autores.** Despache cada autor (subagente `task`, parâmetros do frontmatter) com o
+   `.md` dele + `brief.md` + seus slides + (ciclo ≥ 2) as sugestões dos revisores. Cada um
+   escreve/atualiza seu spec em `output\slides\` e registra fontes (≥5 verificadas).
+2. **Rubber duck (pós-autores).** Audita os specs: afirmação sem fonte, contradição entre
+   slides, fuga de escopo, arco narrativo, densidade/nº de slides. → bloco em
+   `reports\cycle-0N-rubberduck.md`.
+3. **Deck Builder — build.** Consolida os specs, aplica o sistema visual e gera
+   `output\build\deck.js` (pptxgenjs); compila `output\deck.pptx`; roda o QA de texto
+   (`markitdown`). Registra `reports\cycle-0N-build.md`.
+4. **Deck Builder — render.** Converte para imagens em `output\renders\cycle-0N\`
+   (`soffice → PDF → pdftoppm`; opcional grade `thumbnail.py`).
+5. **Revisores de conteúdo.** Cada um avalia os specs + o texto renderizado e dá **nota
+   D-…A+ por tópico de importância** + sugestão acionável. Consolide
+   `reports\cycle-0N-content-review.md` (matriz tópico × revisor + nota mínima por tópico).
+6. **Rubber duck (pós-conteúdo).** Audita a **calibração** dos revisores de conteúdo (nota
+   vs. evidência; dimensão faltando). → segundo bloco no rubberduck do ciclo.
+7. **Revisores de design.** Cada um **abre as imagens** de `output\renders\cycle-0N\` com a
+   ferramenta `view` e dá **nota D-…A+ por slide** + nota nas **dimensões do deck** (coesão
+   de paleta, motivo, tipografia, ritmo/consistência) + correção acionável. Consolide
+   `reports\cycle-0N-design-review.md` (matriz slide × revisor + nota mínima por slide).
+8. **Rubber duck (pós-design).** **Reabre os `.jpg`** e audita os achados de design
+   (overflow/colisão ignorados? nota inflada? conteúdo e design coerentes entre si?). →
+   terceiro bloco no rubberduck do ciclo.
+9. **Portão.** Aprova se **todos os tópicos ≥ A** (conteúdo) **E** **todo slide ≥ A**
+   (design) **E** **todas as dimensões do deck ≥ A** **E** sem achado **Crítico** do rubber
+   duck. Senão, `N+1` e volte ao passo 1 alimentando **só** os tópicos/slides < A e os
+   achados do rubber duck aos autores e/ou ao Deck Builder.
+10. **Trava.** Ao bater `max_cycles` sem aprovar tudo, pare, escreva o estado no
+    `final-report.md` e **escale ao usuário** — nunca entregue < A em silêncio.
+
+### Fase 4 (deck) — Entrega
+1. Finalize `output\deck.pptx` (com **speaker notes**) e a render final do último ciclo.
+2. Escreva `reports\final-report.md`: nº de ciclos, matriz final de conteúdo (tópicos ≥ A)
+   e de design (slides ≥ A), nº de fontes verificadas, perfis/modelos usados.
+3. Responda ao usuário com os caminhos + resumo curto (não descreva slide a slide).
+
+### Modo evolução (deck)
+Para **evoluir um deck já entregue** (adicionar slides, atualizar dados, re-estilizar),
+siga a lógica da **Fase E** do modo documento: localize o `<deck_id>`, diagnostique
+(`brief.md`, specs, `final-report.md`), **avalie se faltam agentes** (ex.: um autor novo
+para uma seção nova; um revisor de design para uma dimensão nova), **reative o enxame
+inteiro** (autores existentes + novos + Deck Builder) para manter paleta/motivo/tom
+uniformes, recompile e re-renderize, e aplique o portão **≥ A para todos os tópicos e
+slides, novos e antigos** (a evolução não pode rebaixar nada aprovado).
+
+## Comandos de referência (build & render)
+
+Rode a partir da pasta do deck; `<PPTX>` é o caminho resolvido da skill `pptx`.
+
+```powershell
+# 1) Build: o deck.js (pptxgenjs) deve gravar em output\deck.pptx
+node output\build\deck.js
+
+# 2) QA de texto (placeholders, ordem, typos)
+python -m markitdown output\deck.pptx
+
+# 3) Render para imagens (design QA) — soffice + pdftoppm
+python "$PPTX\scripts\office\soffice.py" --headless --convert-to pdf --outdir output\renders\cycle-0N output\deck.pptx
+pdftoppm -jpeg -r 150 output\renders\cycle-0N\deck.pdf output\renders\cycle-0N\slide
+
+# 4) (Opcional) Grade de miniaturas para visão geral
+python "$PPTX\scripts\thumbnail.py" output\deck.pptx output\renders\cycle-0N\thumbnails
+```
+
+---
+
+## Template de Autor de Slides (`agents\slide-authors\author-XX-<slug>.md`)
+
+```markdown
+---
+name: author-<XX>-<slug>
+kind: slide-author
+role: <Perfil, ex.: Estrategista de Produto>
+model: <modelo escolhido>
+reasoning_effort: <se suportado; ex.: high>
+context_tier: <default|long_context>
+model_rationale: "<por que este modelo é o melhor para este autor de slides>"
+swarm: <deck_id>
+sources_min: 5
+---
+
+# Autor de Slides: <Perfil>
+
+## Persona
+Você é um(a) **<perfil>** sênior que pensa em **mensagem por slide**, não em parágrafos.
+
+## Missão
+Produzir o **spec** dos slides sob sua responsabilidade — conteúdo destilado, correto e
+apresentável — para o deck descrito em `brief.md`, no tom e para a ocasião definidos.
+
+## Slides sob sua responsabilidade
+- <bloco/seção A> (slides NN–NN)
+
+## Como trabalhar
+1. Leia `brief.md` (tópicos, público, ocasião, identidade visual) e os specs já existentes.
+2. Pesquise: **≥ 5 fontes online funcionais** (oficiais/normas/acadêmicas/blogs de
+   referência), **verifique cada URL** (HTTP 200) antes de citar.
+3. **Uma ideia por slide.** Título curto; mensagem-chave em uma frase; conteúdo enxuto
+   (evite parágrafos e listas gigantes). Descreva a **intenção visual** (o que mostrar),
+   não o código. Sempre inclua **speaker notes**.
+4. Trate cada **sugestão de revisor** (ciclos ≥ 2) explicitamente.
+5. Salve seu spec em `output\slides\<NN>-<slug>.md` e atualize `sources\sources-index.md`.
+
+## Formato do spec (um bloco por slide)
+### Slide NN — <título curto>
+- **Objetivo:** <o papel do slide na narrativa>
+- **Mensagem-chave:** <uma frase>
+- **Conteúdo:** <bullets curtos ou texto essencial>
+- **Visual:** <imagem/ícone/gráfico/tabela/diagrama + layout sugerido>
+- **Dados:** <números/série + fonte, se houver>
+- **Speaker notes:** <2–4 frases para quem apresenta>
+- **Fontes:** <[#] do sources-index>
+
+## Formato das fontes (obrigatório, ≥ 5)
+| # | Título | Tipo | URL | Verificado |
+|---|--------|------|-----|------------|
+| 1 | ...    | oficial/norma/acadêmico/blog | https://... | HTTP 200 em <data> |
+
+## Padrão de qualidade
+- Precisão factual acima de tudo; toda afirmação sustentada por fonte.
+- Enxuto e específico; nada de "encher slide". Sem contradição com outros autores.
+- Coerente com a terminologia e o público do `brief`.
+```
+
+## Template de Deck Builder (`agents\deck-builder.md`)
+
+```markdown
+---
+name: deck-builder
+kind: deck-builder
+model: <modelo forte em código/pptxgenjs>
+reasoning_effort: <se suportado; ex.: high>
+context_tier: <default|long_context>
+model_rationale: "<por que este modelo é o melhor para compilar e dar consistência visual>"
+swarm: <deck_id>
+---
+
+# Deck Builder (Sistema Visual + Compilação)
+
+## Missão
+Transformar os specs de `output\slides\` em um `output\deck.pptx` **coeso e apresentável**,
+detendo o sistema visual do deck inteiro, e **renderizar** as imagens para a revisão de design.
+
+## Sistema visual (decida uma vez, aplique a tudo)
+- Leia o guia de design em `~/.copilot/skills/pptx/SKILL.md` e `~/.copilot/skills/pptx/pptxgenjs.md`.
+- Escolha **uma paleta** (uma cor domina 60–70%), **um motivo** repetido e **uma dupla de
+  fontes**, respeitando a identidade visual do `brief`.
+- Todo slide tem **elemento visual**; contraste forte; margens ≥ 0,5"; **sem linha de
+  destaque sob o título** (marca de slide "cara de IA"); nada de slide só-texto.
+- Slides de título/encerramento em fundo escuro; conteúdo em fundo claro (ou dark coeso).
+
+## Como trabalhar (por ciclo)
+1. Consolide todos os specs e a identidade visual do `brief`.
+2. Gere `output\build\deck.js` com **pptxgenjs**, incluindo **speaker notes** por slide, e
+   compile `output\deck.pptx` (`node output\build\deck.js`).
+3. **QA de texto:** `python -m markitdown output\deck.pptx` — corrija placeholders/typos/ordem.
+4. **Render:** converta para `output\renders\cycle-0N\slide-*.jpg` (soffice → PDF → pdftoppm).
+5. Aplique as **correções de design** dos revisores (ciclos ≥ 2) e recompile/re-renderize.
+6. Registre `reports\cycle-0N-build.md`: nº de slides, paleta/motivo/fontes, erros e correções.
+
+## Regras
+- Consistência acima de tudo: mesma paleta/motivo/tipografia em todos os slides.
+- Não invente conteúdo nem fontes; se um spec estiver incompleto, **sinalize ao coordenador**.
+- Mantenha o `deck.js` legível e determinístico (recompilável a qualquer ciclo).
+```
+
+## Template de Revisor de Conteúdo (slides) (`agents\content-reviewers\reviewer-XX-<slug>.md`)
+
+```markdown
+---
+name: reviewer-<XX>-<slug>
+kind: content-reviewer
+role: <Dimensão, ex.: Precisão técnica>
+model: <modelo escolhido>
+reasoning_effort: <se suportado; ex.: high>
+context_tier: <default|long_context>
+model_rationale: "<por que este modelo é o melhor para este revisor de conteúdo>"
+swarm: <deck_id>
+sources_min: 5
+scale: "D- D D+ C- C C+ B- B B+ A- A A+"
+gate: "A"
+---
+
+# Revisor de Conteúdo: <Dimensão>
+
+## Missão
+Avaliar o **conteúdo** do deck (specs em `output\slides\` + texto renderizado) sob a ótica
+de **<dimensão>**, dando **nota D-…A+ por tópico de importância** do `brief.md`.
+
+## Como avaliar
+1. Leia `brief.md` (tópicos, público, ocasião, critérios de sucesso) e os specs.
+2. Consulte **≥ 5 fontes funcionais** (URLs HTTP 200) e confira se as fontes dos autores
+   existem, funcionam e **sustentam** as afirmações dos slides.
+3. Julgue também o **arco narrativo** (a sequência conta uma história?) e a densidade
+   (mensagem por slide, sem parede de texto). **A- não aprova.**
+
+## Saída (obrigatória)
+| Tópico | Nota | Justificativa | Sugestão acionável |
+|--------|------|---------------|--------------------|
+| <t>    | B+   | ...           | "Reforce ... / corrija ... / cite ..." |
+
+Encerre com a **nota mínima**, os tópicos que **bloqueiam** o portão (< A) e suas próprias
+fontes (tabela ≥ 5, verificadas).
+```
+
+## Template de Revisor de Design (`agents\design-reviewers\design-XX-<slug>.md`)
+
+```markdown
+---
+name: design-<XX>-<slug>
+kind: design-reviewer
+role: <Dimensão de design, ex.: Hierarquia & Layout>
+model: <modelo multimodal — precisa "ver" as imagens>
+reasoning_effort: <se suportado; ex.: high>
+context_tier: <default|long_context>
+model_rationale: "<por que este modelo multimodal é o melhor para avaliar os slides>"
+swarm: <deck_id>
+scale: "D- D D+ C- C C+ B- B B+ A- A A+"
+gate: "A"
+---
+
+# Revisor de Design: <Dimensão>
+
+## Persona
+Olhos frescos, exigente. **Assuma que há problemas** — seu trabalho é achá-los. Se não
+achou nada na primeira passada, não olhou com atenção suficiente.
+
+## Missão
+Avaliar o **visual** do deck a partir das **imagens renderizadas**
+(`output\renders\cycle-0N\slide-*.jpg`), dando **nota D-…A+ por slide** e às **dimensões do
+deck**. Você **não** avalia código nem exige fontes.
+
+## Como avaliar
+1. **Abra cada `slide-*.jpg` com a ferramenta `view`** (não julgue pelo `deck.js`).
+2. Procure, por slide (checklist herdado da skill `pptx`):
+   - Elementos sobrepostos (texto sobre forma, linha cortando palavra, blocos empilhados).
+   - Texto estourando ou cortado nas bordas/caixas; título que quebrou em 2 linhas e
+     desalinhou um enfeite.
+   - Rodapé/fonte colidindo com o conteúdo; elementos colados (< 0,3") ou margem < 0,5".
+   - Gaps irregulares; colunas desalinhadas; caixas estreitas causando quebra excessiva.
+   - **Baixo contraste** (texto/ícone claro sobre fundo claro; escuro sobre escuro).
+   - Placeholder esquecido; **linha de destaque sob título** (antipadrão "cara de IA");
+     slide **só-texto** sem elemento visual.
+3. **Dimensões do deck** (visão do conjunto): coesão de paleta, consistência do motivo,
+   tipografia, ritmo/variedade de layout. **A- não aprova.**
+
+## Saída (obrigatória)
+| Slide | Nota | Problemas encontrados | Correção acionável |
+|-------|------|-----------------------|--------------------|
+| 03    | B    | "Título 2 linhas colide com ícone; contraste fraco no rodapé" | "Reduza o título / mova o ícone 0,4"; escureça o rodapé" |
+
+Encerre com: nota das **dimensões do deck**, a **nota mínima por slide**, os slides que
+**bloqueiam** o portão (< A) e um veredito geral do visual.
+```
+
+## Checklist antes de entregar (modo documento)
 
 - [ ] Pasta `<OUTPUT_ROOT>\<YYYY-MM-DD>-SWARM-<XX>\` criada com a árvore
       completa (`agents/authors`, `agents/reviewers`, `reports`, `sources`,
@@ -566,7 +970,7 @@ fontes que não sustentam as afirmações.
 - [ ] Documento final em `output\` com índice e bibliografia.
 - [ ] `reports\final-report.md` escrito.
 
-## Resposta ao usuário
+## Resposta ao usuário (modo documento)
 
 Depois de concluir, responda com:
 
@@ -577,5 +981,38 @@ Documento: `output\<doc>.md`
 Modelos dos agentes: `reports\agent-models.md`
 Ciclos: <N>   |   Tópicos avaliados: <k> (todos ≥ A)
 Autores: <lista de perfis>   |   Revisores: <lista de dimensões>
+Fontes verificadas: <total>
+```
+
+## Checklist antes de entregar (modo apresentação)
+
+- [ ] Pasta `<OUTPUT_ROOT>\<YYYY-MM-DD>-DECK-<XX>\` criada com a árvore completa
+      (`agents/slide-authors`, `agents/content-reviewers`, `agents/design-reviewers`,
+      `agents/deck-builder.md`, `reports`, `sources`, `output/slides`, `output/build`,
+      `output/renders`).
+- [ ] `brief.md` com perguntas respondidas, tópicos de importância e identidade visual.
+- [ ] 3–6 autores de slides + 3–5 revisores de conteúdo + 2–3 revisores de design
+      (multimodais) + deck builder + coordenador + rubber duck, todos `.md`, cada um com
+      modelo escolhido e justificativa.
+- [ ] `reports\agent-models.md` completo.
+- [ ] Cada ciclo com `authors`, `build`, `content-review`, `design-review` e `rubberduck`
+      (3 checkpoints) registrados em `reports\`.
+- [ ] `output\deck.pptx` compilado, **com speaker notes**, e renders do ciclo final em
+      `output\renders\`.
+- [ ] **Todos** os tópicos ≥ A (conteúdo) **e** **todo slide** ≥ A **e** dimensões do deck
+      ≥ A (ou escalonado ao usuário se bater `max_cycles`).
+- [ ] Autores e revisores de conteúdo cumpriram **≥ 5 fontes verificadas (HTTP 200)** em
+      `sources\sources-index.md` (revisores de design são dispensados dessa regra).
+- [ ] `reports\final-report.md` escrito (matriz de conteúdo + matriz de design).
+
+## Resposta ao usuário (modo apresentação)
+
+```markdown
+Deck concluído: `<OUTPUT_ROOT>\<deck_id>\`
+
+Apresentação: `output\deck.pptx`   (renders: `output\renders\cycle-<N>\`)
+Modelos dos agentes: `reports\agent-models.md`
+Ciclos: <N>   |   Tópicos ≥ A: <k>   |   Slides ≥ A: <m>/<total>
+Autores: <perfis>   |   Conteúdo: <dimensões>   |   Design: <dimensões>
 Fontes verificadas: <total>
 ```

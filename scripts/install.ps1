@@ -4,6 +4,7 @@
 #
 # Uso:
 #   pwsh scripts/install.ps1
+#   pwsh scripts/install.ps1 -WithPresentation   # tenta instalar tb o toolchain do Modo Apresentação (PPTX)
 #
 # O symlink no Windows exige Developer Mode habilitado
 # (Settings > Privacy & security > For developers) OU um terminal elevado.
@@ -11,7 +12,11 @@
 # que não exige privilégio.
 
 [CmdletBinding()]
-param()
+param(
+  # Quando presente, tenta instalar o toolchain do Modo Apresentação (PPTX):
+  # pptxgenjs (npm), Pillow + markitdown (pip) e LibreOffice + Poppler (winget).
+  [switch]$WithPresentation
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -55,3 +60,63 @@ Write-Host ''
 Write-Host 'Reinicie o Copilot CLI e confirme com /skills.'
 Write-Host ('Saída dos swarms (padrão): ' + (Join-Path $RepoRoot 'swarms'))
 Write-Host 'Para mudar a saída, defina $env:DOCSWARM_ROOT ou indique o destino no pedido.'
+
+# ── Modo Apresentação (PPTX): toolchain opcional ───────────────────────────────
+# A skill funciona em modo documento sem nada disto. O Modo Apresentação precisa de
+# pptxgenjs (build) + LibreOffice/Poppler (render p/ revisão de design) + Pillow/markitdown.
+try {
+  $PSNativeCommandUseErrorActionPreference = $false
+  Write-Host ''
+  Write-Host '— Modo Apresentação (PPTX): checando toolchain —'
+
+  function Test-Cmd($n) { [bool](Get-Command $n -ErrorAction SilentlyContinue) }
+  function Test-PyMod($m) { if (-not (Test-Cmd python)) { return $false }; & python -c "import $m" 2>$null; return ($LASTEXITCODE -eq 0) }
+  function Test-NpmGlobal($p) { if (-not (Test-Cmd npm)) { return $false }; try { return ((& npm ls -g $p 2>$null | Out-String) -match [regex]::Escape($p)) } catch { return $false } }
+
+  $sofficeOk  = (Test-Cmd soffice)  -or (Test-Path 'C:\Program Files\LibreOffice\program\soffice.exe') -or (Test-Path 'C:\Program Files (x86)\LibreOffice\program\soffice.exe')
+  $wingetPkgs = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'
+  $popplerOk  = (Test-Cmd pdftoppm) -or (Test-Path (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links\pdftoppm.exe')) -or ([bool](Get-ChildItem -Path $wingetPkgs -Filter 'pdftoppm.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1))
+
+  $checks = [ordered]@{
+    'node (build)'           = (Test-Cmd node)
+    'npm (build)'            = (Test-Cmd npm)
+    'pptxgenjs (npm -g)'     = (Test-NpmGlobal 'pptxgenjs')
+    'python (QA/thumbnail)'  = (Test-Cmd python)
+    'Pillow (thumbnail)'     = (Test-PyMod 'PIL')
+    'markitdown (QA texto)'  = (Test-PyMod 'markitdown')
+    'soffice (LibreOffice)'  = $sofficeOk
+    'pdftoppm (Poppler)'     = $popplerOk
+  }
+
+  $missing = @()
+  foreach ($k in $checks.Keys) {
+    if ($checks[$k]) { Write-Host "   ✅ $k" } else { Write-Host "   ⚠️  $k (ausente)"; $missing += $k }
+  }
+
+  if ($missing.Count -eq 0) {
+    Write-Host '   ✅ toolchain de apresentação completo.'
+  } elseif ($WithPresentation) {
+    Write-Host ''
+    Write-Host '   Instalando dependências de apresentação (-WithPresentation)...'
+    if (Test-Cmd npm)    { try { & npm install -g pptxgenjs 2>&1 | Out-Null } catch {} }
+    if (Test-Cmd python) { try { & python -m pip install --quiet Pillow "markitdown[pptx]" 2>&1 | Out-Null } catch {} }
+    if (Test-Cmd winget) {
+      try { & winget install --id TheDocumentFoundation.LibreOffice -e --silent --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null } catch {}
+      try { & winget install --id oschwartz10612.Poppler -e --silent --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null } catch {}
+    } else {
+      Write-Host '   ⚠️  winget ausente — instale LibreOffice e Poppler manualmente.'
+    }
+    Write-Host '   ✅ Tentativa concluída. REINICIE o Copilot CLI/terminal para o PATH pegar soffice/pdftoppm.'
+  } else {
+    Write-Host ''
+    Write-Host '   Para habilitar o Modo Apresentação, instale o que falta:'
+    Write-Host '     npm  install -g pptxgenjs'
+    Write-Host '     pip  install Pillow "markitdown[pptx]"'
+    Write-Host '     winget install TheDocumentFoundation.LibreOffice'
+    Write-Host '     winget install oschwartz10612.Poppler'
+    Write-Host '   Ou rode:  pwsh scripts\install.ps1 -WithPresentation'
+    Write-Host '   Depois de instalar, REINICIE o Copilot CLI/terminal (PATH).'
+  }
+} catch {
+  Write-Host "   ⚠️  Checagem do toolchain de apresentação falhou: $($_.Exception.Message)"
+}
