@@ -542,3 +542,8 @@ flowchart TD
 `pptxgenjs` (npm), **LibreOffice** (`soffice`), **Poppler** (`pdftoppm`), `Pillow`,
 `markitdown[pptx]`. Sem o render (soffice/pdftoppm) não há revisão de design — nesse caso
 a skill avisa em vez de improvisar.
+
+## 🤝 Contributing
+
+Issue and pull request creation is restricted to collaborators. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for details.
