@@ -29,9 +29,24 @@ if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot 'SKILL.md'))) {
   throw "SKILL.md não encontrado em $RepoRoot — rode este script de dentro do repo document-swarm."
 }
 
+$PythonExe = $null
+foreach ($candidate in @('python3', 'python')) {
+  $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
+  if (-not $cmd) { continue }
+  & $cmd.Source -c 'import sys; raise SystemExit(sys.version_info.major != 3)' 2>$null
+  if ($LASTEXITCODE -eq 0) {
+    $PythonExe = $cmd.Source
+    break
+  }
+}
+if (-not $PythonExe) {
+  throw 'Python 3 é obrigatório para os checks determinísticos do modo documento.'
+}
+
 Write-Host '🐝 Instalando skill document-swarm'
 Write-Host "   repo:  $RepoRoot"
 Write-Host "   link:  $LinkPath"
+Write-Host ('   python: ' + (& $PythonExe --version 2>&1))
 
 New-Item -ItemType Directory -Force -Path $SkillsDir | Out-Null
 
@@ -70,7 +85,7 @@ try {
   Write-Host '— Modo Apresentação (PPTX): checando toolchain —'
 
   function Test-Cmd($n) { [bool](Get-Command $n -ErrorAction SilentlyContinue) }
-  function Test-PyMod($m) { if (-not (Test-Cmd python)) { return $false }; & python -c "import $m" 2>$null; return ($LASTEXITCODE -eq 0) }
+  function Test-PyMod($m) { & $PythonExe -c "import $m" 2>$null; return ($LASTEXITCODE -eq 0) }
   function Test-NpmGlobal($p) { if (-not (Test-Cmd npm)) { return $false }; try { return ((& npm ls -g $p 2>$null | Out-String) -match [regex]::Escape($p)) } catch { return $false } }
 
   $sofficeOk  = (Test-Cmd soffice)  -or (Test-Path 'C:\Program Files\LibreOffice\program\soffice.exe') -or (Test-Path 'C:\Program Files (x86)\LibreOffice\program\soffice.exe')
@@ -81,7 +96,7 @@ try {
     'node (build)'           = (Test-Cmd node)
     'npm (build)'            = (Test-Cmd npm)
     'pptxgenjs (npm -g)'     = (Test-NpmGlobal 'pptxgenjs')
-    'python (QA/thumbnail)'  = (Test-Cmd python)
+    'Python 3 (checks/QA)'  = $true
     'Pillow (thumbnail)'     = (Test-PyMod 'PIL')
     'markitdown (QA texto)'  = (Test-PyMod 'markitdown')
     'soffice (LibreOffice)'  = $sofficeOk
@@ -99,7 +114,7 @@ try {
     Write-Host ''
     Write-Host '   Instalando dependências de apresentação (-WithPresentation)...'
     if (Test-Cmd npm)    { try { & npm install -g pptxgenjs 2>&1 | Out-Null } catch {} }
-    if (Test-Cmd python) { try { & python -m pip install --quiet Pillow "markitdown[pptx]" 2>&1 | Out-Null } catch {} }
+    try { & $PythonExe -m pip install --quiet Pillow "markitdown[pptx]" 2>&1 | Out-Null } catch {}
     if (Test-Cmd winget) {
       try { & winget install --id TheDocumentFoundation.LibreOffice -e --silent --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null } catch {}
       try { & winget install --id oschwartz10612.Poppler -e --silent --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null } catch {}

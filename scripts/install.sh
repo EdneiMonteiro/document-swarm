@@ -25,9 +25,19 @@ if [ ! -f "$REPO_ROOT/SKILL.md" ]; then
   exit 1
 fi
 
+if command -v python3 >/dev/null 2>&1; then
+  PY=python3
+elif command -v python >/dev/null 2>&1 && python -c 'import sys; raise SystemExit(sys.version_info.major != 3)'; then
+  PY=python
+else
+  echo "Python 3 é obrigatório para os checks determinísticos do modo documento." >&2
+  exit 1
+fi
+
 echo "🐝 Instalando skill document-swarm"
 echo "   repo:  $REPO_ROOT"
 echo "   link:  $LINK_PATH"
+echo "   python: $($PY --version 2>&1)"
 
 mkdir -p "$SKILLS_DIR"
 
@@ -50,7 +60,6 @@ echo "Para mudar a saída, defina DOCSWARM_ROOT ou indique o destino no pedido."
 echo ""
 echo "— Modo Apresentação (PPTX): checando toolchain —"
 
-PY=python3; command -v python3 >/dev/null 2>&1 || PY=python
 have()  { command -v "$1" >/dev/null 2>&1; }
 pymod() { have "$PY" && "$PY" -c "import $1" >/dev/null 2>&1; }
 
@@ -67,7 +76,7 @@ check() {
 check "node (build)"          "have node"
 check "npm (build)"           "have npm"
 check "pptxgenjs (npm -g)"    "npm ls -g pptxgenjs"
-check "$PY (QA/thumbnail)"    "have $PY"
+check "$PY (checks/QA)"       "have $PY"
 check "Pillow (thumbnail)"    "pymod PIL"
 check "markitdown (QA texto)" "pymod markitdown"
 check "soffice (LibreOffice)" "have soffice"

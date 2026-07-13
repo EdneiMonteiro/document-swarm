@@ -1,5 +1,5 @@
 # Entregas dos swarms — produto de saída, não distribuído com a skill.
-# Cada execução cria <OUTPUT_ROOT>\<YYYY-MM-DD>-SWARM-XX\ aqui por padrão.
+# Cada execução cria <OUTPUT_ROOT>/<YYYY-MM-DD>-SWARM-XX/ aqui por padrão.
 /swarms/
 
 # Ruído de validação de diagramas Mermaid
@@ -13,3 +13,6 @@
 __pycache__/
 .DS_Store
 Thumbs.db
+
+# Ruído de depuração do Playwright MCP (browser console/page snapshots)
+.playwright-mcp/
