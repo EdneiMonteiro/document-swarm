@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -11,6 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.checks import final_report, gate, lint_agents, update_memory, verify_sources, verify_tables
+from scripts.checks.common import parse_yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -209,7 +212,7 @@ class GateTests(unittest.TestCase):
         self.assertEqual(gate.evaluate(review(critical=True))["outcome"], "rejected")
         self.assertEqual(gate.evaluate(review("B+", cycle=3, maximum=3))["outcome"], "escalate")
 
-    def test_deck_grades_block(self):
+    def test_legacy_deck_grades_still_block(self):
         self.assertEqual(gate.evaluate(review(slides=[{"slide": "1", "nota_minima": "B+"}]))["outcome"], "rejected")
         self.assertEqual(gate.evaluate(review(dimensions=[{"dimension": "contrast", "grade": "A-"}]))["outcome"], "rejected")
         self.assertEqual(gate.evaluate(review(slides={"Cover": {"grade": "A", "blocks": True}}))["blocked"][0]["name"], "Cover")
@@ -247,7 +250,39 @@ class FinalReportTests(WorkTest):
         self.assertIn("**approved**", text)
         self.assertIn("Final rubber-duck state", text)
         self.assertIn("COORDINATOR", text)
+        self.assertNotIn("Final slide grades", text)
+        self.assertNotIn("Final deck dimensions", text)
         self.assertEqual(final_report.main([str(swarm)]), 1)
+
+    def test_legacy_presentation_sections_only_appear_when_present(self):
+        swarm = self.work / "LEGACY"
+        (swarm / "reports").mkdir(parents=True)
+        (swarm / "sources").mkdir()
+        (swarm / "brief.md").write_text('---\nskill_version: "2.0.0"\n---\n', encoding="utf-8")
+        (swarm / "sources" / "sources-check.json").write_text(
+            json.dumps({"counts": {"ok": 1, "redirect": 0, "warn": 0, "fail": 0}}), encoding="utf-8",
+        )
+        (swarm / "reports" / "cycle-01-tables-check.json").write_text('{"failures":0}', encoding="utf-8")
+        base = (
+            "cycle: 1\nmax_cycles: 1\ntopics:\n  - topico: T1\n    nota_minima: A\n"
+            "    revisor_da_minima: r\n    bloqueia: false\n"
+            "rubberduck:\n  critico: false\n  achados: []\n"
+        )
+        for slides, dimensions in ((False, False), (True, False), (False, True), (True, True)):
+            with self.subTest(slides=slides, dimensions=dimensions):
+                document = base
+                if slides:
+                    document += 'slides:\n  - slide: "01"\n    nota_minima: A\n'
+                if dimensions:
+                    document += "deck_dimensions:\n  - dimension: Contrast\n    nota_minima: A\n"
+                (swarm / "reports" / "cycle-01-review.yaml").write_text(document, encoding="utf-8")
+                text = final_report.render(swarm)
+                self.assertEqual("### Final slide grades" in text, slides)
+                self.assertEqual("### Final deck dimensions" in text, dimensions)
+                if slides:
+                    self.assertIn("| 01 | A |", text)
+                if dimensions:
+                    self.assertIn("| Contrast | A |", text)
 
     def test_missing_mandatory_artifact_does_not_write_report(self):
         swarm = self.work / "MISSING"
@@ -335,6 +370,69 @@ class LintAgentsTests(WorkTest):
             cwd=self.work, text=True, capture_output=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class DocumentScopeTests(unittest.TestCase):
+    def test_templates_and_review_modes_are_document_only(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        headers = re.findall(r"```markdown\s*\n---\n(.*?)\n---(?:\n|$)", skill, re.S)
+        kinds = [parse_yaml(header)["kind"] for header in headers]
+        self.assertCountEqual(kinds, ["author", "reviewer", "coordinator", "rubber-duck"])
+        modes = re.findall(r"(?m)^mode:[ \t]+([a-z-]+)[ \t]*$", skill)
+        self.assertEqual(set(modes), {"document"})
+        self.assertNotIn("<deck_id>", skill)
+
+
+class InstallTests(WorkTest):
+    def test_bash_rejects_removed_and_unknown_options_without_installing(self):
+        bash = shutil.which("bash")
+        if sys.platform == "win32":
+            git = shutil.which("git")
+            candidate = Path(git).resolve().parents[1] / "bin" / "bash.exe" if git else None
+            bash = str(candidate) if candidate and candidate.is_file() else None
+        if not bash:
+            self.skipTest("Bash is unavailable")
+        script = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+        home = self.work / "home"
+        env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home), "BASH_ENV": ""}
+        syntax = subprocess.run(
+            [bash, "-n"], input=script, cwd=self.work, env=env,
+            text=True, encoding="utf-8", capture_output=True, timeout=15,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+        for option in ("--with-presentation", "--unknown"):
+            with self.subTest(option=option):
+                result = subprocess.run(
+                    [bash, "-s", "--", option], input=script, cwd=self.work, env=env,
+                    text=True, encoding="utf-8", capture_output=True, timeout=15,
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(option, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertFalse(home.exists())
+
+    def test_powershell_rejects_removed_and_unknown_options_without_installing(self):
+        pwsh = shutil.which("pwsh")
+        if not pwsh:
+            self.skipTest("PowerShell is unavailable")
+        scripts = self.work / "repo" / "scripts"
+        scripts.mkdir(parents=True)
+        script = scripts / "install.ps1"
+        shutil.copy2(ROOT / "scripts" / "install.ps1", script)
+        home = self.work / "home"
+        env = {**os.environ, "USERPROFILE": str(home), "HOME": str(home)}
+        for option in ("-WithPresentation", "-UnsupportedOption"):
+            with self.subTest(option=option):
+                result = subprocess.run(
+                    [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(script), option],
+                    cwd=self.work, env=env, text=True, encoding="utf-8", capture_output=True, timeout=15,
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn(option.lstrip("-"), result.stderr)
+                self.assertNotIn("SKILL.md", result.stderr)
+                self.assertEqual(result.stdout, "")
+                # PowerShell may create its own startup cache under USERPROFILE.
+                self.assertFalse((home / ".copilot").exists())
 
 
 class MemoryTests(WorkTest):

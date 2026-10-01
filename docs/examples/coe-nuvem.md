@@ -150,3 +150,21 @@ pedidos** ao Copilot CLI:
 
 > A skill faz o resto: perguntas de enquadramento, geração dos agentes, ciclos
 > de autor→revisão→rubber duck e o portão **A** para todos os tópicos.
+
+## Perfil editorial nas novas execuções
+
+O relato acima preserva a execução histórica. Em novas execuções, registre
+`editorial_profile: principal-cloud-solution-architect` no frontmatter do brief,
+com o público misto e suas necessidades: síntese de impacto, riscos e decisão
+para a liderança; mecanismos, restrições e operação para os times técnicos.
+
+Cada autor preserva sua especialidade e recebe um contrato editorial autocontido.
+Os revisores de estrutura/clareza e de aderência ao público avaliam a comunicação;
+o de completude avalia critérios, alternativas e trade-offs, sem forçar
+equivalências entre provedores. A revisão factual mantém sua exigência de
+evidência. Não é necessário criar um agente de humanização.
+
+Esses critérios entram nas notas por tópico do portão existente. Aplicá-los ao
+playbook já entregue exige uma nova evolução com revisão completa, não uma
+alteração das notas ou dos relatórios históricos. Veja o
+[perfil editorial da skill](../../SKILL.md#21-perfil-editorial-técnico).

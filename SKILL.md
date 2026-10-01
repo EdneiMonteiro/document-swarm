@@ -1,12 +1,12 @@
 ---
 name: document-swarm
-skill_version: "2.0.0"
-description: "Use when the user asks for a substantial document (playbook, whitepaper, report, RFC, policy, technical guide, comparison) or a slide presentation/deck (PPTX), or wants to evolve an existing swarm deliverable. The skill frames the request, creates declarative specialist agents with session-validated model provenance, runs evidence-based improvement cycles, executes deterministic source/table/quality gates, and stops only when every evaluated topic reaches at least A or the work is explicitly escalated. Do not use for short text such as a paragraph or email."
+skill_version: "3.0.0"
+description: "Use when the user asks for a substantial document (playbook, whitepaper, report, RFC, policy, technical guide, comparison) or wants to evolve an existing document produced by a swarm. The skill frames the request, creates declarative specialist agents with session-validated model provenance, runs evidence-based improvement cycles, executes deterministic source/table/quality gates, and stops only when every evaluated topic reaches at least A or the work is explicitly escalated. Do not use for presentations, slide decks, PPTX, or short text such as a paragraph or email."
 ---
 
 # Document Swarm Skill
 
-> Swarm de documentação para produzir documentos e apresentações substanciais com
+> Swarm de documentação para produzir documentos substanciais com
 > agentes declarativos, evidência rastreável, revisão iterativa e portões
 > determinísticos. A régua é `D- ... A+`; **A- não aprova**.
 
@@ -16,12 +16,13 @@ Use esta skill para:
 
 - criar whitepaper, playbook, relatório, RFC, política, guia técnico, tutorial ou
   comparativo substancial;
-- criar apresentação/deck PowerPoint;
-- evoluir uma entrega já produzida por um swarm;
+- evoluir um documento já produzido por um swarm;
 - trabalhos que se beneficiam de autores especializados, revisores independentes
   e mais de um ciclo de melhoria.
 
 Não use para e-mail, parágrafo, resposta curta ou edição trivial.
+Criação ou evolução de apresentações, slides, decks e arquivos PPTX está fora
+do escopo desta skill.
 
 ### Modo documento
 
@@ -31,20 +32,12 @@ Triggers típicos:
 - "crie um playbook/whitepaper/relatório sobre `<tema>`";
 - "monte um swarm para escrever sobre `<tema>`".
 
-### Modo apresentação
-
-Triggers típicos:
-
-- "crie uma apresentação/deck/pptx sobre `<tema>`";
-- "transforme este conteúdo em uma apresentação";
-- "monte um swarm de slides".
-
 ### Modo evolução
 
 Triggers típicos:
 
-- "evolua o documento/deck `<id>`";
-- "adicione diagramas/capítulos/slides ao swarm existente";
+- "evolua o documento `<id>`";
+- "adicione diagramas/capítulos ao swarm existente";
 - "atualize, expanda ou revise a entrega já produzida".
 
 No modo evolução, trabalhe sobre a pasta existente. Não crie um swarm novo.
@@ -53,8 +46,8 @@ No modo evolução, trabalhe sobre a pasta existente. Não crie um swarm novo.
 
 1. **Human-in-the-loop no início.** Enquadre objetivo, público, formato, escopo,
    restrições, critérios de sucesso e limite de ciclos antes de gerar agentes.
-2. **Agentes declarativos.** Cada autor, revisor, coordenador, rubber duck e,
-   quando aplicável, deck builder é um arquivo Markdown autocontido.
+2. **Agentes declarativos.** Cada autor, revisor, coordenador e rubber duck é um
+   arquivo Markdown autocontido.
 3. **Modelo com proveniência.** O modelo declarado por agente deve existir na
    lista atual da ferramenta `task`; substituições ficam registradas.
 4. **Evidência proporcional ao papel.** Autores e revisores de fatos pesquisam e
@@ -64,13 +57,117 @@ No modo evolução, trabalhe sobre a pasta existente. Não crie um swarm novo.
 6. **Julgamento onde é semântico.** Autores, revisores e rubber duck continuam
    responsáveis por correção, relevância, clareza, coerência e sustentação das
    afirmações.
-7. **Portão duro.** Todo tópico precisa de `A` ou `A+`; no deck, todo slide e toda
-   dimensão visual também. Achado crítico do rubber duck veta a entrega.
+7. **Portão duro.** Todo tópico precisa de `A` ou `A+`. Achado crítico do rubber
+   duck veta a entrega.
 8. **Sem regressão.** Evoluções reavaliam tópicos antigos e novos.
 9. **Rastreabilidade.** Cada ciclo preserva relatórios humanos e artefatos
    estruturados.
 10. **Escala explícita.** Ao atingir `max_cycles` sem aprovação, pare e informe o
     usuário; nunca entregue algo abaixo da barra em silêncio.
+11. **Diretriz editorial compartilhada.** Registre o perfil editorial e o público
+    no brief. Autores o aplicam, revisores o avaliam dentro de suas dimensões e o
+    coordenador mantém a uniformidade. Não crie um agente apenas para humanizar
+    texto.
+
+### 2.1. Perfil editorial técnico
+
+Para documentos de arquitetura de nuvem, o perfil padrão é
+`principal-cloud-solution-architect`, salvo orientação diferente no enquadramento.
+Adote o nível de análise, discernimento e comunicação esperado de um Principal
+Cloud Solution Architect de Microsoft, AWS ou Google Cloud. A referência é a
+senioridade técnica, não vínculo profissional, voz institucional ou preferência
+comercial por um provedor.
+
+O perfil não substitui a especialidade de cada autor nem presume que o público
+seja técnico. Em outros domínios, preserve os princípios abaixo e registre no
+brief um perfil adequado, sem forçar conteúdo de nuvem.
+
+**Julgamento e precisão**
+
+- Comece pelo problema, pela decisão ou pela conclusão relevante. Conecte
+  escolhas técnicas a resultados de negócio e consequências operacionais; um
+  catálogo de serviços não substitui uma arquitetura.
+- Nas decisões arquiteturais, explicite critérios, alternativas relevantes,
+  recomendação, trade-offs e condições que mudariam a escolha. Em vez de apenas
+  dizer "depende", identifique os fatores e como alteram a decisão.
+- Considere segurança, confiabilidade, desempenho, custo, governança e operação
+  conforme o assunto. Não repita todos os pilares como checklist em cada seção.
+- Diferencie fatos verificados, premissas, estimativas e recomendações. Não
+  invente experiências pessoais, números, benchmarks, referências ou capacidades
+  de produtos. Use métricas como latência, SLO, RTO e RPO quando ajudarem a decidir,
+  sem criar valores para aparentar precisão.
+- Preços, limites, regiões, disponibilidade e SLAs exigem fontes oficiais atuais.
+  Quando não puder verificar, declare a limitação; nunca apresente uma suposição
+  como fato confirmado.
+- Respeite diferenças de comportamento, responsabilidade e modelo comercial dos
+  provedores. Não force equivalências entre serviços nem comparações multicloud
+  fora do escopo.
+
+**Escrita e público**
+
+- Escreva de forma direta, natural, respeitosa e segura, sem arrogância,
+  intimidade artificial ou didatismo excessivo. Varie o ritmo sem fabricar
+  fragmentos ou imperfeições de raciocínio.
+- Prefira verbos concretos e mecanismos a adjetivos. Se algo é "seguro",
+  "resiliente" ou "escalável", explique o que sustenta a afirmação e seus limites.
+- Evite clichês, superlativos, linguagem promocional, conectivos repetitivos,
+  introduções como "no cenário atual" e conclusões que apenas repetem o texto.
+  Não use travessões longos no texto autoral; preserve citações literais e código.
+- Explique siglas conforme o público, sem infantilizar especialistas. Para
+  executivos, priorize impacto, riscos, investimento e decisão; para técnicos,
+  mecanismos, restrições, integração, modos de falha, operação e validação.
+  Para público misto, ofereça síntese decisória e aprofundamento técnico.
+- Use seções, listas, tabelas e exemplos quando facilitarem a compreensão.
+  Naturalidade não significa proibir estrutura nem impor a mesma estrutura a
+  todos os tópicos.
+
+**Estrutura dos documentos**
+
+Documentos devem desenvolver argumentos com encadeamento claro e extensão
+proporcional à necessidade do leitor. Preserve as condições indispensáveis para
+interpretar recomendações, mesmo em resumos executivos. Sugira diagramas para
+explicar relações, fluxos, dependências ou limites da arquitetura, não como
+decoração.
+
+Se faltar informação que mude materialmente a recomendação, peça esclarecimento;
+para lacunas menores, avance com premissas explícitas. Na revisão, elimine frases
+sem informação e confira se as conclusões decorrem das evidências. Priorize
+correção técnica, utilidade para decisão e clareza, nessa ordem.
+
+### 2.2. Aplicação por papel
+
+Ao gerar ou adaptar agentes, materialize em cada arquivo o perfil, o público e
+as regras pertinentes à sua missão. Não deixe apenas uma referência ao prompt
+compartilhado: os arquivos precisam continuar autocontidos. Não copie instruções
+de autoria para quem só revisa.
+
+| Papel existente | Responsabilidade editorial |
+|---|---|
+| Autor | Produzir e corrigir o conteúdo segundo o perfil, preservando sua especialidade e seu escopo. |
+| Revisor de clareza e público (`form`) | Avaliar naturalidade profissional, precisão da linguagem, organização, densidade, jargão, redundância e adequação ao leitor. |
+| Revisor de completude decisória (`form`) | Avaliar critérios, alternativas, trade-offs, riscos, limites e condições da recomendação, quando aplicáveis. |
+| Revisor de fatos (`fact`) | Verificar sustentação das afirmações, atualidade das capacidades e distinção entre fatos, premissas e estimativas. |
+| Coordenador | Uniformizar voz, terminologia e profundidade na consolidação, sem inventar fatos nem decidir silenciosamente divergências técnicas. |
+| Rubber duck | Auditar se clareza aparente ou fluência mascaram lacunas, contradições ou notas infladas. |
+
+Cubra clareza/aderência ao público e completude decisória com os revisores de
+forma existentes, sem adicionar um editor ou uma etapa separada. Eles não editam
+o documento: devolvem trechos problemáticos e correções acionáveis aos autores.
+A pesquisa continua proporcional à classe de evidência.
+
+A aderência editorial integra as notas por tópico nas dimensões existentes.
+Não é um selo separado nem uma
+substituição do portão. `A` exige atendimento ao perfil e ao público na dimensão
+avaliada, sem lacunas materiais; estilo agradável não compensa recomendação sem
+sustentação. Critérios que não se aplicam ao tópico devem ser justificados, não
+preenchidos artificialmente. Scripts não atribuem notas de estilo ou maturidade
+arquitetural.
+
+Mudar os templates não atualiza agentes já gerados. Quando solicitado, ajuste o
+brief e as declarações existentes e registre a versão da nova diretriz. Um pedido
+apenas de atualização de instruções não dispara reescrita da entrega: preserve
+outputs, relatórios, versões e notas históricas, sem alegar aprovação pelo novo
+perfil. Para aplicar a diretriz à entrega, execute o modo evolução.
 
 ## 3. Convenções de caminho e versão
 
@@ -102,10 +199,7 @@ Resolva `<OUTPUT_ROOT>` nesta ordem:
 3. `<DOCSWARM>/swarms`.
 
 Se houver ambiguidade real, confirme com o usuário. O identificador é sequencial
-por data:
-
-- documento: `<YYYY-MM-DD>-SWARM-<XX>`;
-- apresentação: `<YYYY-MM-DD>-DECK-<XX>`.
+por data: `<YYYY-MM-DD>-SWARM-<XX>`.
 
 ## 5. Estrutura de saída
 
@@ -135,38 +229,6 @@ por data:
    └─ <documento-final>.md
 ```
 
-### Apresentação
-
-```text
-<OUTPUT_ROOT>/<deck_id>/
-├─ brief.md
-├─ agents/
-│  ├─ coordinator.md
-│  ├─ rubber-duck.md
-│  ├─ deck-builder.md
-│  ├─ slide-authors/
-│  ├─ content-reviewers/
-│  └─ design-reviewers/
-├─ reports/
-│  ├─ agent-models.md
-│  ├─ cycle-0N-authors.md
-│  ├─ cycle-0N-build.md
-│  ├─ cycle-0N-content-review.md
-│  ├─ cycle-0N-design-review.md
-│  ├─ cycle-0N-review.yaml
-│  ├─ cycle-0N-rubberduck.md
-│  ├─ cycle-0N-tables-check.json
-│  └─ final-report.md
-├─ sources/
-│  ├─ sources-index.md
-│  └─ sources-check.json
-└─ output/
-   ├─ slides/
-   ├─ build/deck.js
-   ├─ renders/cycle-0N/slide-*.jpg
-   └─ deck.pptx
-```
-
 ## 6. Régua e matriz computável
 
 Escala canônica:
@@ -178,40 +240,25 @@ D-  D  D+  C-  C  C+  B-  B  B+  A-  A  A+
 - `A` e `A+`: aprovam;
 - `A-` ou menos: bloqueiam;
 - toda nota exige justificativa e correção acionável;
-- a nota mínima entre revisores é a nota efetiva do tópico/slide/dimensão.
+- a nota mínima entre revisores é a nota efetiva do tópico.
 
 Além do relatório Markdown, cada ciclo deve gerar
 `reports/cycle-0N-review.yaml`:
 
 ```yaml
 schema_version: 1
-skill_version: "2.0.0"
+skill_version: "3.0.0"
 mode: document
 cycle: 2
 max_cycles: 5
 topics:
-  - topico: "T01 — Enquadramento"
+  - topico: "T01: Enquadramento"
     nota_minima: A
     revisor_da_minima: reviewer-02-clarity
     bloqueia: false
 rubberduck:
   critico: false
   achados: []
-```
-
-No deck, acrescente:
-
-```yaml
-slides:
-  - slide: "01"
-    nota_minima: A
-    revisor_da_minima: design-01-layout
-    bloqueia: false
-deck_dimensions:
-  - dimension: "Coesão de paleta"
-    nota_minima: A
-    revisor_da_minima: design-02-system
-    bloqueia: false
 ```
 
 O rubber duck deve conferir a consistência entre `.md` e `.yaml`. O portão usa o
@@ -223,11 +270,10 @@ arquivo estruturado, não uma interpretação livre da prosa.
 
 | Papel | `sources_min` | Regra |
 |---|---:|---|
-| Autor / autor de slides | 5 | Fontes online distintas, funcionais e relevantes. |
+| Autor | 5 | Fontes online distintas, funcionais e relevantes. |
 | Revisor de fatos: precisão, fontes, compliance, segurança, governança | 5 | Pesquisa própria e conferência das fontes dos autores. |
 | Revisor de forma: estrutura, clareza, narrativa, aderência ao público | 0 | Fonte apenas quando contestar um fato. |
 | Rubber duck | 0 | Fonte quando contestar um fato; não há coleta ritual. |
-| Revisor de design | 0 | Avalia imagens renderizadas; não pesquisa fontes. |
 
 Priorize documentação oficial, normas, artigos acadêmicos e referências
 reconhecidas. Nunca invente URL ou trate acessibilidade como prova de que a fonte
@@ -299,6 +345,8 @@ Antes de definir agentes e fontes, leia:
 Reutilize apenas o que for relevante:
 
 - perfil reutilizado/adaptado recebe `derived_from` no frontmatter;
+- perfil herdado preserva a especialidade, mas recebe o contrato editorial do
+  brief atual; não herde tom, público ou critérios de revisão sem conferir;
 - fonte herdada é apenas uma semente e continua sujeita ao cache/checagem;
 - observação de calibração deve alterar a persona ou a revisão, não virar fato do
   documento.
@@ -318,6 +366,8 @@ Use `ask_user` antes de gerar agentes. Cubra:
 
 - objetivo;
 - público e senioridade;
+- perfil editorial, propondo `principal-cloud-solution-architect` para
+  arquitetura de nuvem e ajustando a linguagem ao público;
 - tipo/formato;
 - profundidade/extensão;
 - idioma;
@@ -339,24 +389,29 @@ No modo evolução, pergunte somente o que mudou.
 ```yaml
 ---
 swarm_id: <swarm_id>
-skill_version: "2.0.0"
+skill_version: "3.0.0"
 mode: document
 max_cycles: 5
+editorial_profile: <perfil definido no enquadramento>
 ---
 ```
 
-4. Registre enquadramento, tópicos de importância e critérios de sucesso.
+4. Registre enquadramento, público e familiaridade técnica, perfil editorial,
+   tópicos de importância e critérios de sucesso. Inclua clareza e utilidade
+   decisória na avaliação; registre adaptações e restrições do perfil.
 
 ### Fase 2 — Memória, agentes e modelos
 
 1. Consulte a memória e registre o que será reutilizado.
 2. Defina de 3 a 6 autores complementares.
 3. Defina de 3 a 5 revisores em dimensões distintas; classifique cada dimensão
-   como `fact` ou `form` para calcular `sources_min`.
+   como `fact` ou `form` para calcular `sources_min`. Cubra precisão factual,
+   clareza/aderência ao público e completude decisória nos papéis existentes.
 4. Gere coordenador e rubber duck.
 5. Escolha e valide modelos contra a sessão.
 6. Grave `reports/agent-models.md` com `Status` e `Substituído de`.
-7. Gere os arquivos declarativos.
+7. Gere os arquivos declarativos com o contrato editorial materializado por
+   papel conforme o brief e a seção 2.2.
 8. Rode:
 
 ```bash
@@ -373,7 +428,9 @@ Você é o coordenador. Para cada ciclo `N`:
    `model`, `reasoning_effort` e `context_tier` confirmados. No ciclo seguinte,
    envie somente tópicos bloqueados e achados obrigatórios.
 2. **Consolidação.** Monte `output/<doc>.md`, atualize
-   `sources/sources-index.md` e grave `reports/cycle-0N-authors.md`.
+   `sources/sources-index.md` e grave `reports/cycle-0N-authors.md`. Uniformize
+   voz, terminologia e profundidade antes da revisão; divergências de conteúdo
+   voltam aos autores, não são resolvidas apenas por edição de estilo.
 3. **Checagem de fontes.**
 
    ```bash
@@ -389,7 +446,9 @@ Você é o coordenador. Para cada ciclo `N`:
 
    Corrija qualquer falha marcada antes dos revisores.
 5. **Revisores.** Colete nota e ação por tópico e consolide
-   `reports/cycle-0N-review.md`.
+   `reports/cycle-0N-review.md`, incluindo a aderência editorial nas dimensões
+   atribuídas. Correções voltam aos autores e são reavaliadas; não faça uma
+   reescrita de conteúdo depois do portão sem nova revisão.
 6. **Matriz estruturada inicial.** Grave `reports/cycle-0N-review.yaml` com as
    notas mínimas.
 7. **Rubber duck.** Audite autores, revisores, coordenador, resultados dos
@@ -439,13 +498,15 @@ Você é o coordenador. Para cada ciclo `N`:
 
 ### E.0 — Diagnóstico
 
-Leia `brief.md`, documento/deck atual, último relatório/review estruturado,
+Leia `brief.md`, documento atual, último relatório/review estruturado,
 agentes e artefatos de checks. Identifique tópicos afetados e novos tópicos.
 
 ### E.1 — Composição
 
 - avalie se faltam autores ou dimensões de revisão;
 - adicione apenas especialidades realmente novas;
+- mudanças de perfil editorial adaptam os agentes existentes, sem criar um
+  agente de humanização; confronte perfis herdados com o brief atualizado;
 - reavalie modelos se a missão mudou;
 - registre em `reports/evo-<XX>-plan.md`;
 - consulte memória, usando o swarm original como fonte primária.
@@ -454,12 +515,15 @@ agentes e artefatos de checks. Identifique tópicos afetados e novos tópicos.
 
 Acrescente ao `brief.md` uma seção de evolução com data, versão atual da skill,
 pedido, tópicos, agentes e artefatos novos. Não apague histórico.
+Ao iniciar a nova execução, atualize `skill_version` no frontmatter do brief
+para a versão usada, sem alterar versões dos relatórios de ciclos anteriores.
+Registre mudanças de perfil editorial e materialize-as nas declarações.
 
 ### E.3 — Uniformidade
 
 Reative **todos** os autores existentes e novos. Cada um revisita sua seção para
-incorporar terminologia, referências cruzadas e impactos da evolução sem
-regredir conteúdo já aprovado.
+incorporar o perfil editorial, terminologia, referências cruzadas e impactos da
+evolução sem regredir conteúdo já aprovado.
 
 ### E.4 — Revisão
 
@@ -492,10 +556,31 @@ derived_from: <origem reutilizada ou vazio>
 # Autor: <Perfil>
 
 ## Persona
-<Especialidade, experiência e ponto de vista.>
+<Especialidade, ponto de vista, perfil editorial e público concretos do brief.>
 
 ## Missão
 Produzir os tópicos atribuídos no nível, tom e escopo do brief.
+
+## Contrato editorial
+- Aplique o perfil declarado sem abandonar sua especialidade. Escreva de forma
+  direta e natural, segura sem arrogância, ajustando jargão e profundidade ao
+  público. Não fabrique experiências pessoais ou imperfeições de raciocínio.
+- Comece pelo problema ou conclusão relevante. Nas decisões arquiteturais,
+  conecte resultados de negócio e operação a critérios, alternativas,
+  recomendação, trade-offs e condições que mudariam a escolha. Explique de que
+  depende, sem impor esse roteiro a trechos que não contêm uma decisão.
+- Separe fatos, premissas, estimativas e recomendações. Não invente valores,
+  capacidades ou referências; verifique informações voláteis em fontes oficiais
+  e explicite o que não foi possível confirmar. Não force equivalências multicloud.
+- Explique mecanismos e limites em vez de acumular adjetivos. Evite clichês,
+  linguagem promocional, conectivos repetidos e travessões longos no texto
+  autoral. Preserve citações e código.
+- Use seções, listas, tabelas, exemplos e métricas apenas quando úteis. Para
+  executivos, priorize impacto, risco, investimento e decisão; para técnicos,
+  mecanismos, restrições, falhas, operação e validação.
+- Peça esclarecimento para lacunas que mudem a recomendação; explicite premissas
+  para as demais. Revise conclusões contra as evidências e elimine redundâncias.
+  Priorize correção técnica, utilidade decisória e clareza.
 
 ## Tópicos
 - <tópico>
@@ -535,7 +620,22 @@ gate: "A"
 # Revisor: <Dimensão>
 
 ## Missão
-Avaliar cada tópico do brief sob a dimensão atribuída.
+Avaliar cada tópico do brief sob a dimensão atribuída, considerando
+<perfil editorial e público concretos>. Não editar o documento;
+devolver os achados aos autores.
+
+## Critérios da dimensão
+<Materialize somente a rubrica pertinente à missão, sem deixar este marcador:
+clareza/público avalia linguagem natural profissional, organização, jargão,
+densidade, redundância e ausência de promoção; completude decisória avalia
+critérios, alternativas, recomendação, trade-offs, limites e condições de mudança
+quando pertinentes; fatos verifica sustentação, atualidade e distinção entre
+fatos, premissas e estimativas.>
+
+Exija evidência no trecho para justificar a nota e uma correção
+acionável. `A` exige atendimento à dimensão sem lacunas materiais; não premie
+apenas fluência nem exija estruturas desnecessárias. Justifique critérios não
+aplicáveis. As notas alimentam a matriz por tópico e o portão existente.
 
 ## Evidência
 - `fact`: consulte pelo menos 5 fontes e confira as fontes dos autores.
@@ -567,6 +667,13 @@ max_cycles: 5
 
 # Coordenador
 
+Materialize o perfil editorial e o público do brief nos contratos de cada
+agente. Garanta cobertura de clareza e completude decisória pelos revisores
+existentes. Na consolidação, uniformize voz, terminologia e profundidade sem
+apagar ressalvas ou inventar fatos. Devolva divergências técnicas aos autores;
+revisores não reescrevem conteúdo.
+Submeta alterações de conteúdo à revisão, não a uma edição posterior ao portão.
+
 Orquestre o fluxo declarado no SKILL.md. Nunca pule `verify_sources.py`,
 `verify_tables.py`, a matriz YAML, o rubber duck ou `gate.py`. O exit code do
 portão decide o próximo passo.
@@ -594,6 +701,8 @@ Auditar autores, revisores e coordenador.
 
 ## Checagens obrigatórias
 - contradições, omissões, fuga de escopo e notas infladas;
+- aderência ao perfil e ao público do brief: estilo ou fluência não podem
+  mascarar falta de evidência, trade-offs omitidos ou ressalvas removidas;
 - fonte acessível que não sustenta a afirmação;
 - falhas ou avisos dos checks determinísticos;
 - aritmética relevante não marcada;
@@ -605,177 +714,7 @@ Achados priorizados como Crítico/Importante/Menor, com alvo, evidência e
 correção. Um achado Crítico deve aparecer em `rubberduck.critico: true`.
 ```
 
-## 14. Modo apresentação (PPTX)
-
-O motor de qualidade é o mesmo, com três diferenças:
-
-1. autores produzem specs de slide;
-2. um deck builder único compila e mantém o sistema visual;
-3. revisores multimodais avaliam imagens renderizadas por slide.
-
-### Toolchain
-
-Resolva a skill `pptx` e leia `SKILL.md` e `pptxgenjs.md` dela antes do build.
-Dependências:
-
-- Node.js e `pptxgenjs`;
-- LibreOffice (`soffice`);
-- Poppler (`pdftoppm`);
-- Pillow;
-- `markitdown[pptx]`.
-
-Sem render não há revisão de design; informe o bloqueio em vez de improvisar com
-Playwright.
-
-No Windows, caminhos de instalação comuns incluem
-`C:\Program Files\LibreOffice\program\soffice.exe`.
-
-### Fase 0
-
-Além das perguntas gerais, colete ocasião, tempo, quantidade de slides,
-identidade visual, template/logo, gráficos/diagramas necessários e restrições de
-marca.
-
-### Fase 1
-
-Crie a estrutura de deck e registre `skill_version`, `mode: deck`, tópicos,
-identidade visual e `max_cycles` no brief.
-
-### Fase 2
-
-Gere:
-
-- 3 a 6 autores de slides;
-- 3 a 5 revisores de conteúdo, classificados em `fact` ou `form`;
-- 2 a 3 revisores de design multimodais;
-- 1 deck builder;
-- coordenador e rubber duck.
-
-Consulte memória, valide modelos e rode `lint_agents.py`.
-
-### Fase 3 — ciclo
-
-1. Autores atualizam specs em `output/slides/`.
-2. Rubber duck audita specs e arco narrativo.
-3. Rode `verify_sources.py` e
-   `verify_tables.py output/slides/ --output reports/cycle-0N-tables-check.json`
-   sobre os specs aplicáveis.
-4. Deck builder gera `output/build/deck.js`, compila `output/deck.pptx`, executa
-   QA de texto e renderiza `output/renders/cycle-0N/slide-*.jpg`.
-5. Revisores de conteúdo dão nota por tópico.
-6. Rubber duck audita a calibração de conteúdo.
-7. Revisores de design abrem **todas** as imagens com `view` e dão nota por slide
-   e por dimensão do deck.
-8. Rubber duck reabre os renders e audita os achados visuais.
-9. Consolide os relatórios humanos e `cycle-0N-review.yaml` com `topics`,
-   `slides`, `deck_dimensions` e o veredito final do rubber duck.
-10. Rode `gate.py` e siga o exit code. Em exit `2`, execute
-    `python3 "<DOCSWARM>/scripts/checks/final_report.py" . --force` antes de
-    escalar; não aplique memória.
-
-### Fase 4
-
-Force a verificação de fontes, finalize o `.pptx` com speaker notes, gere
-`final-report.md` por script, complete a narrativa e proponha a memória.
-
-### Comandos de build/render
-
-```bash
-node output/build/deck.js
-python3 -m markitdown output/deck.pptx
-python3 "<PPTX>/scripts/office/soffice.py" --headless --convert-to pdf --outdir output/renders/cycle-0N output/deck.pptx
-pdftoppm -jpeg -r 150 output/renders/cycle-0N/deck.pdf output/renders/cycle-0N/slide
-```
-
-### Autor de slides
-
-```markdown
----
-name: author-<XX>-<slug>
-kind: slide-author
-role: <perfil>
-model: <modelo confirmado>
-reasoning_effort: <quando suportado>
-context_tier: <default|long_context>
-model_rationale: "<justificativa>"
-model_status: "disponível confirmado"
-swarm: <deck_id>
-sources_min: 5
-derived_from: <origem ou vazio>
----
-
-# Autor de Slides: <Perfil>
-
-Produza uma ideia por slide, conteúdo enxuto, intenção visual e speaker notes.
-
-### Slide NN — <título>
-- **Objetivo:** ...
-- **Mensagem-chave:** ...
-- **Conteúdo:** ...
-- **Visual:** ...
-- **Dados:** ...
-- **Speaker notes:** ...
-- **Fontes:** [Fxx]
-```
-
-### Deck builder
-
-```markdown
----
-name: deck-builder
-kind: deck-builder
-model: <modelo confirmado forte em código>
-reasoning_effort: high
-context_tier: long_context
-model_rationale: "<justificativa>"
-model_status: "disponível confirmado"
-swarm: <deck_id>
----
-
-# Deck Builder
-
-Seja o único dono da paleta, tipografia, motivo e compilação. Gere um deck
-determinístico, com speaker notes, QA de texto e renders por ciclo. Não invente
-conteúdo ausente no spec.
-```
-
-### Revisor de conteúdo
-
-Use o template de revisor do modo documento com `kind: content-reviewer`.
-Dimensões de fatos usam `sources_min: 5`; dimensões de forma usam `0`.
-
-### Revisor de design
-
-```markdown
----
-name: design-<XX>-<slug>
-kind: design-reviewer
-role: <dimensão visual>
-model: <modelo multimodal confirmado>
-reasoning_effort: high
-context_tier: long_context
-model_rationale: "<justificativa>"
-model_status: "disponível confirmado"
-swarm: <deck_id>
-sources_min: 0
-scale: "D- D D+ C- C C+ B- B B+ A- A A+"
-gate: "A"
----
-
-# Revisor de Design
-
-Abra cada `slide-*.jpg` com `view`. Avalie colisão, overflow, contraste,
-alinhamento, margens, tipografia, densidade, consistência, ritmo e coesão do
-sistema visual.
-
-| Slide | Nota | Problema | Correção acionável |
-|---|---|---|---|
-| 03 | B | ... | ... |
-
-Encerre com notas das dimensões do deck e bloqueios.
-```
-
-## 15. Referência dos scripts determinísticos
+## 14. Referência dos scripts determinísticos
 
 Todos usam somente Python stdlib. Consulte `--help` para opções exatas.
 
@@ -788,33 +727,25 @@ Todos usam somente Python stdlib. Consulte `--help` para opções exatas.
 | `final_report.py` | deriva fatos do relatório final | artefatos estão ausentes/inválidos |
 | `update_memory.py` | propõe e, após aprovação, aplica memória | swarm não aprovado ou fonte inelegível |
 
-## 16. Checklist — documento
+## 15. Checklist — documento
 
 - [ ] `brief.md` registra `skill_version`, `mode`, `max_cycles` e tópicos.
+- [ ] Perfil editorial e público estão registrados no brief e materializados
+      nos contratos dos agentes, preservando especialidades e responsabilidades.
 - [ ] Memória consultada e reutilizações registradas.
 - [ ] Agentes declarativos criados e `lint_agents.py` aprovado.
 - [ ] Modelos confirmados na sessão; substituições registradas.
 - [ ] Autores e revisores de fatos cumprem sua exigência de fontes.
 - [ ] Cada ciclo tem relatórios humanos, check de fontes, check de tabelas e YAML.
+- [ ] Clareza/aderência ao público e completude decisória foram avaliadas pelos
+      revisores existentes; as notas integram o portão por tópico.
 - [ ] `gate.py` retornou `0`.
 - [ ] Rechecagem final de fontes executada com `--force`.
 - [ ] `final-report.md` foi derivado por script e recebeu apenas narrativa humana.
 - [ ] Proposta de memória foi gerada e revisada.
 - [ ] Documento final tem índice e bibliografia.
 
-## 17. Checklist — apresentação
-
-- [ ] Todos os itens aplicáveis do modo documento.
-- [ ] Toolchain de build/render disponível.
-- [ ] Specs têm mensagem, visual e speaker notes.
-- [ ] `deck.pptx` compila e o QA de texto passa.
-- [ ] Todos os slides foram renderizados e abertos por revisores multimodais.
-- [ ] Todo tópico, slide e dimensão do deck está em `A` ou `A+`.
-- [ ] O `.pptx` final preserva speaker notes.
-
-## 18. Resposta ao usuário
-
-### Documento
+## 16. Resposta ao usuário
 
 ```markdown
 Swarm concluído: `<OUTPUT_ROOT>/<swarm_id>/`
@@ -824,16 +755,4 @@ Relatório: `reports/final-report.md`
 Versão da skill: <skill_version>
 Ciclos: <N> | Tópicos: <k>/<k> ≥ A | Gate: aprovado
 Fontes: <ok> ok, <warn> warn, 0 fail
-```
-
-### Apresentação
-
-```markdown
-Deck concluído: `<OUTPUT_ROOT>/<deck_id>/`
-
-Apresentação: `output/deck.pptx`
-Renders: `output/renders/cycle-<N>/`
-Relatório: `reports/final-report.md`
-Versão da skill: <skill_version>
-Ciclos: <N> | Tópicos ≥ A: <k>/<k> | Slides ≥ A: <m>/<m> | Gate: aprovado
 ```

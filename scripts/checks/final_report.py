@@ -121,7 +121,10 @@ def render(swarm: Path) -> str:
                 ))
     else:
         lines.append("- No structured topic review found.")
+    # Retain legacy deck sections only when the review actually contains them.
     for title, key, label in (("Final slide grades", "slides", "Slide"), ("Final deck dimensions", "deck_dimensions", "Dimension")):
+        if key not in latest:
+            continue
         lines += ["", f"### {title}"]
         values = latest.get(key, []) if isinstance(latest, dict) else []
         if isinstance(values, dict):

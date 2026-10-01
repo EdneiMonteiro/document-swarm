@@ -5,17 +5,16 @@
 [![GitHub Copilot CLI](https://img.shields.io/badge/GitHub%20Copilot-CLI%20Skill-000000?logo=githubcopilot&logoColor=white)](https://github.com/github/copilot-cli)
 [![Last commit](https://img.shields.io/github/last-commit/EdneiMonteiro/document-swarm)](https://github.com/EdneiMonteiro/document-swarm/commits)
 
-Skill do GitHub Copilot CLI para produzir documentos substanciais e apresentações
-PowerPoint com um enxame de agentes declarativos: autores, revisores,
-coordenador, rubber duck e, no modo deck, um deck builder e revisores de design.
+Skill do GitHub Copilot CLI para produzir documentos substanciais com um enxame
+de agentes declarativos: autores, revisores, coordenador e rubber duck.
 
-A versão 2 combina julgamento editorial por agentes com verificações
+O fluxo combina julgamento editorial por agentes com verificações
 determinísticas para URLs, aritmética de tabelas, proveniência de modelos, portão
 de notas e relatório final.
 
 > **Fonte da verdade:** [`SKILL.md`](./SKILL.md)
 >
-> **Versão atual:** `2.0.0`
+> **Versão atual:** `3.0.0`
 >
 > **Histórico:** [`CHANGELOG.md`](./CHANGELOG.md)
 
@@ -23,9 +22,7 @@ de notas e relatório final.
 
 - **Documentos Markdown:** playbooks, whitepapers, relatórios, RFCs, políticas,
   guias técnicos e comparativos.
-- **Apresentações `.pptx`:** specs de slide, build com `pptxgenjs`, speaker notes,
-  render e revisão visual multimodal.
-- **Evolução de entregas existentes:** reativa o enxame completo e revalida
+- **Evolução de documentos existentes:** reativa o enxame completo e revalida
   tópicos antigos e novos.
 - **Rastreabilidade:** brief, agentes, modelos, fontes, ciclos, notas e checks.
 - **Memória curada:** fontes e perfis aprovados podem ser reutilizados por swarms
@@ -33,6 +30,27 @@ de notas e relatório final.
 
 O portão usa a escala `D- ... A+`: **A- não passa**. Um achado crítico do rubber
 duck também bloqueia.
+
+O escopo é exclusivo de documentos. A skill não cria nem evolui apresentações,
+slides ou arquivos PPTX.
+
+## Perfil editorial técnico
+
+Documentos de arquitetura de nuvem adotam, por padrão, o perfil
+**Principal Cloud Solution Architect**: escrita natural e direta, rigor técnico,
+trade-offs explícitos e utilidade para decisão, sem linguagem promocional.
+O público e o perfil ficam no brief; a senioridade da análise não obriga o uso
+de jargão com executivos nem substitui a especialidade dos autores.
+
+Não há agente novo: autores aplicam a diretriz, revisores existentes avaliam
+clareza, completude decisória e fatos, e o coordenador mantém a uniformidade.
+Outros domínios adaptam o perfil no enquadramento, sem forçar conteúdo de nuvem.
+As regras e a distribuição por papel estão no
+[contrato editorial](./SKILL.md#21-perfil-editorial-técnico).
+
+Atualizar os templates não modifica agentes ou entregas já gerados. Ajustes de
+instruções existentes precisam ser explícitos; aplicar o perfil ao conteúdo
+exige o modo evolução, sem reaproveitar notas como aprovação retroativa.
 
 ## Instalação
 
@@ -56,20 +74,8 @@ Os instaladores criam
 `~/.copilot/skills/document-swarm -> <raiz-do-repositório>`. Reinicie o Copilot
 CLI e confirme com `/skills`.
 
-Para instalar também o toolchain de apresentações:
-
-```bash
-./scripts/install.sh --with-presentation
-```
-
-```powershell
-pwsh ./scripts/install.ps1 -WithPresentation
-```
-
-O modo documento usa apenas Python 3 stdlib para os checks. O modo apresentação
-também requer Node.js, `pptxgenjs`, LibreOffice, Poppler, Pillow e
-`markitdown[pptx]`. Veja
-[Toolchain do modo apresentação](./SKILL.md#toolchain).
+Os checks usam apenas Python 3 e sua biblioteca padrão. Os instaladores não
+instalam nem verificam dependências de apresentações.
 
 ## Como disparar
 
@@ -81,12 +87,6 @@ Implemente um playbook de arquitetura Zero Trust no Azure para arquitetos sênio
 
 ```text
 Crie um comparativo técnico entre <A>, <B> e <C>, com recomendação executiva.
-```
-
-### Apresentação
-
-```text
-Crie uma apresentação executiva de 15 slides sobre <tema>.
 ```
 
 ### Evolução
@@ -140,7 +140,7 @@ Detalhes operacionais, formatos e exit codes:
 - [Evidência e cache](./SKILL.md#7-evidência-e-cache-de-fontes)
 - [Tabelas auditáveis](./SKILL.md#8-tabelas-auditáveis)
 - [Loop determinístico](./SKILL.md#fase-3--loop-determinístico-por-ciclo)
-- [Referência dos scripts](./SKILL.md#15-referência-dos-scripts-determinísticos)
+- [Referência dos scripts](./SKILL.md#14-referência-dos-scripts-determinísticos)
 
 ## Estrutura de uma execução
 
@@ -173,19 +173,18 @@ As entregas em `swarms/` são locais e não são versionadas.
 O README é apenas uma porta de entrada. As regras completas vivem em:
 
 - [Contrato de qualidade](./SKILL.md#2-contrato-de-qualidade)
+- [Perfil editorial e responsabilidades](./SKILL.md#21-perfil-editorial-técnico)
 - [Proveniência de modelos](./SKILL.md#9-proveniência-de-modelos)
 - [Memória entre swarms](./SKILL.md#10-memória-entre-swarms)
 - [Fluxo do modo documento](./SKILL.md#11-fluxo--modo-documento)
 - [Modo evolução](./SKILL.md#12-modo-evolução)
 - [Templates declarativos](./SKILL.md#13-templates--documento)
-- [Modo apresentação](./SKILL.md#14-modo-apresentação-pptx)
-- [Checklists de entrega](./SKILL.md#16-checklist--documento)
+- [Checklist de entrega](./SKILL.md#15-checklist--documento)
 
 ## Exemplos
 
 - [CoE de Nuvem: criação e evolução](./docs/examples/coe-nuvem.md)
-- [Deck de apresentação](./docs/examples/deck-apresentacao.md)
-- [Plano arquitetural desta evolução](./docs/project/plano-melhoria.md)
+- [Plano arquitetural histórico da versão 2.0](./docs/project/plano-melhoria.md)
 
 ## Desenvolvimento
 
