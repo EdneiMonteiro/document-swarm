@@ -7,6 +7,10 @@
 
 ## Status de execução
 
+> **Registro histórico da versão 2.0.0.** As referências a apresentações abaixo
+> descrevem o escopo daquela versão. A partir da 3.0.0, a skill cria e evolui
+> somente documentos; consulte o [SKILL.md atual](../../SKILL.md).
+
 Implementado na skill `2.0.0` em 2026-07-13.
 
 | Issues | Resultado |

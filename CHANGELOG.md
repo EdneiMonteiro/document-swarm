@@ -7,6 +7,48 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-01
+
+### Removed
+
+- Presentation creation and evolution, PPTX triggers, slide-author and deck-builder
+  templates, content/design reviewer variants, rendering workflow and deck example.
+- Presentation toolchain checks and installation from both installers, including
+  `-WithPresentation` and `--with-presentation`.
+
+### Changed
+
+- The skill now creates and evolves documents only; the Principal Cloud Solution
+  Architect editorial profile and document quality workflow remain in place.
+- Document final reports omit slide and deck sections when the review has no such
+  fields. Historical deck reviews retain their original grades and blocking rules.
+- Unsupported installer arguments fail before installation instead of being ignored.
+- Existing deliverables, reports and historical changelog entries are preserved;
+  previously installed presentation tools are not uninstalled.
+
+## [2.1.0] - 2026-10-01
+
+### Added
+
+- Shared Principal Cloud Solution Architect editorial profile for cloud
+  architecture documents and presentations, with audience-specific depth.
+- Explicit editorial profile in new briefs and role-specific contracts in
+  declarative agents, including reused profiles.
+
+### Changed
+
+- Existing authors apply the profile; clarity, decision-completeness and factual
+  reviewers assess their own dimensions without rewriting the content.
+- Editorial criteria feed the existing topic grades and quality gate instead of
+  introducing a separate editor, agent or approval stage.
+- Coordinators align voice and terminology without inventing facts or silently
+  resolving technical disagreements.
+- Slide authors preserve decision context and visible conditions; deck builders
+  preserve meaning, sources, caveats and speaker notes from the specs.
+- Instruction-only updates preserve historical deliverables and approvals;
+  applying the profile to existing content requires the evolution workflow.
+- README and document/deck examples describe the new editorial responsibilities.
+
 ## [2.0.0] - 2026-07-13
 
 ### Added

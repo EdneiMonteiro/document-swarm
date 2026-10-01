@@ -93,6 +93,7 @@ def evaluate(data: Any) -> dict[str, Any]:
         raise InputError("rubberduck requires boolean critico/critical and list achados/findings")
     if critical:
         blocked.append({"kind": "rubberduck", "name": "critical finding", "grade": ""})
+    # Historical deck reviews must retain their original blocking criteria.
     blocked.extend(items_below(value(data, "slides", "slide_reviews"), ("slide", "name", "titulo", "title")))
     blocked.extend(items_below(value(data, "deck_dimensions", "deckDimensions"), ("dimension", "dimensao", "name")))
     outcome = "approved" if not blocked else "escalate" if cycle >= maximum else "rejected"
