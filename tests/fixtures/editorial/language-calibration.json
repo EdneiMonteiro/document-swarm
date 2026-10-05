@@ -1,0 +1,201 @@
+{
+  "schema_version": 1,
+  "guidance_version": "3.2.1",
+  "profile": "technical-corporate",
+  "purpose": "Casos de referência com julgamentos editoriais anotados. Não são resultados de um detector nem prova automatizada de qualidade da escrita.",
+  "context": "A alternativa arquitetural mantém um cluster AKS compartilhado e segrega dependências quando o compartilhamento do plano de controle, da administração e da manutenção permanece aceitável. O contexto de um cliente concreto ainda precisa confirmar essas condições.",
+  "required_lenses": ["language", "referents", "tone", "standalone"],
+  "required_surfaces": ["titles", "openings", "body", "cards", "captions", "conclusions"],
+  "cases": [
+    {
+      "id": "shared-aks-card",
+      "surface": "cards",
+      "technical_assessment": "Alternativa condicionalmente válida; não há erro arquitetural obrigatório na intenção de compartilhar o cluster.",
+      "before": "AKS compartilhado com dependências segregadas. Não impor outro AKS só por isso.",
+      "insufficient_justification": "Preserva uma alternativa sem exigir outro cluster.",
+      "before_grade": "B+",
+      "before_analysis": {
+        "language": "Não impor formula uma ordem de conversa interna, sem apresentar ao cliente um critério de aplicação.",
+        "referents": "Só por isso deixa implícito qual requisito de segregação está sendo considerado e quais compartilhamentos continuam aceitáveis.",
+        "tone": "A construção soa como instrução ao redator, não como explicação técnico-corporativa da alternativa.",
+        "standalone": "O leitor do card não consegue determinar quando o cluster compartilhado é adequado sem recuperar a conversa de autoria."
+      },
+      "after": "AKS compartilhado com dependências segregadas. Aplicável quando a segregação das dependências é necessária, mas o compartilhamento do plano de controle, da administração e da manutenção do cluster permanece aceitável.",
+      "after_grade": "A",
+      "after_analysis": {
+        "language": "A formulação apresenta uma condição de aplicação em frases completas.",
+        "referents": "Dependências, plano de controle, administração e manutenção são nomeados explicitamente.",
+        "tone": "O registro explica a alternativa ao cliente, sem coloquialismo ou comando de autoria.",
+        "standalone": "O card informa tanto o requisito de segregação quanto os compartilhamentos que precisam ser aceitos."
+      },
+      "preserved_meaning": "Mantém a opção de AKS compartilhado com dependências segregadas; explicita as condições de aceitação, sem afirmar que o cliente já as satisfaz."
+    },
+    {
+      "id": "generic-isolation-title",
+      "surface": "titles",
+      "technical_assessment": "A segregação seletiva pode ser adequada no contexto de referência.",
+      "before": "Só separar o que precisa.",
+      "insufficient_justification": "Evita exigir isolamento desnecessário.",
+      "before_grade": "B+",
+      "before_analysis": {
+        "language": "A frase reduz a análise a uma instrução informal.",
+        "referents": "O que precisa não identifica o componente nem o requisito de segregação.",
+        "tone": "O título soa como lembrete interno.",
+        "standalone": "O título isolado não informa o tema nem a decisão discutida."
+      },
+      "after": "Critérios para compartilhar o cluster AKS",
+      "after_grade": "A",
+      "after_analysis": {
+        "language": "O título delimita um objeto e a finalidade da seção.",
+        "referents": "O cluster AKS é identificado, sem pronome de referência vaga.",
+        "tone": "O registro é direto e profissional.",
+        "standalone": "O leitor identifica o assunto; o corpo deve apresentar os critérios, sem transformar o título em uma recomendação incondicional."
+      },
+      "preserved_meaning": "O título mantém em discussão o compartilhamento do cluster. As condições técnicas do contexto permanecem obrigatórias no corpo."
+    },
+    {
+      "id": "internal-conversation-opening",
+      "surface": "openings",
+      "technical_assessment": "Compartilhar o cluster e segregar dependências é uma alternativa do contexto.",
+      "before": "A ideia é manter esse AKS e separar as dependências, sem complicar à toa.",
+      "insufficient_justification": "A abertura comunica a arquitetura proposta.",
+      "before_grade": "B+",
+      "before_analysis": {
+        "language": "A ideia é e sem complicar à toa reproduzem linguagem de conversa interna.",
+        "referents": "Esse AKS depende de contexto anterior e complicar não identifica uma consequência técnica.",
+        "tone": "A abertura minimiza uma escolha arquitetural sem explicar o critério.",
+        "standalone": "A proposta pode ser reconhecida, mas suas condições de adoção permanecem implícitas."
+      },
+      "after": "O cenário mantém o cluster AKS compartilhado e segrega as dependências das aplicações. Sua adoção pressupõe que o plano de controle, a administração e a manutenção possam permanecer compartilhados.",
+      "after_grade": "A",
+      "after_analysis": {
+        "language": "A abertura descreve a configuração e a condição que orienta sua adoção.",
+        "referents": "O cenário e os elementos compartilhados estão nomeados.",
+        "tone": "A explicação não minimiza exigências com uma avaliação coloquial.",
+        "standalone": "O leitor compreende a proposta e o requisito que limita sua aplicação."
+      },
+      "preserved_meaning": "Preserva o compartilhamento do cluster e a segregação das dependências, condicionado à aceitação dos componentes comuns."
+    },
+    {
+      "id": "vague-reference-body",
+      "surface": "body",
+      "technical_assessment": "A intenção de não exigir outro cluster automaticamente é compatível com a alternativa de referência.",
+      "before": "Não precisamos de outro cluster por causa disso.",
+      "insufficient_justification": "Não força uma recomendação de cluster dedicado.",
+      "before_grade": "B+",
+      "before_analysis": {
+        "language": "Precisamos inclui uma voz de conversa interna sem explicitar o critério de decisão.",
+        "referents": "Disso não identifica o requisito que está sendo avaliado.",
+        "tone": "A declaração transmite uma conclusão informal, mais categórica do que o contexto permite.",
+        "standalone": "O trecho não informa quando a continuidade do compartilhamento é aceitável."
+      },
+      "after": "A necessidade de segregar dependências permite avaliar um cluster compartilhado quando o plano de controle, a administração e a manutenção comuns continuam aceitáveis para as aplicações.",
+      "after_grade": "A",
+      "after_analysis": {
+        "language": "A frase formula uma condição de avaliação, sem declarar uma decisão universal.",
+        "referents": "O requisito de segregação e os componentes compartilhados são identificados.",
+        "tone": "O texto apresenta o critério ao cliente de maneira profissional.",
+        "standalone": "A alternativa e sua limitação podem ser compreendidas sem a conversa anterior."
+      },
+      "preserved_meaning": "Mantém a possibilidade de um único cluster; não transforma a alternativa em obrigação nem elimina a necessidade de validar o compartilhamento."
+    },
+    {
+      "id": "metaphorical-caption",
+      "surface": "captions",
+      "technical_assessment": "O diagrama pretendido representa dependências segregadas em um cluster comum.",
+      "before": "Cada um no seu quadrado, com o AKS junto.",
+      "insufficient_justification": "A legenda diferencia os componentes no desenho.",
+      "before_grade": "B+",
+      "before_analysis": {
+        "language": "A metáfora substitui a identificação dos elementos arquiteturais.",
+        "referents": "Cada um e junto não especificam o que está segregado ou compartilhado.",
+        "tone": "A expressão é coloquial para uma legenda técnico-corporativa.",
+        "standalone": "A legenda não explica os limites de isolamento mostrados na figura."
+      },
+      "after": "Dependências segregadas por aplicação em um cluster AKS compartilhado. Plano de controle, administração e manutenção permanecem comuns às aplicações.",
+      "after_grade": "A",
+      "after_analysis": {
+        "language": "A legenda descreve elementos e relações concretos.",
+        "referents": "Aplicações, dependências e componentes comuns são nomeados.",
+        "tone": "O registro é descritivo e profissional.",
+        "standalone": "A figura pode ser interpretada com seus limites de isolamento explícitos."
+      },
+      "preserved_meaning": "Descreve a segregação de dependências sem prometer isolamento do plano de controle ou da operação."
+    },
+    {
+      "id": "informal-conclusion",
+      "surface": "conclusions",
+      "technical_assessment": "Reavaliar um cluster dedicado quando os compartilhamentos deixarem de ser aceitáveis é compatível com o contexto.",
+      "before": "Fica no mesmo AKS, então. Se isso incomodar, a gente vê outro.",
+      "insufficient_justification": "A conclusão mantém uma alternativa futura.",
+      "before_grade": "B+",
+      "before_analysis": {
+        "language": "A gente vê outro descreve uma conversa, sem critério técnico de reavaliação.",
+        "referents": "Isso e outro deixam a condição e o objeto implícitos.",
+        "tone": "Incomodar reduz um requisito arquitetural a uma impressão informal.",
+        "standalone": "A conclusão não indica quais exigências fariam a alternativa mudar."
+      },
+      "after": "O compartilhamento permanece como alternativa enquanto o plano de controle, a administração e a manutenção comuns forem aceitáveis. Exigências de independência desses componentes requerem reavaliar a adoção de um cluster dedicado.",
+      "after_grade": "A",
+      "after_analysis": {
+        "language": "A conclusão estabelece uma condição de permanência e um gatilho de reavaliação.",
+        "referents": "Os componentes comuns e a alternativa de cluster dedicado estão explícitos.",
+        "tone": "O registro trata as exigências como requisitos técnicos.",
+        "standalone": "O leitor entende quando reabrir a decisão, sem promessa de migração simples ou automática."
+      },
+      "preserved_meaning": "Mantém a opção compartilhada e a possibilidade de reavaliar um cluster dedicado, sem prometer uma mudança trivial."
+    },
+    {
+      "id": "legitimate-negative-statement",
+      "surface": "body",
+      "technical_assessment": "A segregação de dependências não implica planos de controle independentes no cenário de referência.",
+      "before": "O cenário não oferece planos de controle independentes: o plano de controle, a administração e a manutenção do cluster são compartilhados.",
+      "insufficient_justification": "Está tecnicamente correto.",
+      "before_grade": "A",
+      "before_analysis": {
+        "language": "A negativa descreve uma limitação concreta, não uma ordem ao redator.",
+        "referents": "O cenário é definido no contexto e os componentes compartilhados são nomeados na própria frase.",
+        "tone": "O registro é explicativo, sem coloquialismo ou slogan.",
+        "standalone": "A segunda oração explicita a condição necessária para compreender a limitação."
+      },
+      "after": "O cenário não oferece planos de controle independentes: o plano de controle, a administração e a manutenção do cluster são compartilhados.",
+      "after_grade": "A",
+      "after_analysis": {
+        "language": "A expressão já comunica a limitação de forma precisa.",
+        "referents": "Os componentes permanecem identificados.",
+        "tone": "O tom profissional é preservado.",
+        "standalone": "A frase mantém sua explicação completa."
+      },
+      "preserved_meaning": "Não requer troca de palavras por blacklist; a negativa tecnicamente necessária e editorialmente fundamentada é mantida."
+    }
+  ],
+  "audit_cases": [
+    {
+      "basis": "technical",
+      "unsupported_editorial_justification": "Está tecnicamente correto.",
+      "challenge": "A justificativa não examina linguagem, referentes, tom ou autonomia. Devolver ao revisor para fundamentar a nota editorial."
+    },
+    {
+      "basis": "decisional",
+      "unsupported_editorial_justification": "Preserva uma alternativa sem exigir outro cluster.",
+      "challenge": "A justificativa avalia a opção arquitetural, mas não o comando informal e o referente vago. Devolver a avaliação editorial ao revisor."
+    },
+    {
+      "basis": "visual",
+      "unsupported_editorial_justification": "O card está legível e não apresenta cortes.",
+      "challenge": "Legibilidade visual não explica adequação da redação. Devolver a nota editorial ao revisor responsável."
+    },
+    {
+      "basis": "historical",
+      "unsupported_editorial_justification": "O trecho preserva a abertura já aprovada.",
+      "challenge": "A avaliação anterior não dispensa a análise da linguagem da edição atual. Solicitar reavaliação, mantendo o histórico inalterado."
+    }
+  ],
+  "audit_protocol": {
+    "action": "return_to_responsible_reviewer",
+    "silent_grade_replacement": false,
+    "acceptance_while_unresolved": "blocked",
+    "deterministic_checks_prove": ["record_structure", "declared_coverage", "artifact_hashes"],
+    "deterministic_checks_do_not_prove": ["editorial_quality", "soundness_of_semantic_justification"]
+  }
+}

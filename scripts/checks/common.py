@@ -8,7 +8,9 @@ a YAML subset and is preferable when values need escaping.
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +21,11 @@ class InputError(ValueError):
 
 def load_data(path: Path) -> Any:
     """Load JSON or a deliberately small, safe YAML subset from *path*."""
-    text = path.read_text(encoding="utf-8")
+    return parse_data(path.read_text(encoding="utf-8"))
+
+
+def parse_data(text: str) -> Any:
+    """Decode a single captured document without rereading a changing file."""
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -134,3 +140,21 @@ def write_json(path: Path, data: Any) -> None:
     """Write stable, readable JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def write_json_atomic(path: Path, data: Any) -> None:
+    """Publish a complete JSON file, replacing only the requested destination."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=f".{path.name}.", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(data, stream, ensure_ascii=False, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()

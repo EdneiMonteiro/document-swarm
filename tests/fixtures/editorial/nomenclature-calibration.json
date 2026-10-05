@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "guidance_version": "3.2.2",
+  "purpose": "Casos sintéticos com julgamentos anotados sobre nomenclatura. Os significados declarados pertencem aos exemplos; não são deduzidos das letras nem atribuídos à captura do usuário.",
+  "cases": [
+    {
+      "id": "undefined-local-code",
+      "surface": "titles",
+      "author_intended_meaning": "E1 foi escolhido pelo autor como código local para Exemplo 1.",
+      "before": "E1: agente especialista",
+      "before_grade": "B+",
+      "before_reason": "O título não explica a função de E1. O leitor pode interpretá-lo como etapa, evidência ou exemplo.",
+      "after": "Exemplo 1: agente especialista",
+      "after_grade": "A",
+      "after_reason": "O título apresenta diretamente a função da numeração e o assunto, dispensando uma convenção local.",
+      "preserved_meaning": "Mantém a identificação do primeiro exemplo e seu assunto."
+    },
+    {
+      "id": "definition-only-at-end",
+      "surface": "body",
+      "author_intended_meaning": "T1 designa localmente o teste de carga e é usado para cruzar seus resultados com o plano de validação.",
+      "before": "T1 será executado antes da implantação. A explicação de T1 aparece apenas no glossário final.",
+      "before_grade": "B+",
+      "before_reason": "A primeira ocorrência exige uma definição distante para compreender a ação proposta. O glossário não resolve a leitura local.",
+      "after": "O teste de carga (T1, identificador local) será executado antes da implantação.",
+      "after_grade": "A",
+      "after_reason": "A ação é nomeada no primeiro uso e o código é explicitamente local.",
+      "preserved_meaning": "Preserva o teste e sua posição anterior à implantação."
+    },
+    {
+      "id": "conflicting-local-meanings",
+      "surface": "body",
+      "author_intended_meaning": "O autor reutilizou S1 para Semana 1 e Cenário 1.",
+      "before": "S1 é a primeira semana de validação. A opção de cluster compartilhado também aparece como S1.",
+      "before_grade": "B+",
+      "before_reason": "O mesmo código designa tempo e arquitetura, tornando referências posteriores ambíguas.",
+      "after": "A primeira semana é dedicada à validação. A alternativa arquitetural é identificada como cenário de cluster compartilhado.",
+      "after_grade": "A",
+      "after_reason": "Nomes descritivos distinguem o período da alternativa arquitetural sem sobrecarregar um identificador.",
+      "preserved_meaning": "Mantém a semana de validação e a identificação da alternativa compartilhada."
+    },
+    {
+      "id": "figure-depends-on-distant-legend",
+      "surface": "captions",
+      "author_intended_meaning": "No texto anterior, S1 foi definido como cenário de cluster compartilhado com dependências segregadas.",
+      "before": "S1 e suas dependências.",
+      "before_grade": "B+",
+      "before_reason": "A figura isolada depende da definição anterior de S1. A legenda não identifica a configuração representada.",
+      "after": "Cluster compartilhado com dependências segregadas.",
+      "after_grade": "A",
+      "after_reason": "A legenda nomeia a configuração no próprio elemento visual.",
+      "preserved_meaning": "Preserva o cenário e suas dependências segregadas, sem inventar limites adicionais de isolamento."
+    },
+    {
+      "id": "unnecessary-week-abbreviation",
+      "surface": "cards",
+      "author_intended_meaning": "W1 foi usado como abreviação local de Week 1.",
+      "before": "W1: validar o cenário",
+      "before_grade": "B+",
+      "before_reason": "O card exige aprender uma convenção em inglês para um período que pode ser escrito diretamente.",
+      "after": "Semana 1: validar o cenário",
+      "after_grade": "A",
+      "after_reason": "A duração e a ação ficam explícitas sem código auxiliar.",
+      "preserved_meaning": "Mantém a primeira semana e a atividade de validação."
+    },
+    {
+      "id": "unsupported-standard-claim",
+      "surface": "openings",
+      "author_intended_meaning": "C1 é uma convenção local para referências cruzadas ao primeiro cenário, sem norma externa.",
+      "before": "Pelo padrão do mercado, C1 identifica a primeira alternativa.",
+      "before_grade": "B+",
+      "before_reason": "A alegação de padrão não tem referência e confunde uma convenção local com uma notação externa reconhecida.",
+      "after": "Neste documento, C1 identifica a primeira alternativa analisada.",
+      "after_grade": "A",
+      "after_reason": "O texto define o significado e limita a convenção ao documento, sem alegar uma norma inexistente.",
+      "preserved_meaning": "Mantém a referência cruzada à primeira alternativa, com origem corretamente delimitada."
+    },
+    {
+      "id": "technical-acronym-first-use",
+      "surface": "openings",
+      "author_intended_meaning": "API é a interface de programação de aplicações.",
+      "before": "A API expõe as operações do serviço.",
+      "before_grade": "B+",
+      "before_reason": "Neste exemplo, é a primeira ocorrência para um público que não recebeu a definição da sigla.",
+      "after": "A interface de programação de aplicações (API) expõe as operações do serviço.",
+      "after_grade": "A",
+      "after_reason": "O primeiro uso apresenta o significado e a função no contexto, sem exigir conhecimento prévio.",
+      "preserved_meaning": "Mantém a interface e as operações expostas; não atribui capacidades adicionais."
+    },
+    {
+      "id": "internal-review-id-in-client-conclusion",
+      "surface": "conclusions",
+      "author_intended_meaning": "T01 é a chave interna do tópico de evidências na matriz do swarm.",
+      "before": "T01 foi aprovado; seguir para T02.",
+      "before_grade": "B+",
+      "before_reason": "A conclusão publica IDs de controle sem explicar ao cliente quais assuntos foram avaliados ou qual ação é necessária.",
+      "after": "A análise das evidências foi concluída. A próxima atividade é comparar as alternativas.",
+      "after_grade": "A",
+      "after_reason": "A conclusão identifica os assuntos em linguagem pública, sem exigir decodificação da matriz interna.",
+      "preserved_meaning": "As chaves T01 e T02 continuam nos registros internos; o texto público descreve seus assuntos."
+    },
+    {
+      "id": "defined-local-code-is-acceptable",
+      "surface": "body",
+      "author_intended_meaning": "E1 identifica uma evidência local usada em referências cruzadas.",
+      "before": "Evidência 1: manifesto de origem (E1). As referências a E1 neste documento apontam para esse manifesto.",
+      "before_grade": "A",
+      "before_reason": "A primeira ocorrência define finalidade, significado e escopo do código; a repetição é consistente.",
+      "after": "Evidência 1: manifesto de origem (E1). As referências a E1 neste documento apontam para esse manifesto.",
+      "after_grade": "A",
+      "after_reason": "O código útil e já explicado pode ser preservado. A regra não proíbe a combinação de letras e números.",
+      "preserved_meaning": "Mantém o identificador local e sua referência explícita."
+    }
+  ],
+  "inspection_limit": "Um scanner pode localizar E1, S1, T1, W1 ou API. Sua ocorrência não demonstra ausência de definição, significado, conflito ou condição de padrão; esses pontos exigem análise contextual.",
+  "acceptance": "O leitor compreende a nomenclatura na primeira ocorrência e consegue interpretar figuras/cards sem recorrer à conversa de autoria. Glossário final é complementar."
+}

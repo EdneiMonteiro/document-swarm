@@ -14,7 +14,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.checks.common import InputError, load_data
-from scripts.checks.gate import evaluate
+from scripts.checks.gate import evaluate, evaluate_current
 
 
 def find_artifacts(swarm: Path, name: str) -> list[Path]:
@@ -65,8 +65,8 @@ def render(swarm: Path) -> str:
     gate_results = []
     for path, review in reviews:
         try:
-            result = evaluate(review)
-        except InputError as exc:
+            result = evaluate_current(review, swarm) if path == reviews[-1][0] else evaluate(review)
+        except (InputError, OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise InputError(f"invalid review YAML {path}: {exc}") from exc
         result["artifact"] = str(path.relative_to(swarm))
         gate_results.append(result)
@@ -121,6 +121,28 @@ def render(swarm: Path) -> str:
                 ))
     else:
         lines.append("- No structured topic review found.")
+    editorial = latest.get("editorial")
+    if isinstance(editorial, dict):
+        lines += [
+            "", "### Final editorial review",
+            f"- Reviewer: {editorial['reviewer']}; scope: {editorial['scope']}; cycle: {editorial['cycle']}",
+            "- Declared review text and all delivery artifact hashes were checked.",
+            "| Surface | Grade |", "| --- | --- |",
+        ]
+        for item in editorial["surfaces"]:
+            lines.append(f"| {item['surface']} | {item.get('grade', 'not applicable')} |")
+        lines.append(f"- Findings: {json.dumps(editorial['findings'], ensure_ascii=False, sort_keys=True)}")
+        lines.append("- These records attest the declared review; semantic writing quality remains a reviewer judgment.")
+    if latest.get("pdf_inspections"):
+        failed = {item["name"] for item in gate_results[-1]["blocked"] if item["kind"] == "pdf"}
+        lines += ["", "### PDF mechanical inspections",
+                  "- Source, PDF, layout, inspection, extracted text and every preview were hash-verified.",
+                  "| PDF | Mechanical result |", "| --- | --- |"]
+        for record in latest["pdf_inspections"]:
+            name = record["pdf"]["path"].replace("\\", "/")
+            shown = name.replace("|", "\\|")
+            lines.append(f"| {shown} | {'fail' if name in failed else 'pass'} |")
+        lines.append("- Mechanical inspection does not award editorial or visual grades.")
     # Retain legacy deck sections only when the review actually contains them.
     for title, key, label in (("Final slide grades", "slides", "Slide"), ("Final deck dimensions", "deck_dimensions", "Dimension")):
         if key not in latest:

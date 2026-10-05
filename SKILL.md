@@ -1,6 +1,6 @@
 ---
 name: document-swarm
-skill_version: "3.0.0"
+skill_version: "3.3.0"
 description: "Use when the user asks for a substantial document (playbook, whitepaper, report, RFC, policy, technical guide, comparison) or wants to evolve an existing document produced by a swarm. The skill frames the request, creates declarative specialist agents with session-validated model provenance, runs evidence-based improvement cycles, executes deterministic source/table/quality gates, and stops only when every evaluated topic reaches at least A or the work is explicitly escalated. Do not use for presentations, slide decks, PPTX, or short text such as a paragraph or email."
 ---
 
@@ -68,6 +68,10 @@ No modo evolução, trabalhe sobre a pasta existente. Não crie um swarm novo.
     no brief. Autores o aplicam, revisores o avaliam dentro de suas dimensões e o
     coordenador mantém a uniformidade. Não crie um agente apenas para humanizar
     texto.
+12. **Redação aprovada separadamente da apresentação.** O revisor de clareza
+    avalia integralmente a redação da versão final do ciclo. Legibilidade,
+    cores, margens e ausência de cortes não justificam uma nota editorial.
+    O contrato `editorial-v1` vincula a avaliação ao texto e aos arquivos entregues.
 
 ### 2.1. Perfil editorial técnico
 
@@ -121,6 +125,109 @@ brief um perfil adequado, sem forçar conteúdo de nuvem.
   Naturalidade não significa proibir estrutura nem impor a mesma estrutura a
   todos os tópicos.
 
+**Critérios editoriais obrigatórios**
+
+Avalie capa, títulos, subtítulos, aberturas, corpo, chamadas, rótulos/legendas e
+conclusões. Corrija a família do defeito em toda a entrega, não somente o exemplo
+apontado pelo usuário.
+
+| Defeito | Critério de correção |
+|---|---|
+| Slogans e promessas vagas, como "Dimensionar melhor. Operar com critério." | Nomear o objeto, a decisão, a condição ou o resultado concreto. |
+| Títulos intercambiáveis entre assuntos, como "A decisão em uma página" | Informar qual recomendação ou questão a seção contém. |
+| Metatexto dispensável, como "Cores e rótulos acompanham o leitor" | Remover; índices e legendas devem fornecer orientação concreta, sem elogiar a apresentação. |
+| Antíteses usadas como frase de efeito, como "Não confundir candidato com destino" | Explicitar a condição de adoção, a limitação e sua consequência. |
+| Equações decorativas, como um título "X ≠ Y" sem explicar os mecanismos | Descrever os conceitos e a relação técnica pertinente. Preservar notação matemática quando ela for necessária ao cálculo. |
+| Tríades e rótulos genéricos, como "Três camadas de evidência" | Identificar as categorias reais; usar contagens e taxonomias somente quando ajudarem a compreender o assunto. |
+| Aberturas e conclusões que repetem importância, clareza ou confiança | Acrescentar informação útil ou remover a frase. |
+
+O teste de especificidade é concreto: se a frase servir para outro assunto
+apenas trocando o nome do produto, reescreva-a. Frases curtas devem expressar
+conteúdo, não imitar publicidade. Ressalvas preservam limitações técnicas e
+condições de decisão; não as transforme em aforismos repetidos.
+
+Não proíba palavras isoladas como "não", comparações legítimas ou listas úteis.
+Avalie a função da construção no contexto. A revisão busca aderência editorial,
+não determinar se um texto foi escrito por uma pessoa ou por IA.
+
+**Fundamentação da nota editorial**
+
+Uma ideia arquitetural válida pode ter redação inadequada ao público. O revisor
+de clareza examina quatro aspectos no trecho efetivamente entregue:
+
+- **Linguagem:** vocabulário preciso e frases completas, sem linguagem de
+  conversa interna ou comandos ao autor publicados como recomendação.
+- **Referentes:** expressões como "isso", "esse caso" ou "só por isso" precisam
+  apontar claramente para uma condição identificável no contexto.
+- **Tom:** registro profissional compatível com o público, sem coloquialismo
+  gratuito, slogan ou autoridade afirmada apenas pelo modo de escrever.
+- **Autonomia do trecho:** o leitor consegue compreender a alternativa, a
+  condição de aplicação e o limite pertinente sem conhecer a conversa de produção.
+
+A justificativa editorial deve explicar esses aspectos conforme sua relevância,
+citando a redação. "Preserva a alternativa", "não força uma recomendação" e
+"está tecnicamente correto" fundamentam mérito arquitetural ou decisório;
+isoladamente, não sustentam A editorial. O mesmo vale para legibilidade visual
+e aprovação histórica.
+
+Calibração para público técnico-corporativo:
+
+> Inadequado: "AKS compartilhado com dependências segregadas. Não impor outro AKS só por isso."
+>
+> Adequado: "AKS compartilhado com dependências segregadas. Aplicável quando a segregação das dependências é necessária, mas o compartilhamento do plano de controle, da administração e da manutenção do cluster permanece aceitável."
+
+No original, "Não impor" soa como orientação ao redator e "só por isso" omite o
+critério que deveria orientar o cliente. A correção explicita as condições de
+compartilhamento, mantendo a alternativa. Isso não afirma que um cliente concreto
+já atende a essas condições. Não invente condições de um ambiente para melhorar
+uma frase: confira as evidências ou encaminhe a lacuna ao autor responsável.
+
+Uma ocorrência dispara uma inspeção da família inteira: conversa interna,
+referentes vagos, instruções ao autor publicadas como conselho e frases de
+efeito. Cubra títulos, aberturas, corpo, cards/chamadas, legendas e conclusões.
+Registre as demais ocorrências ou explique o contexto que as torna aceitáveis.
+Os casos anotados de calibração estão em
+[tests/fixtures/editorial/language-calibration.json](tests/fixtures/editorial/language-calibration.json);
+as notas de referência servem para calibrar julgamento, não são um detector.
+
+**Siglas, códigos e nomes apresentados ao leitor**
+
+Use nomes descritivos por padrão. T1, S1, W1 ou E1 não têm significado universal
+e não devem ser apresentados como padrão de mercado apenas por parecerem técnicos.
+
+- Mantenha IDs de controle do swarm, como `topics.topico: T01`, nos registros
+  internos. A entrega ao cliente usa o título descritivo; preserve os IDs
+  necessários ao funcionamento dos checks e à rastreabilidade.
+- Evite abreviações locais que só economizam poucos caracteres. Quando o autor
+  tiver definido o significado como semana, use "Semana 1" em vez de W1.
+  Nunca adivinhe se E1 significa etapa, exemplo ou evidência.
+- Se um código local for útil para referências cruzadas, apresente nome e
+  finalidade no primeiro uso, por exemplo "Evidência 1: manifesto de origem (E1)".
+  Mantenha um único significado e um mapa consistente no documento-fonte.
+- Expanda siglas técnicas na primeira ocorrência ou em nota imediatamente
+  próxima. Uma alegação de notação padronizada exige referência técnica ou
+  normativa; distinga padrão externo de convenção criada para aquele documento.
+- Títulos, cards, figuras e tabelas precisam de nomes/legendas suficientes para
+  leitura isolada. Uma definição no fim do documento não resolve um código opaco
+  apresentado antes ou num elemento destacado. Glossário é complementar.
+- Citações bibliográficas podem usar numeração convencional com referências
+  correspondentes. Não transforme códigos de categorias, etapas ou cenários em
+  supostas referências bibliográficas para dispensar sua definição.
+- Preserve identificadores oficiais e trechos literais de código quando a
+  identificação exata for necessária. Explique a função no contexto, sem
+  inventar uma expansão para nomes de produtos, SKUs ou campos de API.
+
+Autores e coordenador resolvem a nomenclatura no conteúdo-fonte. Renderizadores
+de PDF/diagramas apenas consomem os nomes, códigos e legendas aprovados; não
+criam prefixos novos durante a composição.
+
+O revisor de clareza verifica primeira ocorrência, significado, consistência e
+autonomia das figuras. Código indefinido ou ambíguo impede A na superfície
+afetada. O rubber duck contesta justificativas como "é comum", "é técnico" ou
+"está no glossário" quando não demonstram compreensão no ponto de leitura.
+Os casos anotados estão em
+[tests/fixtures/editorial/nomenclature-calibration.json](tests/fixtures/editorial/nomenclature-calibration.json).
+
 **Estrutura dos documentos**
 
 Documentos devem desenvolver argumentos com encadeamento claro e extensão
@@ -154,6 +261,11 @@ Cubra clareza/aderência ao público e completude decisória com os revisores de
 forma existentes, sem adicionar um editor ou uma etapa separada. Eles não editam
 o documento: devolvem trechos problemáticos e correções acionáveis aos autores.
 A pesquisa continua proporcional à classe de evidência.
+Designe um desses revisores de forma como `editorial_reviewer` no brief.
+Sua nota de redação é independente de qualquer avaliação visual que também
+realize e das avaliações factual e decisória. Uma entrega tecnicamente correta
+com linguagem inadequada, referentes vagos ou instruções internas fica abaixo
+de A na superfície editorial afetada.
 
 A aderência editorial integra as notas por tópico nas dimensões existentes.
 Não é um selo separado nem uma
@@ -163,11 +275,136 @@ sustentação. Critérios que não se aplicam ao tópico devem ser justificados,
 preenchidos artificialmente. Scripts não atribuem notas de estilo ou maturidade
 arquitetural.
 
+Para aprovar o ciclo, esse revisor lê a versão integral atual e registra trechos,
+localização, justificativa e correção. "Já aprovado", "não regrediu", "sem clipping"
+ou "boa hierarquia visual" não substituem uma análise da redação. Rechecks
+direcionados podem apoiar outras dimensões, mas não dispensam a passagem editorial
+integral antes da entrega.
+
+O rubber duck confronta nota, trecho e justificativa. Se uma aprovação editorial
+estiver sustentada apenas por mérito arquitetural, completude decisória,
+legibilidade ou histórico, registra o bloqueio e devolve a avaliação ao revisor
+responsável. Não substitui sua nota silenciosamente. O coordenador aguarda a
+reavaliação antes de consolidar o aceite.
+
+O texto autoral nasce no documento-fonte, incluindo títulos, chamadas e legendas.
+Um gerador de PDF/HTML apenas compõe esse conteúdo; não deve inventar slogans ou
+reescrever trechos durante a renderização. Numeração e metadados mecânicos podem
+ser gerados. Qualquer texto autoral acrescentado na composição volta à revisão.
+
 Mudar os templates não atualiza agentes já gerados. Quando solicitado, ajuste o
 brief e as declarações existentes e registre a versão da nova diretriz. Um pedido
 apenas de atualização de instruções não dispara reescrita da entrega: preserve
 outputs, relatórios, versões e notas históricas, sem alegar aprovação pelo novo
 perfil. Para aplicar a diretriz à entrega, execute o modo evolução.
+Atualize explicitamente as declarações já existentes quando esse ajuste for
+solicitado, preservando missão, modelos, escopo e fronteiras de escrita. Registre
+a versão da orientação nos arquivos, sem declarar que agentes já despachados
+receberam instruções novas sem relê-las.
+
+### 2.3. Monitor visual de execução
+
+O monitor é uma extensão de observação, não um agente nem um executor do swarm.
+O padrão é `monitor: true` no brief. Se o usuário desativar o monitor, não abra
+canvas/navegador nem registre a execução na extensão.
+
+Quando habilitado, descubra a ferramenta `docswarm_monitor` no catálogo da sessão.
+Se não estiver disponível ou falhar, avise explicitamente e continue no terminal.
+Não instale extensões no repositório do cliente, não invente chamadas a ferramentas
+ausentes e não altere os portões para fazer o painel funcionar.
+
+Após criar o brief e antes de gerar agentes:
+
+```json
+{"operation":"start","swarm_path":"<caminho absoluto da pasta do swarm>"}
+```
+
+Guarde o `execution_id` retornado. `start` tenta abrir o canvas automaticamente,
+com navegador local como alternativa. Uma execução ativa pode ser reconectada
+com o mesmo caminho; não crie outra execução só para atualizar a tela. `open`
+reabre a interface existente. Não copie URLs com credenciais temporárias para
+documentos ou relatórios.
+
+Os agentes aparecem a partir de suas declarações válidas. Antes de cada chamada
+real à ferramenta `task`, registre o despacho:
+
+```json
+{"operation":"dispatch","execution_id":"<id>","agent_id":"<name do agente>","cycle":1}
+```
+
+Use **exatamente o `task_name` retornado no parâmetro `name` da chamada real a
+`task`**. A extensão não inicia o agente. Preserve prompt, `agent_type`, modelo,
+effort e contexto definidos para a missão. Para interações posteriores do mesmo
+trabalho, registre outro despacho com o `task_id` já observado e só então use
+`write_agent`. Nunca associe agentes pela semelhança dos nomes.
+
+Publique a fase e o ciclo reais com `operation: "phase"`. Fases:
+`setup`, `agents`, `authors`, `consolidation`, `sources`, `tables`, `reviews`,
+`rubber-duck`, `gate`, `delivery`. A preparação pode usar ciclo `0`; os ciclos
+de produção começam em `1`. `handoff` registra uma passagem real entre `from` e
+`to` (nomes declarados), com um `label` curto e sem dados sensíveis.
+
+`refresh` relê os artefatos; não modifica avaliações. Depois da entrega ou
+escalação, use `finish` com `completed`, `escalated` ou `aborted`, conforme o
+encerramento real. O monitor registra a solicitação e continua observando até
+`session.idle` confirmar que não há trabalho de runtime em andamento. Não aguarde
+essa confirmação para concluir seu turno nem repita `finish` em um laço.
+Esse registro não aprova o documento nem encerra agentes.
+Notas vêm das avaliações estruturadas; aprovação vem do resultado registrado
+do gate. Estados desconhecidos, cancelamentos e informações históricas não
+podem ser apresentados como sucesso atual.
+Um subagente `idle` está disponível para outro turno; esse estado não significa
+automaticamente que o usuário precisa responder. A sessão principal pode estar
+consolidando, validando ou executando outro trabalho enquanto os especialistas
+estão entre turnos.
+
+### 2.4. Composição e inspeção profissional de PDF
+
+Quando PDF fizer parte da entrega, use o motor portátil de ReportLab/Platypus
+em `scripts/pdf`. O documento-fonte continua sendo Markdown; o motor não
+escreve títulos, legendas, recomendações ou notas editoriais. Perfis iniciais:
+`textbook` (livro didático) e `technical-report` (relatório técnico), com
+capa vetorial original, prosa justificada, sumário navegável, tabelas,
+fórmulas Unicode e diagramas vetoriais declarados na fonte.
+
+As dependências de `requirements-pdf.txt` são opcionais; os checks em
+`scripts/checks` continuam usando somente stdlib. Fontes redistribuíveis e
+suas licenças são incorporadas ao pacote, sem depender de fontes do Windows.
+Não instale dependências silenciosamente em ambientes de clientes.
+
+Descubra `docswarm_pdf` no catálogo, quando disponível, e use `action: render`
+com `source` e `destination` absolutos, `profile` e `language`. A pasta de destino
+deve ser nova para cada composição. Alternativa por terminal, a partir da raiz
+da skill com o Python do ambiente PDF:
+
+```bash
+python -m scripts.pdf render --source "<swarm>/output/documento.md" --destination "<swarm>/output/pdf-cycle-01" --profile textbook --language pt-BR
+python -m scripts.pdf inspect --source "<swarm>/output/documento.md" --destination "<swarm>/output/pdf-cycle-01"
+```
+
+`render` já inspeciona o resultado. O bundle contém `document.pdf`, prévias PNG
+por página, `editorial-text.txt`, `layout.json`, `manifest.json` e `inspection.json`.
+O comando retorna 0 somente se a inspeção mecânica passar, 1 para PDF produzido
+com falhas de inspeção e 2 para erro de entrada, composição ou dependências.
+Nunca declare uma entrega concluída apenas porque o arquivo foi criado.
+
+A inspeção compara o PDF real com o conteúdo-fonte, preservando operadores de
+fórmulas/código; mede limites de texto, contraste/tinta no raster, disposição de
+tabelas/figuras, links, navegação e incorporação de fontes. Não atribui qualidade
+editorial ou significado arquitetural. Os revisores devem abrir as prévias e
+avaliar redação e apresentação separadamente, mesmo com inspeção aprovada.
+
+Nas novas execuções com PDF, registre `pdf_engine: reportlab-v1` no brief e
+inclua o PDF em `deliverables`. O consolidado de cada ciclo acrescenta
+`pdf_inspections`, uma entrada por PDF com quatro referências `path`/`sha256`:
+`source`, `pdf`, `manifest` e `inspection`. O gate verifica os arquivos reais,
+os vínculos entre hashes, todas as prévias e o relatório mecânico. PDF, fonte
+ou prévia alterados exigem nova inspeção e revisão pertinente; um hash atualizado
+sem revalidação não satisfaz o contrato.
+
+Documentos anteriores à 3.3 mantêm a leitura histórica do contrato original.
+Novas evoluções com PDF usam este fluxo. A sintaxe suportada, os limites e os
+comandos completos estão em [docs/pdf.md](docs/pdf.md).
 
 ## 3. Convenções de caminho e versão
 
@@ -218,16 +455,31 @@ por data: `<YYYY-MM-DD>-SWARM-<XX>`.
 │  ├─ cycle-0N-authors.md
 │  ├─ cycle-0N-review.md
 │  ├─ cycle-0N-review.yaml
+│  ├─ cycle-0N-reviewer-<id>.json
+│  ├─ cycle-0N-editorial-text.txt
+│  ├─ cycle-0N-nomenclature.json
+│  ├─ cycle-0N-gate.json
 │  ├─ cycle-0N-rubberduck.md
 │  ├─ cycle-0N-tables-check.json
+│  ├─ progress/<execution_id>/
 │  └─ final-report.md
 ├─ sources/
 │  ├─ sources-index.md
 │  └─ sources-check.json
 └─ output/
    ├─ sections/
-   └─ <documento-final>.md
+   ├─ <documento-final>.md
+   └─ pdf-cycle-0N/
+      ├─ document.pdf
+      ├─ previews/
+      ├─ editorial-text.txt
+      ├─ layout.json
+      ├─ manifest.json
+      └─ inspection.json
 ```
+
+A pasta `pdf-cycle-0N/` só é criada quando o PDF integra a entrega. Cada
+recomposição usa um destino novo, conforme a seção 2.4, preservando os anteriores.
 
 ## 6. Régua e matriz computável
 
@@ -247,12 +499,14 @@ Além do relatório Markdown, cada ciclo deve gerar
 
 ```yaml
 schema_version: 1
-skill_version: "3.0.0"
+skill_version: "3.3.0"
+quality_contract: editorial-v1
 mode: document
 cycle: 2
 max_cycles: 5
 topics:
-  - topico: "T01: Enquadramento"
+  - topico: "T01"
+    title: "Enquadramento"
     nota_minima: A
     revisor_da_minima: reviewer-02-clarity
     bloqueia: false
@@ -263,6 +517,63 @@ rubberduck:
 
 O rubber duck deve conferir a consistência entre `.md` e `.yaml`. O portão usa o
 arquivo estruturado, não uma interpretação livre da prosa.
+O exemplo acima mostra o núcleo do consolidado; o bloco `editorial` descrito
+abaixo é obrigatório antes de executar o gate nas novas execuções.
+
+Cada revisor também produz `reports/cycle-0N-<name>.json`, com o mesmo resultado
+do relatório humano. Use o nome declarado do revisor, como
+`cycle-01-reviewer-01-facts.json`, e IDs de tópicos idênticos aos do consolidado:
+
+```json
+{
+  "schema_version": 1,
+  "cycle": 1,
+  "reviewer": "reviewer-01-facts",
+  "topics": [
+    {
+      "topic": "T01",
+      "grade": "B+",
+      "justification": "A premissa que sustenta a escolha não está explícita.",
+      "action": "Registrar a premissa e a condição que mudaria a decisão."
+    }
+  ]
+}
+```
+
+O coordenador usa essas avaliações para registrar os mínimos no YAML. A ação
+pode ser vazia quando não houver correção necessária. Não reconstrua notas
+individuais a partir da nota mínima de um relatório antigo. Divergências entre
+Markdown, JSON individual e YAML consolidado precisam ser corrigidas na fonte,
+nunca escondidas pelo painel.
+
+### Avaliação editorial integral
+
+O JSON do revisor indicado em `brief.editorial_reviewer` também contém um bloco
+`editorial`, copiado sem alterações para o consolidado do ciclo. Formato:
+
+- `schema_version: 1`, `cycle` atual, `reviewer` exato e `scope: full_document`;
+- `text`: objeto com `path` e SHA-256 do texto UTF-8 integral efetivamente
+  revisado, incluindo títulos, chamadas, legendas e conclusões;
+- `artifacts`: lista de objetos `path`/`sha256` de todas as entregas finais
+  listadas em `brief.deliverables`, inclusive o PDF quando solicitado;
+- `surfaces`: uma entrada por `titles`, `openings`, `body`, `captions` e
+  `conclusions`, cada uma com `grade`, `location`, `quote`, `justification` e
+  `action`. O trecho citado deve existir no texto revisado;
+- somente `captions` pode usar `not_applicable` com justificativa em vez de
+  nota, quando o documento realmente não tiver legendas/rótulos;
+- `findings`: lista explícita de achados com `severity: blocking|minor`,
+  `location`, `quote`, `reason` e `action`, ou lista vazia.
+
+O exemplo completo está em [docs/editorial-review.md](docs/editorial-review.md).
+Cada superfície aplicável precisa de A ou A+ e nenhum achado `blocking` pode
+permanecer, mesmo que as notas por tópico ou de diagramação sejam A.
+
+O gate verifica presença, escopo, ciclo, correspondência com o JSON individual,
+trechos e hashes. Não calcula qualidade da escrita por palavras-chave.
+Uma avaliação incompleta, herdada ou vinculada a outro arquivo é inválida.
+Mudanças no texto ou no PDF após a revisão exigem atualizar a avaliação real e
+executar novamente o gate. Versões históricas anteriores ao contrato mantêm
+suas regras; não recebem aprovação editorial retroativa.
 
 ## 7. Evidência e cache de fontes
 
@@ -347,6 +658,10 @@ Reutilize apenas o que for relevante:
 - perfil reutilizado/adaptado recebe `derived_from` no frontmatter;
 - perfil herdado preserva a especialidade, mas recebe o contrato editorial do
   brief atual; não herde tom, público ou critérios de revisão sem conferir;
+- uma aprovação histórica ou perfil voltado a layout não satisfaz a avaliação
+  `editorial-v1`; materialize a rubrica atual antes de reutilizá-lo;
+- perfis de revisão precisam preservar a distinção entre justificativa editorial
+  e mérito técnico; o coordenador incorpora a orientação atual ao gerar declarações;
 - fonte herdada é apenas uma semente e continua sujeita ao cache/checagem;
 - observação de calibração deve alterar a persona ou a revisão, não virar fato do
   documento.
@@ -368,6 +683,7 @@ Use `ask_user` antes de gerar agentes. Cubra:
 - público e senioridade;
 - perfil editorial, propondo `principal-cloud-solution-architect` para
   arquitetura de nuvem e ajustando a linguagem ao público;
+- monitor visual, habilitado por padrão e dispensável para a produção;
 - tipo/formato;
 - profundidade/extensão;
 - idioma;
@@ -389,16 +705,28 @@ No modo evolução, pergunte somente o que mudou.
 ```yaml
 ---
 swarm_id: <swarm_id>
-skill_version: "3.0.0"
+skill_version: "3.3.0"
 mode: document
 max_cycles: 5
 editorial_profile: <perfil definido no enquadramento>
+monitor: true
+quality_contract: editorial-v1
+editorial_reviewer: reviewer-03-clarity
+deliverables:
+  - output/<documento-final>.md
 ---
 ```
 
 4. Registre enquadramento, público e familiaridade técnica, perfil editorial,
    tópicos de importância e critérios de sucesso. Inclua clareza e utilidade
    decisória na avaliação; registre adaptações e restrições do perfil.
+   Liste em `deliverables` os caminhos de todas as entregas reais. Se houver
+   PDF, inclua-o; não liste um formato que não será produzido. O nome em
+   `editorial_reviewer` deve corresponder ao revisor de forma efetivamente criado.
+   Quando houver PDF, registre também `pdf_engine: reportlab-v1`, perfil visual
+   e idioma. Mantenha nomes e referências autorais no Markdown, não no gerador.
+5. Se habilitado e disponível, inicie `docswarm_monitor` conforme a seção 2.3,
+   para que a criação das declarações já apareça na tela.
 
 ### Fase 2 — Memória, agentes e modelos
 
@@ -407,11 +735,23 @@ editorial_profile: <perfil definido no enquadramento>
 3. Defina de 3 a 5 revisores em dimensões distintas; classifique cada dimensão
    como `fact` ou `form` para calcular `sources_min`. Cubra precisão factual,
    clareza/aderência ao público e completude decisória nos papéis existentes.
+   Materialize no revisor editorial a rubrica de redação e o contrato de saída,
+   separados de eventuais critérios de apresentação visual.
 4. Gere coordenador e rubber duck.
 5. Escolha e valide modelos contra a sessão.
 6. Grave `reports/agent-models.md` com `Status` e `Substituído de`.
 7. Gere os arquivos declarativos com o contrato editorial materializado por
    papel conforme o brief e a seção 2.2.
+   Publique a fase `agents`; mantenha os nomes declarados estáveis.
+   Inclua linguagem, referentes, tom e autonomia na missão do revisor de clareza,
+   a conversão de instruções internas em condições na missão dos autores, e a
+   confrontação de nota/trecho/justificativa na missão do rubber duck. Reutilizar
+   um agente exige atualizar seu arquivo, não apenas o template.
+   Inclua também a política de nomes descritivos, definições no primeiro uso,
+   consistência dos códigos e legendas autônomas. IDs internos do swarm não
+   devem ser renomeados como efeito dessa orientação.
+   Atualize campos existentes em vez de acrescentar chaves duplicadas; o lint
+   rejeita metadados ambíguos que poderiam selecionar uma versão antiga.
 8. Rode:
 
 ```bash
@@ -427,10 +767,32 @@ Você é o coordenador. Para cada ciclo `N`:
 1. **Autores.** Despache autores independentes em paralelo, usando exatamente
    `model`, `reasoning_effort` e `context_tier` confirmados. No ciclo seguinte,
    envie somente tópicos bloqueados e achados obrigatórios.
+   No monitor, publique `authors` com o ciclo real e registre cada despacho
+   antes de chamar `task`, usando o `task_name` retornado.
 2. **Consolidação.** Monte `output/<doc>.md`, atualize
    `sources/sources-index.md` e grave `reports/cycle-0N-authors.md`. Uniformize
    voz, terminologia e profundidade antes da revisão; divergências de conteúdo
    voltam aos autores, não são resolvidas apenas por edição de estilo.
+   Converta orientações internas em critérios de aplicação, limitações ou
+   consequências para o leitor. Preserve fatos, lógica, escopo e ressalvas;
+   isso não congela uma redação coloquial ou ambígua.
+   Monte os formatos finais pedidos antes da revisão. Preserve um texto UTF-8
+   integral para cotejo, por exemplo `reports/cycle-0N-editorial-text.txt`,
+   fiel à redação efetivamente entregue. Se houver PDF, extraia e confira seu
+   texto e inspecione sua renderização; não avalie somente o gerador.
+   Execute a composição/inspeção da seção 2.4 antes de despachar revisores.
+   Se houver falha mecânica, corrija a fonte ou o compositor e gere outro bundle,
+   preservando o anterior; não reduza o conteúdo nem masque operadores para passar.
+   Inspecione candidatos de nomenclatura no texto integral:
+
+   ```bash
+   python3 "<DOCSWARM>/scripts/checks/inspect_nomenclature.py" reports/cycle-0N-editorial-text.txt --output reports/cycle-0N-nomenclature.json
+   ```
+
+   O relatório aponta ocorrências e linhas, sem deduzir significados ou aprovar
+   definições. Autores/revisor classificam os candidatos, substituem códigos
+   dispensáveis por nomes e conferem definições/legendas na entrega real.
+   Zero candidatos não dispensa a revisão de figuras, código ou termos não capturados.
 3. **Checagem de fontes.**
 
    ```bash
@@ -449,16 +811,40 @@ Você é o coordenador. Para cada ciclo `N`:
    `reports/cycle-0N-review.md`, incluindo a aderência editorial nas dimensões
    atribuídas. Correções voltam aos autores e são reavaliadas; não faça uma
    reescrita de conteúdo depois do portão sem nova revisão.
+   Colete também o JSON individual de cada revisor e mantenha IDs consistentes.
+   Registre os despachos e as passagens efetivas de artefatos; notas pendentes
+   continuam pendentes na interface.
+   O revisor editorial lê toda a redação final do ciclo, preenche `editorial`
+   e fundamenta as notas com trechos. A revisão visual não pode aprovar essa
+   dimensão por procuração.
+   Para PDF, os revisores abrem as prévias PNG de todas as páginas e conferem
+   capa, justificação, sumário, tabelas, fórmulas, código, links e diagramas.
+   Registrem achados visuais com página/alvo, separados dos julgamentos de redação.
+   Exija análise da linguagem, referentes, tom e autonomia; adequação decisória
+   isolada não sustenta a nota editorial.
+   Confira a nomenclatura inclusive no primeiro uso e em elementos que possam
+   ser lidos isoladamente. Registre achados no bloco editorial existente;
+   o relatório lexical é apoio, não prova de que os termos foram explicados.
 6. **Matriz estruturada inicial.** Grave `reports/cycle-0N-review.yaml` com as
    notas mínimas.
+   Inclua `pdf_inspections` com os hashes reais de fonte, PDF, manifesto e
+   inspeção para cada entrega PDF. Não use relatório de um bundle anterior.
 7. **Rubber duck.** Audite autores, revisores, coordenador, resultados dos
    scripts e consistência `.md` ↔ `.yaml`; grave
    `reports/cycle-0N-rubberduck.md`.
+   Confira se slogans, títulos genéricos, antíteses decorativas e metatexto
+   foram realmente avaliados em todas as superfícies. Conteste A sustentado
+   somente por layout ou pela aprovação de um ciclo anterior.
+   Conteste também aprovações fundamentadas somente em correção técnica ou
+   completude decisória. Devolva nota sem sustentação ao revisor, com trecho e
+   motivo; não edite sua nota em silêncio.
+   Confira códigos sem definição, significados conflitantes e legendas
+   dependentes de glossário distante. Exija fonte quando se alegar padrão externo.
 8. **Atualize o YAML.** Registre `rubberduck.critico` e os achados.
 9. **Portão por exit code.**
 
    ```bash
-   python3 "<DOCSWARM>/scripts/checks/gate.py" reports/cycle-0N-review.yaml
+   python3 "<DOCSWARM>/scripts/checks/gate.py" reports/cycle-0N-review.yaml --output reports/cycle-0N-gate.json
    ```
 
    - exit `0`: aprovado; vá à Fase 4;
@@ -468,6 +854,10 @@ Você é o coordenador. Para cada ciclo `N`:
      narrativa dos bloqueios e escale ao usuário com esse relatório; não aplique
      memória;
    - exit `3`: artefato inválido; corrija o YAML, não prossiga.
+
+Publique as demais fases conforme forem executadas, não antecipadamente. O
+resultado persistido do gate é vinculado aos bytes da revisão; se ela mudar,
+execute o gate novamente. O monitor não substitui as chamadas aos scripts.
 
 ### Fase 4 — Entrega e memória
 
@@ -493,6 +883,8 @@ Você é o coordenador. Para cada ciclo `N`:
 
 5. Revise a proposta; aplique somente pelo fluxo explícito do script.
 6. Entregue os caminhos e um resumo curto.
+7. Registre `finish` no monitor após a conclusão real. Em escalação ou
+   interrupção, registre o estado correspondente, sem declarar aprovação.
 
 ## 12. Modo evolução
 
@@ -518,12 +910,25 @@ pedido, tópicos, agentes e artefatos novos. Não apague histórico.
 Ao iniciar a nova execução, atualize `skill_version` no frontmatter do brief
 para a versão usada, sem alterar versões dos relatórios de ciclos anteriores.
 Registre mudanças de perfil editorial e materialize-as nas declarações.
+Atualize também o contrato de saída estruturada dos revisores e os marcos do
+monitor para a nova execução, preservando arquivos e notas históricos.
+Quando a evolução entregar PDF, registre `pdf_engine: reportlab-v1`, perfil e
+idioma; adapte explicitamente os agentes reutilizados ao fluxo de composição,
+inspeção e revisão das prévias da seção 2.4. Não migre nem reescreva PDFs de ciclos
+históricos apenas para preencher o novo contrato.
+Na adoção de `editorial-v1`, atualize o brief com o revisor designado e as
+entregas reais. Leia integralmente a nova edição: a aprovação de uma abertura
+em um ciclo antigo não substitui essa revisão.
 
 ### E.3 — Uniformidade
 
 Reative **todos** os autores existentes e novos. Cada um revisita sua seção para
 incorporar o perfil editorial, terminologia, referências cruzadas e impactos da
 evolução sem regredir conteúdo já aprovado.
+Preservar conteúdo significa manter fatos, lógica, escopo, condições e
+limitações. Evoluções visuais permitem e exigem corrigir linguagem inadequada.
+Texto alterado volta à revisão integral e à vinculação dos artefatos, sem
+herdar automaticamente a aprovação anterior.
 
 ### E.4 — Revisão
 
@@ -551,6 +956,7 @@ model_status: "disponível confirmado"
 swarm: <swarm_id>
 sources_min: 5
 derived_from: <origem reutilizada ou vazio>
+editorial_guidance_version: "3.2.2"
 ---
 
 # Autor: <Perfil>
@@ -575,6 +981,26 @@ Produzir os tópicos atribuídos no nível, tom e escopo do brief.
 - Explique mecanismos e limites em vez de acumular adjetivos. Evite clichês,
   linguagem promocional, conectivos repetidos e travessões longos no texto
   autoral. Preserve citações e código.
+- Escreva títulos que identifiquem o objeto, a decisão ou a condição. Remova
+  slogans genéricos, promessas vagas e frases que apenas comentem o documento.
+  Substitua antíteses decorativas por explicações dos mecanismos e das limitações.
+  Se a frase servir para outro assunto apenas trocando o produto, reescreva-a.
+- Aplique o mesmo critério a capa, títulos, aberturas, corpo, chamadas, legendas
+  e conclusões. Uma ocorrência indica que toda a família deve ser procurada.
+  Preserve negativas técnicas necessárias e notação matemática útil.
+- Inclua toda a redação autoral no documento-fonte antes da composição visual.
+  O gerador não deve criar títulos ou chamadas adicionais depois da revisão.
+- Converta linguagem de conversa interna e instruções ao autor em critérios de
+  aplicação, limitações e consequências para o leitor. Explicite os referentes.
+  Não invente condições arquiteturais: preserve as sustentadas e encaminhe lacunas.
+- Em evoluções visuais, preserve fatos, lógica, escopo e ressalvas, sem congelar
+  redação inadequada. Reescritas voltam à revisão e aos hashes dos artefatos.
+- Prefira nomes descritivos na entrega. Defina siglas e códigos locais no
+  primeiro uso e mantenha o significado consistente; não presuma que E1/T1/S1
+  sejam padrões externos. Alegações de padrão exigem fonte.
+- Dê autonomia a cards, figuras e tabelas por títulos e legendas próximos.
+  Glossário final é complementar. Preserve IDs de controle nos registros
+  internos e identificadores oficiais necessários, sem inventar expansões.
 - Use seções, listas, tabelas, exemplos e métricas apenas quando úteis. Para
   executivos, priorize impacto, risco, investimento e decisão; para técnicos,
   mecanismos, restrições, falhas, operação e validação.
@@ -591,6 +1017,10 @@ Produzir os tópicos atribuídos no nível, tom e escopo do brief.
 3. Escreva conteúdo preciso, específico e acionável.
 4. Marque tabelas auditáveis com `<!-- check: ... -->`.
 5. Atualize sua seção e o índice de fontes sem sobrescrever trabalho alheio.
+6. Se houver PDF, mantenha conteúdo em Markdown e use blocos `:::figure` com tipo
+   explícito e `:::formula` para o conteúdo estruturado. Forneça títulos, rótulos,
+   unidades e legendas completos. Corrija estouros na fonte preservando termos,
+   condições e operadores, sem instruir o gerador a inventar abreviações.
 
 ## Fontes
 | ID | Título | Tipo | URL | Verificado |
@@ -615,6 +1045,7 @@ swarm: <swarm_id>
 sources_min: <5 para fact; 0 para form>
 scale: "D- D D+ C- C C+ B- B B+ A- A A+"
 gate: "A"
+editorial_guidance_version: "3.2.2"
 ---
 
 # Revisor: <Dimensão>
@@ -637,6 +1068,51 @@ acionável. `A` exige atendimento à dimensão sem lacunas materiais; não premi
 apenas fluência nem exija estruturas desnecessárias. Justifique critérios não
 aplicáveis. As notas alimentam a matriz por tópico e o portão existente.
 
+## Revisão editorial, quando designada no brief
+Leia toda a redação final deste ciclo, inclusive capa, títulos, aberturas, corpo,
+chamadas, legendas e conclusões. Identifique slogans, metatexto vazio, títulos
+intercambiáveis e antíteses de efeito. Dê correções específicas que preservem
+dados, condições e significado técnico; não proíba palavras isoladas.
+
+Avalie redação separadamente de diagramação. Cores, margens, gráficos legíveis
+e ausência de cortes não fundamentam nota editorial. "Já aprovado" e "sem
+regressão" não dispensam a leitura integral atual. A superfície afetada por
+defeito editorial material recebe menos de A, mesmo com conteúdo factual correto.
+
+Fundamente a nota em linguagem, referentes, tom e autonomia do trecho. Explique
+por que a redação permite ao público compreender as condições relevantes.
+"Preserva a alternativa" ou "não força uma recomendação" não justificam A
+editorial: são argumentos de mérito decisório. Uma frase arquiteturalmente válida
+pode ficar abaixo de A pela linguagem e pela condição deixada implícita.
+
+Ao encontrar conversa interna, referente vago, comando ao autor ou frase de
+efeito, examine a família em títulos, corpo, cards/chamadas, legendas e conclusões.
+Registre outras ocorrências e preserve condições técnicas nas correções propostas.
+Recebendo uma contestação do rubber duck, reavalie explicitamente trecho e nota.
+
+Verifique siglas/códigos no primeiro uso, significado consistente e legendas
+autônomas. Código sem definição ou ambíguo impede A na superfície afetada.
+Prefira nomes completos quando a abreviação for dispensável. Não aceite
+"padrão de mercado" sem referência nem adivinhe o significado de um código.
+O relatório de candidatos de nomenclatura é apoio lexical, não avaliação
+semântica ou garantia de cobertura de imagens e trechos de código.
+
+Se a entrega incluir PDF, examine o texto extraído e as prévias de todas as
+páginas do bundle inspecionado. Registre falhas visuais com página e alvo;
+confira capa, sumário, tabelas multipágina, fórmulas, código e figuras.
+A inspeção mecânica não atribui notas nem dispensa sua avaliação da dimensão
+designada. Rejeite hashes ou prévias de outra composição.
+
+Registre `editorial` no seu JSON: versão 1, ciclo atual, seu nome, escopo
+`full_document`, texto integral (`text.path`/`sha256`), todos os arquivos de
+entrega (`artifacts` com path/sha256), cinco `surfaces` (titles, openings, body,
+captions, conclusions) com `grade`, `location`, `quote`, `justification`, `action`,
+e `findings` com `severity` (blocking/minor), `location`, `quote`, `reason`,
+`action`. Somente legendas realmente ausentes podem receber
+`not_applicable` justificado sem nota. Trechos devem existir no texto examinado.
+O coordenador copia esse bloco sem reinterpretá-lo. Revisor de outra dimensão
+não preenche a avaliação editorial em seu lugar.
+
 ## Evidência
 - `fact`: consulte pelo menos 5 fontes e confira as fontes dos autores.
 - `form`: não faça pesquisa ritual; cite fonte apenas ao contestar um fato.
@@ -647,6 +1123,10 @@ aplicáveis. As notas alimentam a matriz por tópico e o portão existente.
 | <tópico> | B+ | ... | "Adicione/corrija/remova..." |
 
 Encerre com a nota mínima, bloqueios e fontes exigidas pela sua classe.
+Além do Markdown, grave `reports/cycle-NN-<name>.json` com `schema_version: 1`,
+`cycle`, `reviewer` (seu nome declarado) e `topics`: objetos com `topic` (ID do
+brief), `grade`, `justification` e `action`. As notas devem ser idênticas às
+do relatório humano; não preencha notas em nome de outro revisor.
 ```
 
 ### Coordenador
@@ -663,6 +1143,7 @@ model_status: "disponível confirmado"
 swarm: <swarm_id>
 gate: "A"
 max_cycles: 5
+editorial_guidance_version: "3.2.2"
 ---
 
 # Coordenador
@@ -673,6 +1154,36 @@ existentes. Na consolidação, uniformize voz, terminologia e profundidade sem
 apagar ressalvas ou inventar fatos. Devolva divergências técnicas aos autores;
 revisores não reescrevem conteúdo.
 Submeta alterações de conteúdo à revisão, não a uma edição posterior ao portão.
+Designe o revisor editorial no brief e registre todas as entregas em
+`deliverables`. Prepare documento-fonte e formatos finais antes da avaliação;
+o renderizador apenas compõe a redação existente. Exija revisão integral de
+títulos, aberturas, corpo, legendas e conclusões, separada da diagramação.
+Copie o bloco `editorial` do JSON individual sem mudar notas, trechos ou hashes.
+Não use notas anteriores para aprovar automaticamente a edição atual.
+Para PDF, componha e inspecione o Markdown com `docswarm_pdf` (render/inspect)
+ou `python -m scripts.pdf` antes de despachar os revisores. Use um bundle novo
+por composição e resolva falhas mecânicas antes da revisão. Registre uma entrada
+`pdf_inspections` por PDF no consolidado, com fonte, PDF, manifesto e inspeção
+identificados por caminho e SHA-256. Entregue aos revisores texto extraído e
+prévias de todas as páginas; não substitua a avaliação deles pelo relatório
+mecânico. Alterações nos artefatos exigem nova validação e revisão pertinente.
+Preserve fatos, lógica, escopo e ressalvas, sem congelar redação inadequada em
+uma evolução visual. Exija justificativas editoriais sobre linguagem, referentes,
+tom e autonomia; devolva ao revisor as que só defendem a arquitetura. Converta
+instruções internas em condições para o leitor, confirmadas pelo autor responsável.
+Não reatribua notas em nome dos revisores; aguarde a reavaliação solicitada pelo
+rubber duck antes do aceite.
+Mantenha uma nomenclatura única no documento-fonte e explique siglas/códigos no
+primeiro uso e nas legendas necessárias. Separe IDs internos dos nomes públicos,
+sem renomear chaves da matriz de revisão. O renderer não cria prefixos ou
+abreviações adicionais. Encaminhe códigos opacos ao autor/revisor, sem deduzir
+significados automaticamente.
+Se o monitor estiver habilitado e disponível, abra-o depois do brief, registre
+cada despacho antes de executar a ferramenta real e publique fases, rodadas e
+handoffs verdadeiros. Use os JSONs dos revisores para consolidar os mínimos.
+Não envie prompts, segredos ou raciocínio interno ao monitor. Falha de interface
+gera aviso, não alteração dos critérios de aprovação ou instalação no projeto
+do cliente.
 
 Orquestre o fluxo declarado no SKILL.md. Nunca pule `verify_sources.py`,
 `verify_tables.py`, a matriz YAML, o rubber duck ou `gate.py`. O exit code do
@@ -692,6 +1203,7 @@ model_rationale: "<justificativa>"
 model_status: "disponível confirmado"
 swarm: <swarm_id>
 sources_min: 0
+editorial_guidance_version: "3.2.2"
 ---
 
 # Rubber Duck
@@ -707,11 +1219,31 @@ Auditar autores, revisores e coordenador.
 - falhas ou avisos dos checks determinísticos;
 - aritmética relevante não marcada;
 - divergência entre review Markdown e YAML;
+- divergência entre avaliações individuais em JSON e os mínimos consolidados;
+- slogans, metatexto e antíteses decorativas que passaram por uma revisão focada
+  somente em layout; examine a família inteira, inclusive títulos e legendas;
+- ausência de análise editorial integral atual ou nota A justificada apenas por
+  correção técnica, completude decisória, diagramação, clipping ou aprovação passada;
+- justificativa editorial que não examina linguagem, referentes, tom e autonomia
+  quando esses aspectos são relevantes ao trecho;
+- conversa interna, referências vagas e instruções ao autor publicadas como
+  recomendação; inspecione títulos, corpo, cards, legendas e conclusões;
+- códigos/siglas sem definição no ponto de leitura, significados conflitantes
+  e figuras dependentes de glossário distante; "é comum" ou "é técnico" não
+  fundamentam compreensão, e padrão alegado precisa de referência;
+- texto autoral introduzido pelo gerador após a revisão ou hashes que não
+  correspondam aos arquivos finais entregues;
+- PDF aprovado apenas por existência ou por ausência de erro de composição;
+  confronte inspeção, prévias e revisão visual/editorial da edição corrente;
 - aplicação correta do portão e de `max_cycles`.
 
 ## Saída
 Achados priorizados como Crítico/Importante/Menor, com alvo, evidência e
 correção. Um achado Crítico deve aparecer em `rubberduck.critico: true`.
+Se a evidência editorial não sustentar A, identifique o revisor, o trecho, a
+justificativa insuficiente e a análise faltante. Devolva a avaliação para
+reexame e mantenha o aceite bloqueado enquanto a insuficiência persistir.
+Não substitua a nota do revisor silenciosamente.
 ```
 
 ## 14. Referência dos scripts determinísticos
@@ -723,9 +1255,16 @@ Todos usam somente Python stdlib. Consulte `--help` para opções exatas.
 | `verify_sources.py` | testa URLs e mantém cache auditável | há fonte `fail` |
 | `verify_tables.py` | recalcula tabelas marcadas | conta marcada não fecha |
 | `lint_agents.py` | valida frontmatter e swarm dos agentes | agente está inválido |
-| `gate.py` | aplica régua, crítico e `max_cycles` | retorna exit `1`, `2` ou `3` |
+| `gate.py` | aplica régua, crítico, `max_cycles` e contrato editorial atual | retorna exit `1`, `2` ou `3` |
+| `pdf_contract.py` | verifica os registros e hashes das inspeções PDF no gate | inspeção falhou, está ausente ou não corresponde aos artefatos atuais |
+| `progress.py` | projeta artefatos para observação local, sem modificá-los | não é um portão; problemas de leitura são explícitos |
+| `inspect_nomenclature.py` | lista candidatos lexicais e suas ocorrências | não dá nota; erros de leitura são explícitos |
 | `final_report.py` | deriva fatos do relatório final | artefatos estão ausentes/inválidos |
 | `update_memory.py` | propõe e, após aprovação, aplica memória | swarm não aprovado ou fonte inelegível |
+
+O motor opcional `python -m scripts.pdf render|inspect` é separado desses checks.
+Ele usa as dependências de PDF, enquanto `pdf_contract.py` verifica seus registros
+no gate usando apenas a biblioteca padrão.
 
 ## 15. Checklist — documento
 
@@ -737,6 +1276,16 @@ Todos usam somente Python stdlib. Consulte `--help` para opções exatas.
 - [ ] Modelos confirmados na sessão; substituições registradas.
 - [ ] Autores e revisores de fatos cumprem sua exigência de fontes.
 - [ ] Cada ciclo tem relatórios humanos, check de fontes, check de tabelas e YAML.
+- [ ] JSONs individuais dos revisores correspondem ao Markdown e ao consolidado.
+- [ ] Revisão editorial integral atual, com trechos e notas próprias, separada
+      da avaliação visual; todas as superfícies aplicáveis em A ou A+.
+- [ ] Texto revisado e todas as entregas correspondem aos hashes da avaliação;
+      nenhum texto autoral foi acrescentado pelo gerador depois dela.
+- [ ] Se houver PDF, composição e inspeção passaram antes dos revisores;
+      todas as páginas foram revistas e `pdf_inspections` corresponde aos arquivos.
+- [ ] Siglas/códigos necessários estão explicados no primeiro uso e em legendas
+      autônomas; convenções locais são distintas de padrões referenciados.
+- [ ] Resultado do gate foi registrado e corresponde à revisão corrente.
 - [ ] Clareza/aderência ao público e completude decisória foram avaliadas pelos
       revisores existentes; as notas integram o portão por tópico.
 - [ ] `gate.py` retornou `0`.
@@ -744,6 +1293,8 @@ Todos usam somente Python stdlib. Consulte `--help` para opções exatas.
 - [ ] `final-report.md` foi derivado por script e recebeu apenas narrativa humana.
 - [ ] Proposta de memória foi gerada e revisada.
 - [ ] Documento final tem índice e bibliografia.
+- [ ] Monitor habilitado recebeu marcos reais e encerramento correto; se
+      indisponível, houve aviso e o fluxo documental continuou no terminal.
 
 ## 16. Resposta ao usuário
 
