@@ -625,6 +625,10 @@ por data: `<YYYY-MM-DD>-SWARM-<XX>`.
 │  ├─ cycle-0N-rubberduck.md
 │  ├─ cycle-0N-tables-check.json
 │  ├─ progress/<execution_id>/
+│  │  ├─ snapshot.json
+│  │  ├─ events.jsonl
+│  │  └─ health.json
+│  ├─ resume.json
 │  └─ final-report.md
 ├─ sources/
 │  ├─ sources-index.md
@@ -1400,6 +1404,10 @@ handoffs verdadeiros. Use os JSONs dos revisores para consolidar os mínimos.
 Não envie prompts, segredos ou raciocínio interno ao monitor. Falha de interface
 gera aviso, não alteração dos critérios de aprovação ou instalação no projeto
 do cliente.
+Arme o vigia de saúde ao iniciar a execução e desarme-o no encerramento,
+conforme a seção 2.6. Quando o vigia agir, registre a recuperação com
+`operation: "recovery"`. O vigia restaura execução, nunca qualidade: ele não
+atribui nota, não pula revisor ou rubber duck e não aprova entrega.
 
 Orquestre o fluxo declarado no SKILL.md. Nunca pule `verify_sources.py`,
 `verify_tables.py`, a matriz YAML, o rubber duck ou `gate.py`. O exit code do
@@ -1436,6 +1444,9 @@ Auditar autores, revisores e coordenador.
 - aritmética relevante não marcada;
 - divergência entre review Markdown e YAML;
 - divergência entre avaliações individuais em JSON e os mínimos consolidados;
+- recuperação do vigia que tenha substituído uma etapa de qualidade: toda
+  retomada registrada precisa corresponder a trabalho realmente refeito, nunca a
+  revisor pulado, nota herdada ou portão reaproveitado sobre revisão alterada;
 - slogans, metatexto e antíteses decorativas que passaram por uma revisão focada
   somente em layout; examine a família inteira, inclusive títulos e legendas;
 - ausência de análise editorial integral atual ou nota A justificada apenas por

@@ -80,6 +80,7 @@ flowchart LR
   A[Brief, agentes, reviews e checks] --> P[Leitor Python]
   P --> E
   E --> J[Journal e snapshot por execução]
+  E --> S[health.json: inatividade medida]
   E --> H[HTTP local e SSE]
   H --> V[Canvas ou navegador]
 ```
@@ -87,6 +88,9 @@ flowchart LR
 O adaptador do SDK é isolado do estado e do servidor. A interface recebe uma
 projeção do progresso; não acessa o SDK nem oferece endpoints para controlar
 agentes. Os eventos são filtrados antes de persistir ou publicar os dados.
+
+A medição de inatividade roda em um temporizador próprio da extensão, não no
+laço do agente. É por isso que ela continua medindo quando a sessão para.
 
 ## Registro da execução
 
@@ -196,6 +200,20 @@ há quanto tempo não há observação nova e publica o resultado em três lugar
 campo `health` da operação `status`, no painel e em
 `reports/progress/<execution_id>/health.json`, reescrito a cada poucos segundos.
 
+```mermaid
+flowchart TB
+  ART[Jornal e artefatos do swarm]
+  ART --> EXT["Extensão: mede inatividade fora do laço do agente"]
+  ART --> PRJ["Projeções stdlib: health.py e resume.py"]
+  EXT -->|health.json| PRJ
+  PRJ --> TICK["Prompt agendado na sessão: tabela no terminal e retomada"]
+  PRJ -->|resume.json| NEW["Sessão nova: confere hashes e continua"]
+  TICK -->|recuperação R1 a R5| ART
+```
+
+A seta de recuperação é a única que escreve: ela redespacha um agente ou executa
+um check que faltou. Nenhuma das outras altera o swarm.
+
 A idade da observação decide o estado; o rótulo da sessão apenas explica. Um laço
 travado continua reportando `processing` indefinidamente, então confiar no rótulo
 é exatamente como uma parada permanece invisível.
@@ -282,6 +300,11 @@ predefinidos e nunca recebe PID, título ou identificador de agente do navegador
 | Ajuste da janela não confirmado | Restaure a janela caso esteja minimizada. O monitor não altera janelas com PID/título divergentes; o aviso não afeta os agentes. |
 | Nenhum cliente conectado | Reabra com `open`; a criação da URL sozinha não comprova a apresentação da tela. |
 | Estado desatualizado | Reabra a execução e confira a disponibilidade do SDK. Não interprete o último estado como atividade atual. |
+| Execução marcada como parada | Rode `health.py` na pasta do swarm e leia o diagnóstico. Parada é falha de execução, não reprovação do documento; não altere notas nem o portão para destravar. |
+| Terminal parado mas painel dizendo "processando" | Compare com `inactive_seconds` em `health.json`. O rótulo da sessão não expira sozinho; a idade da observação é que decide. |
+| `health.json` ausente ou antigo | A extensão não está publicando. `health.py` descarta o arquivo e volta a medir pela idade dos artefatos, dizendo isso no diagnóstico. |
+| Teto de recuperações esgotado | O vigia para de agir e escala. Não aumente o teto para continuar: investigue por que o mesmo passo falhou duas vezes. |
+| `resume.json` recusado por hash | Um artefato mudou depois da projeção. Recalcule com `resume.py`; não edite o registro para fazê-lo conferir. |
 | Vários agentes disponíveis com sessão trabalhando | Confira a atividade do principal. Idle descreve a disponibilidade dos subagentes, não uma solicitação automática de resposta ao usuário. |
 | Encerramento solicitado permanece pendente | O runtime ainda não confirmou `session.idle`, ou a observação perdeu esse sinal. O documento e seu gate não são alterados para encerrar o painel. |
 | Gate desatualizado | Execute novamente o gate sobre a revisão correta; não edite o resultado para torná-lo verde. |
