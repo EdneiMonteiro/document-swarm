@@ -17,3 +17,4 @@ Thumbs.db
 
 # Ruído de depuração do Playwright MCP (browser console/page snapshots)
 .playwright-mcp/
+.venv-presentations/

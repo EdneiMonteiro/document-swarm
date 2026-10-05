@@ -1,0 +1,36 @@
+INSTRUCCIONES DE LA ENTREGA — {title}
+
+Esta carpeta contiene tres formatos de la misma presentación, generados a partir
+del mismo contenido y del mismo plan de composición.
+
+1. index.html
+   Abra el archivo directamente en el navegador. Funciona sin servidor y sin
+   conexión. Use las flechas, AvPág/RePág o los botones visibles para navegar.
+   Los apoyos se abren en un diálogo; Escape lo cierra y devuelve el foco al
+   botón que lo abrió. El botón de notas muestra las notas del presentador.
+
+2. deck-faithful.pptx
+   Conserva la composición tal como aparece en el HTML, con una imagen por
+   diapositiva. El texto de esta versión no es editable.
+
+3. deck-editable.pptx
+   Contiene texto, tablas, formas y conectores nativos de PowerPoint. Las
+   excepciones declaradas permanecen como imagen y constan en el manifiesto.
+
+APARIENCIA EN POWERPOINT
+Las fuentes utilizadas acompañan la entrega en la carpeta fonts, con sus
+licencias. Para ver la apariencia homologada en el archivo editable, instale
+esas fuentes antes de abrirlo. La instalación es una acción suya: colocar los
+archivos junto al PPTX no hace que PowerPoint los use. Sin ellas PowerPoint
+sustituye la fuente y los saltos de línea pueden cambiar. El archivo fiel
+conserva la apariencia mediante imágenes y no depende de esa instalación.
+
+NAVEGACIÓN EN LOS ARCHIVOS DE POWERPOINT
+Las páginas de apoyo quedan ocultas en la secuencia normal: el avance estándar
+recorre el índice y las diapositivas principales. Dentro de un apoyo, use los
+botones visibles para paginar y para volver al origen. Las teclas nativas de
+avance de PowerPoint no ejecutan esa paginación.
+
+LÍMITES
+Las notas del presentador acompañan los tres formatos y quedan accesibles para
+quien recibe esta carpeta. No guarde información restringida en ellas.

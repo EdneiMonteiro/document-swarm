@@ -1,0 +1,200 @@
+{
+  "schema_version": 1,
+  "deck_id": "reference-deck",
+  "language": "pt-BR",
+  "title": "Capacidade e operacao de uma plataforma sintetica",
+  "size_pt": {"width": 960, "height": 540},
+  "theme_ref": "neutral-v1",
+  "index": {"title": "Sumário"},
+  "topics": ["T01", "T02", "T03", "T04"],
+  "assets": [
+    {
+      "asset_id": "figura",
+      "path": "figura.png",
+      "media_type": "image/png",
+      "sha256": "e4f6e713010c2e73e9eb4af539cf893fd18ee3098d483d94ce62ff1f97f7549c",
+      "license_ref": "Figura sintética gerada para esta fixture; sem dados de cliente.",
+      "permitted_uses": ["render", "redistribute"]
+    }
+  ],
+  "references": [
+    {
+      "reference_id": "python-docs",
+      "title": "Documentação do Python",
+      "url": "https://docs.python.org/3/",
+      "locator": "Biblioteca padrão, módulo zipfile"
+    }
+  ],
+  "actions": [
+    {"action_id": "abrir-detalhe-a", "trigger_block_id": "controle-a", "kind": "open_support", "support_id": "detalhe"},
+    {"action_id": "abrir-detalhe-b", "trigger_block_id": "controle-b", "kind": "open_support", "support_id": "detalhe"},
+    {"action_id": "voltar-origem-a", "trigger_block_id": "controle-retorno", "kind": "goto_slide", "slide_id": "origem-a"},
+    {"action_id": "abrir-referencia", "trigger_block_id": "controle-externo", "kind": "open_external", "reference_id": "python-docs"}
+  ],
+  "slides": [
+    {
+      "slide_id": "origem-a",
+      "topic_ids": ["T01", "T02"],
+      "layout": "title-and-body",
+      "title": [{"text": "Critérios e condições do exemplo"}],
+      "presenter_notes": "Lembrar que a comparação usa a mesma unidade para demanda e capacidade.",
+      "blocks": [
+        {
+          "block_id": "texto-a",
+          "type": "text",
+          "layout": {"area": "body"},
+          "data": {
+            "paragraphs": [
+              {"runs": [{"text": "O relatório compara capacidade, demanda e reserva operacional em um cenário inteiramente sintético. As condições precisam permanecer explícitas durante a composição."}]},
+              {"marker": "bullet", "runs": [{"text": "A comparação usa a mesma unidade para demanda e capacidade."}]},
+              {"marker": "bullet", "runs": [{"text": "A reserva operacional permanece "}, {"text": "explícita", "bold": true}, {"text": " na recomendação."}]}
+            ]
+          }
+        },
+        {
+          "block_id": "tabela-a",
+          "type": "table",
+          "layout": {"area": "body"},
+          "data": {
+            "header": [[{"text": "Componente"}], [{"text": "Condição"}], [{"text": "Resultado esperado"}]],
+            "rows": [
+              [[{"text": "Serviço de entrada"}], [{"text": "Dados na mesma janela de observação."}], [{"text": "Comparação com unidades explícitas."}]],
+              [[{"text": "Processamento"}], [{"text": "Reserva incluída no cenário."}], [{"text": "Capacidade útil separada da nominal."}]]
+            ]
+          }
+        },
+        {
+          "block_id": "controle-a",
+          "type": "control",
+          "layout": {"area": "body"},
+          "data": {"action_id": "abrir-detalhe-a", "label": "Abrir o detalhe do cálculo"}
+        }
+      ]
+    },
+    {
+      "slide_id": "origem-b",
+      "topic_ids": ["T03", "T04"],
+      "layout": "two-column",
+      "title": [{"text": "Fórmula, código literal e diagrama"}],
+      "presenter_notes": "Os operadores do código precisam continuar distintos na entrega.",
+      "blocks": [
+        {
+          "block_id": "codigo-b",
+          "type": "code",
+          "layout": {"area": "left"},
+          "data": {
+            "language": "python",
+            "lines": [
+              "def capacity(demand, useful):",
+              "    if useful <= 0 or demand < 0:",
+              "        raise ValueError(\"invalida\")",
+              "    return demand / useful  # <= != &"
+            ]
+          }
+        },
+        {
+          "block_id": "imagem-b",
+          "type": "image",
+          "layout": {"area": "left"},
+          "data": {"asset_id": "figura", "alt": "Marca sintética circular usada apenas nesta fixture."}
+        },
+        {
+          "block_id": "diagrama-b",
+          "type": "diagram",
+          "layout": {"area": "right"},
+          "data": {
+            "nodes": [
+              {"node_id": "preparar", "shape": "round-rect", "text": [{"text": "Preparar dados"}], "box": {"x": 0, "y": 0, "width": 180, "height": 48}},
+              {"node_id": "comparar", "shape": "round-rect", "text": [{"text": "Comparar condições"}], "box": {"x": 0, "y": 76, "width": 180, "height": 48}},
+              {"node_id": "registrar", "shape": "rect", "text": [{"text": "Registrar decisão"}], "box": {"x": 0, "y": 152, "width": 180, "height": 48}}
+            ],
+            "connectors": [
+              {"connector_id": "c1", "from": "preparar", "to": "comparar", "from_port": "bottom", "to_port": "top", "kind": "straight"},
+              {"connector_id": "c2", "from": "comparar", "to": "registrar", "from_port": "bottom", "to_port": "top", "kind": "elbow"}
+            ]
+          }
+        },
+        {
+          "block_id": "forma-b",
+          "type": "shape",
+          "layout": {"area": "right"},
+          "data": {"shape": "ellipse", "text": [{"text": "Reserva operacional"}]}
+        },
+        {
+          "block_id": "controle-b",
+          "type": "control",
+          "layout": {"area": "left"},
+          "data": {"action_id": "abrir-detalhe-b", "label": "Abrir o detalhe do cálculo"}
+        },
+        {
+          "block_id": "controle-retorno",
+          "type": "control",
+          "layout": {"area": "left"},
+          "data": {"action_id": "voltar-origem-a", "label": "Rever os critérios"}
+        },
+        {
+          "block_id": "controle-externo",
+          "type": "control",
+          "layout": {"area": "right"},
+          "data": {"action_id": "abrir-referencia", "label": "Consultar a documentação citada"}
+        }
+      ]
+    }
+  ],
+  "supports": [
+    {
+      "support_id": "detalhe",
+      "layout": "title-and-body",
+      "title": [{"text": "Detalhe do cálculo e das condições"}],
+      "presenter_notes": "Este apoio é repetido para cada origem; suas notas acompanham todas as páginas.",
+      "blocks": [
+        {
+          "block_id": "detalhe-texto",
+          "type": "text",
+          "layout": {"area": "body"},
+          "data": {
+            "paragraphs": [
+              {"runs": [{"text": "A expressão usa a notação fornecida na fonte. O motor não resolve a equação nem escolhe o resultado apresentado ao leitor."}]},
+              {"runs": [{"text": "N ≥ teto(D / C) + R, válido quando C > 0, D ≥ 0 e R ≥ 0.", "code": true}]}
+            ]
+          }
+        },
+        {
+          "block_id": "detalhe-tabela",
+          "type": "table",
+          "layout": {"area": "body"},
+          "data": {
+            "header": [[{"text": "Símbolo"}], [{"text": "Significado declarado na fonte"}]],
+            "rows": [
+              [[{"text": "N"}], [{"text": "Quantidade calculada para o cenário sintético."}]],
+              [[{"text": "D"}], [{"text": "Demanda indicada para a comparação."}]],
+              [[{"text": "C"}], [{"text": "Capacidade útil por unidade, após as reservas."}]],
+              [[{"text": "R"}], [{"text": "Reserva operacional declarada no exemplo."}]]
+            ]
+          }
+        },
+        {
+          "block_id": "detalhe-codigo",
+          "type": "code",
+          "layout": {"area": "body"},
+          "data": {
+            "lines": [
+              "assert capacity(20, 10) != 0",
+              "text = \"<tag> & ação, medição, revisão\""
+            ]
+          }
+        },
+        {
+          "block_id": "detalhe-fecho",
+          "type": "text",
+          "layout": {"area": "body"},
+          "data": {
+            "paragraphs": [
+              {"runs": [{"text": "Uma nova medição exige reavaliar o cenário antes de aplicar a recomendação."}]}
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

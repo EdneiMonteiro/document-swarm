@@ -14,7 +14,7 @@ de notas e relatório final.
 
 > **Fonte da verdade:** [`SKILL.md`](./SKILL.md)
 >
-> **Versão atual:** `3.3.0`
+> **Versão atual:** `3.4.0`
 >
 > **Histórico:** [`CHANGELOG.md`](./CHANGELOG.md)
 
@@ -25,6 +25,9 @@ de notas e relatório final.
 - **PDF profissional opcional:** ReportLab/Platypus com perfis de livro didático
   e relatório técnico, fontes incorporadas, sumário, tabelas, fórmulas e gráficos
   vetoriais; prévias e inspeção vinculadas aos arquivos gerados.
+- **Apresentações opcionais:** uma fonte estruturada gera HTML navegável offline,
+  um PowerPoint fiel por imagens e um PowerPoint com objetos editáveis, com
+  inspeção dos arquivos salvos e ensaio no PowerPoint instalado.
 - **Evolução de documentos existentes:** reativa o enxame completo e revalida
   tópicos antigos e novos.
 - **Rastreabilidade:** brief, agentes, modelos, fontes, ciclos, notas e checks.
@@ -36,8 +39,8 @@ de notas e relatório final.
 O portão usa a escala `D- ... A+`: **A- não passa**. Um achado crítico do rubber
 duck também bloqueia.
 
-O escopo é exclusivo de documentos. A skill não cria nem evolui apresentações,
-slides ou arquivos PPTX.
+O padrão é documento. Apresentações são um tipo de entrega opcional, ativado por
+pedido explícito, e não acrescentam dependência ao caminho documental.
 
 ## Perfil editorial técnico
 
@@ -172,6 +175,27 @@ gate. Os checks usuais continuam stdlib-only. A inspeção detecta classes de
 defeitos mecânicos, mas não dá nota de redação. Consulte [o guia PDF](./docs/pdf.md)
 para a sintaxe de figuras/fórmulas, licenças, limites e testes com defeitos injetados.
 
+## Apresentações
+
+Quando a entrega for em slides, a mesma fonte estruturada produz três formatos:
+`index.html` navegável e offline, `deck-faithful.pptx` por imagens e
+`deck-editable.pptx` com título, texto, tabelas, formas e conectores nativos.
+Apoios abrem em diálogo no HTML e ficam ocultos da sequência normal no
+PowerPoint, alcançados pelos links visíveis.
+
+```powershell
+python -m venv .venv-presentations
+.\.venv-presentations\Scripts\python.exe -m pip install -r requirements-presentations.txt
+.\.venv-presentations\Scripts\python.exe -m playwright install chromium
+.\.venv-presentations\Scripts\python.exe -m scripts.presentations preflight --swarm <swarm>
+```
+
+O preflight qualifica implementação e ambiente em material sintético e mede o
+PowerPoint instalado. A composição usa um destino novo, inspeciona os arquivos
+salvos e vincula a aprovação aos seus hashes. O portão reconstrói páginas,
+navegação e cobertura a partir da fonte, então um exportador não pode encolher o
+que precisa ser revisado. Consulte [o guia de apresentações](./docs/presentations.md).
+
 ## Como disparar
 
 ### Documento
@@ -246,6 +270,7 @@ biblioteca padrão do Python.
 | `final_report.py` | Deriva os fatos do relatório final dos artefatos estruturados. |
 | `update_memory.py` | Propõe e, após aprovação explícita, atualiza a memória. |
 | `pdf_contract.py` | Verifica no gate os hashes e resultados do motor PDF opcional, sem importar suas dependências. |
+| `presentation_contract.py` | Reconstrói páginas, navegação e cobertura de uma apresentação e confronta os registros com os arquivos reais. |
 
 Detalhes operacionais, formatos e exit codes:
 
@@ -277,17 +302,26 @@ Detalhes operacionais, formatos e exit codes:
 │  └─ sources-check.json
 └─ output/
    ├─ <documento-final>.md
-   └─ pdf-cycle-0N/
-      ├─ document.pdf
-      ├─ previews/
-      ├─ editorial-text.txt
+   ├─ pdf-cycle-0N/
+   │  ├─ document.pdf
+   │  ├─ previews/
+   │  ├─ editorial-text.txt
+   │  ├─ layout.json
+   │  ├─ manifest.json
+   │  └─ inspection.json
+   └─ presentation-cycle-0N/
+      ├─ deck.json
       ├─ layout.json
-      ├─ manifest.json
-      └─ inspection.json
+      ├─ index.html
+      ├─ runtime/
+      ├─ deck-faithful.pptx
+      ├─ deck-editable.pptx
+      └─ LEIA-ME.txt
 ```
 
-A pasta `pdf-cycle-0N/` é opcional e existe quando o PDF integra a entrega.
-Cada nova composição usa uma pasta nova, preservando os artefatos já avaliados.
+As pastas `pdf-cycle-0N/` e `presentation-cycle-0N/` são opcionais e existem
+quando o formato integra a entrega. Cada nova composição usa uma pasta nova,
+preservando os artefatos já avaliados.
 
 `<OUTPUT_ROOT>` é resolvido nesta ordem:
 
@@ -305,11 +339,12 @@ O README é apenas uma porta de entrada. As regras completas vivem em:
 - [Perfil editorial e responsabilidades](./SKILL.md#21-perfil-editorial-técnico)
 - [Contrato do monitor visual](./SKILL.md#23-monitor-visual-de-execução)
 - [Composição e inspeção PDF](./SKILL.md#24-composição-e-inspeção-profissional-de-pdf)
+- [Apresentações como tipo de entrega](./SKILL.md#25-apresentações-como-tipo-de-entrega)
 - [Proveniência de modelos](./SKILL.md#9-proveniência-de-modelos)
 - [Memória entre swarms](./SKILL.md#10-memória-entre-swarms)
 - [Fluxo do modo documento](./SKILL.md#11-fluxo--modo-documento)
 - [Modo evolução](./SKILL.md#12-modo-evolução)
-- [Templates declarativos](./SKILL.md#13-templates--documento)
+- [Templates declarativos](./SKILL.md#13-templates--agentes)
 - [Checklist de entrega](./SKILL.md#15-checklist--documento)
 
 ## Exemplos

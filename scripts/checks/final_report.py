@@ -133,6 +133,27 @@ def render(swarm: Path) -> str:
             lines.append(f"| {item['surface']} | {item.get('grade', 'not applicable')} |")
         lines.append(f"- Findings: {json.dumps(editorial['findings'], ensure_ascii=False, sort_keys=True)}")
         lines.append("- These records attest the declared review; semantic writing quality remains a reviewer judgment.")
+    if latest.get("presentation"):
+        block = latest["presentation"]
+        failed = {item["name"] for item in gate_results[-1]["blocked"] if item["kind"] == "presentation"}
+        lines += ["", "### Presentation delivery",
+                  f"- Capability: {block['capability']}; profile: {block['profile']}; cycle: {block['cycle']}",
+                  "- Inputs, manifest, inspections, every delivered file and each reviewer record were hash-verified.",
+                  "| Dimension | Positions | Below A |", "| --- | ---: | ---: |"]
+        counted: dict[str, list[int]] = {}
+        for row in block["reviews"]:
+            entry = counted.setdefault(row["dimension"], [0, 0])
+            entry[0] += 1
+            key = "/".join(str(part) for part in
+                           ((row["dimension"], row["topic_id"]) if "topic_id" in row
+                            else (row["dimension"], row["format"], row["page_id"])))
+            entry[1] += 1 if key in failed else 0
+        for dimension, (total, below) in sorted(counted.items()):
+            lines.append(f"| {dimension} | {total} | {below} |")
+        mechanical = sorted(name for name in failed if "/" in name and name.split("/")[0] in
+                            ("implementation", "profile", "candidate"))
+        lines.append(f"- Mechanical inspections that failed: {', '.join(mechanical) if mechanical else 'none'}")
+        lines.append("- These checks attest composition and bindings; legibility and wording remain reviewer judgments.")
     if latest.get("pdf_inspections"):
         failed = {item["name"] for item in gate_results[-1]["blocked"] if item["kind"] == "pdf"}
         lines += ["", "### PDF mechanical inspections",

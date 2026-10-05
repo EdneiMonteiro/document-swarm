@@ -139,7 +139,7 @@ o texto e não a apresente como prova de cobertura completa.
 O brief informa:
 
 ```yaml
-skill_version: "3.3.0"
+skill_version: "3.4.0"
 quality_contract: editorial-v1
 editorial_reviewer: reviewer-03-clarity
 pdf_engine: reportlab-v1
@@ -154,6 +154,12 @@ Se não houver PDF, omita `pdf_engine` e a entrega PDF. Com PDF, use o
 [motor e contrato de inspeção](./pdf.md) antes dos revisores; o consolidado
 inclui `pdf_inspections`. Esse registro comprova a inspeção mecânica corrente,
 não a adequação editorial das palavras ou a qualidade visual das páginas.
+
+Numa apresentação, o brief usa `artifact_type: presentation` e lista os três
+formatos entregues. A revisão editorial continua sendo esta, sobre o texto
+integral de `cycle-NN-editorial-text.txt`, e é independente das dimensões
+`legibility`, `interaction` e `editability` descritas em
+[apresentações](./presentations.md).
 
 Conclua a redação no documento-fonte antes da composição. Títulos e legendas
 não devem ser criados como uma segunda redação dentro do gerador. Caso a

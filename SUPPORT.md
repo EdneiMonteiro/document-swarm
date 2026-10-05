@@ -41,6 +41,13 @@ mínima. O relatório pode conter trechos integrais do documento; não o publiqu
 sem remover dados confidenciais. Consulte os [limites e comandos PDF](./docs/pdf.md).
 Uma inspeção mecânica aprovada não atesta qualidade editorial ou correção técnica.
 
+Para apresentações, informe também o perfil usado, as versões de Python,
+python-pptx, Playwright e Chromium, a versão e o build do PowerPoint, o estado
+de cada verificação em `cycle-NN-presentation-inspections.json` e um deck
+sintético mínimo. Não envie decks, notas do apresentador ou pacotes com conteúdo
+de cliente. Os [limites e comandos](./docs/presentations.md) descrevem o que o
+perfil cobre e o que permanece `not_evaluated`.
+
 ## Limites de suporte
 
 Este projeto:

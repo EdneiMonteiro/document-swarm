@@ -7,6 +7,41 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-10-05
+
+### Added
+
+- Optional presentation delivery: one authored DeckSpec produces offline
+  interactive HTML, an image-faithful PowerPoint file and an editable PowerPoint
+  file with native title, text, tables, shapes and anchored connectors.
+- Strict JSON deck schema with a stdlib schema subset validator, a redistributable
+  neutral theme and standard-library TrueType metrics shared by all three outputs.
+- One resolved composition plan: pages, lines, reading order, support pagination
+  per origin and a reconstructed navigation graph including disabled extremes.
+- Offline HTML runtime with a strict content policy, no inline styles, modal
+  support dialogs, focus return, keyboard sequence and separate presenter notes.
+- Artifact inspection of the saved files: delivered markup, OOXML inventory,
+  notes, hidden support slides, anchored connectors, stage bounds, package safety
+  and real browser interaction in a pinned Chromium.
+- Environment qualification that measures the installed PowerPoint, rehearses
+  edit/save/reopen on copies and calibrates the visual difference per page.
+- `presentation_contract.py`: stdlib gate validation that rebuilds pages,
+  materialisations, navigation and the review domain from the deck itself.
+- `preflight`, `build`, `inspect` and `publish` operations plus acceptance
+  recording and an all-or-nothing promotion to a new destination.
+
+### Changed
+
+- `artifact_type: presentation` selects the new delivery; absent it, historical
+  entries stay documental and legacy slide fields keep their original meaning.
+- Presentation reviews cover a closed set of dimensions per topic, per page and
+  per format; none of them accepts `not_applicable`, and `editorial-v1` still
+  applies to the full delivered text.
+- Non-terminal inspection states (`pending`, `not_evaluated`, `unsupported`,
+  `stale`) never approve: the gate returns 3 instead of a grade.
+- The document path is unchanged and gains no mandatory dependency; the
+  presentation libraries stay outside `scripts/checks`.
+
 ## [3.3.0] - 2026-10-05
 
 ### Added

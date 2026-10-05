@@ -1,0 +1,36 @@
+INSTRUÇÕES DA ENTREGA — {title}
+
+Esta pasta contém três formatos da mesma apresentação, gerados do mesmo
+conteúdo e do mesmo plano de composição.
+
+1. index.html
+   Abra o arquivo diretamente no navegador. Funciona sem servidor e sem
+   conexão. Use as setas, PageUp/PageDown ou os botões visíveis para navegar.
+   Os apoios abrem em uma caixa de diálogo; Escape fecha e devolve o foco ao
+   botão que a abriu. O botão de notas mostra as notas do apresentador.
+
+2. deck-faithful.pptx
+   Preserva a composição exatamente como aparece no HTML, com uma imagem por
+   slide. O texto dessa versão não é editável.
+
+3. deck-editable.pptx
+   Contém texto, tabelas, formas e conectores nativos do PowerPoint. Exceções
+   declaradas permanecem como imagem e estão identificadas no manifesto.
+
+APARÊNCIA DO POWERPOINT
+As fontes utilizadas acompanham a entrega na pasta fonts, com suas licenças.
+Para ver a aparência homologada no arquivo editável, instale essas fontes no
+sistema antes de abrir o arquivo. A instalação é uma ação sua: colocar os
+arquivos ao lado do PPTX não faz o PowerPoint usá-los. Sem elas, o PowerPoint
+substitui a fonte e as quebras de linha podem mudar. O arquivo fiel preserva a
+aparência por imagens e não depende dessa instalação.
+
+NAVEGAÇÃO NOS ARQUIVOS DO POWERPOINT
+As páginas de apoio ficam ocultas na sequência normal: o avanço padrão percorre
+o sumário e os slides principais. Dentro de um apoio, use os botões visíveis
+para paginar e para voltar à origem. As teclas nativas de avanço do PowerPoint
+não executam essa paginação.
+
+LIMITES
+As notas do apresentador acompanham os três formatos e ficam acessíveis a quem
+recebe esta pasta. Não guarde informação restrita nelas.

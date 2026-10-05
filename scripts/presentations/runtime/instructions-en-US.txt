@@ -1,0 +1,36 @@
+DELIVERY INSTRUCTIONS — {title}
+
+This folder contains three formats of the same presentation, generated from the
+same content and the same composition plan.
+
+1. index.html
+   Open the file directly in a browser. It works without a server and without a
+   connection. Use the arrow keys, PageUp/PageDown or the visible buttons to
+   navigate. Supports open in a dialog; Escape closes it and returns focus to
+   the button that opened it. The notes button shows the presenter notes.
+
+2. deck-faithful.pptx
+   Preserves the composition exactly as it appears in the HTML, with one image
+   per slide. Text in this version is not editable.
+
+3. deck-editable.pptx
+   Contains native PowerPoint text, tables, shapes and connectors. Declared
+   exceptions remain images and are identified in the manifest.
+
+POWERPOINT APPEARANCE
+The fonts used are included in the fonts folder with their licences. To see the
+qualified appearance in the editable file, install those fonts before opening
+it. Installation is your action: placing the files next to the PPTX does not
+make PowerPoint use them. Without them PowerPoint substitutes the font and line
+breaks may change. The faithful file preserves the appearance through images
+and does not depend on that installation.
+
+NAVIGATION INSIDE THE POWERPOINT FILES
+Support pages are hidden from the normal sequence: the default advance walks the
+contents and the main slides. Inside a support, use the visible buttons to page
+through it and to return to its origin. PowerPoint's own advance keys do not
+perform that pagination.
+
+LIMITS
+Presenter notes travel with all three formats and are available to anyone who
+receives this folder. Do not keep restricted information in them.
