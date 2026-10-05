@@ -201,14 +201,18 @@ campo `health` da operação `status`, no painel e em
 `reports/progress/<execution_id>/health.json`, reescrito a cada poucos segundos.
 
 ```mermaid
-flowchart TB
+flowchart LR
   ART[Jornal e artefatos do swarm]
-  ART --> EXT["Extensão: mede inatividade fora do laço do agente"]
-  ART --> PRJ["Projeções stdlib: health.py e resume.py"]
+  EXT["Extensão: mede inatividade<br/>fora do laço do agente"]
+  PRJ["Projeções stdlib:<br/>health.py e resume.py"]
+  TICK["Prompt agendado na sessão:<br/>tabela e retomada"]
+  NEW["Sessão nova:<br/>confere hashes e continua"]
+  ART --> EXT
+  ART --> PRJ
   EXT -->|health.json| PRJ
-  PRJ --> TICK["Prompt agendado na sessão: tabela no terminal e retomada"]
-  PRJ -->|resume.json| NEW["Sessão nova: confere hashes e continua"]
-  TICK -->|recuperação R1 a R5| ART
+  PRJ --> TICK
+  PRJ -->|resume.json| NEW
+  TICK -->|"recuperação R1 a R5<br/>(única seta que escreve)"| ART
 ```
 
 A seta de recuperação é a única que escreve: ela redespacha um agente ou executa
