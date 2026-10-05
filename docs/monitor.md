@@ -189,6 +189,61 @@ Arquivos antigos sem notas individuais ou resultado persistido exibem essa
 limitação. O monitor não reescreve o histórico nem confere aprovação retroativa.
 Consultar outro ciclo não transporta suas notas para o ciclo atual.
 
+## Saúde da execução e retomada
+
+A extensão é um processo Node separado do laço do agente. Ela mede continuamente
+há quanto tempo não há observação nova e publica o resultado em três lugares: no
+campo `health` da operação `status`, no painel e em
+`reports/progress/<execution_id>/health.json`, reescrito a cada poucos segundos.
+
+A idade da observação decide o estado; o rótulo da sessão apenas explica. Um laço
+travado continua reportando `processing` indefinidamente, então confiar no rótulo
+é exatamente como uma parada permanece invisível.
+
+| Estado | Critério medido |
+|---|---|
+| `active` | Sessão processando e observação dentro do limiar |
+| `waiting` | Despacho em curso ou fila, dentro do limiar |
+| `stalled` | Sem observação além do limiar e sem agente executando, ou além do triplo do limiar em qualquer caso |
+| `closed` | Encerramento registrado |
+| `unobserved` | Conexão perdida ou observação anterior desatualizada |
+
+O limiar padrão é 180 segundos. Um agente realmente executando ganha folga até o
+triplo do limiar, porque uma chamada longa ao modelo pode ficar silenciosa; além
+disso, silêncio é parada.
+
+Dois scripts stdlib leem esses registros sem modificar nada:
+
+```powershell
+python .\scripts\checks\health.py <pasta-do-swarm> --threshold 180
+python .\scripts\checks\resume.py <pasta-do-swarm> --output reports\resume.json
+python .\scripts\checks\resume.py <pasta-do-swarm> --check reports\resume.json
+```
+
+`health.py` compõe a tabela do terminal a partir dos artefatos, da projeção de
+retomada e do `health.json`. Quando a extensão parou de publicar, o arquivo é
+descartado e a resposta volta a se basear na idade dos artefatos, dizendo isso em
+vez de repetir um número antigo. Sem observação, a linha diz "não observado";
+nunca um valor plausível.
+
+`resume.py` projeta o próximo passo determinístico do contrato do ciclo e grava
+`reports/resume.json` com os hashes que sustentam a projeção. Em uma sessão nova,
+`--check` sai `1` quando algum artefato mudou, e a projeção é recalculada em vez
+de ser confiada.
+
+Cada recuperação executada pelo vigia é registrada com
+`{"operation":"recovery","rule":"R1".."R5","agent_id":...,"cycle":N,"detail":...}`.
+A extensão aplica os tetos: duas por agente por ciclo e seis por execução. Passar
+do teto é um erro explícito, não um registro silencioso. As recuperações aparecem
+no `final-report.md`, para que uma execução retomada não pareça limpa.
+
+O vigia recupera execução, nunca qualidade. Ele não atribui nota, não pula
+revisor ou rubber duck e não aprova entrega. Se o laço do agente estiver travado,
+nenhum prompt agendado executa: a detecção continua, a retomada acontece na
+sessão seguinte. Se o processo do CLI morrer, a extensão morre junto e só os
+registros em disco sobrevivem. O protocolo completo está na seção 2.6 do
+`SKILL.md`.
+
 ## Persistência e proteção de dados
 
 Cada execução guarda `events.jsonl`, `snapshot.json` e sua identificação de

@@ -179,7 +179,7 @@ export async function createMonitorServer(store, { log = () => {} } = {}) {
         }
     }
     store.on("change", publish);
-    store.on("health", publish);
+    store.on("reader", publish);
     return {
         url: `${origin}/#token=${token}`,
         origin,
@@ -204,7 +204,7 @@ export async function createMonitorServer(store, { log = () => {} } = {}) {
             for (const resolve of waiters) resolve(false);
             waiters.clear();
             store.off("change", publish);
-            store.off("health", publish);
+            store.off("reader", publish);
             for (const peer of peers) peer.end();
             peers.clear();
             await new Promise(resolve => {

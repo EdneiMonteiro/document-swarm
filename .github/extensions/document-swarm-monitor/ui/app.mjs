@@ -42,6 +42,14 @@ export function sessionLabel(state, cycle, connected) {
     }[state.session_activity.status] ?? "Sessão não observada";
 }
 
+export function healthLabel(state, cycle, connected) {
+    if (archived(state, cycle) || !connected) return null;
+    const health = state.health;
+    if (!health || !["stalled", "unobserved"].includes(health.state)) return null;
+    const title = health.state === "stalled" ? "Execução parada" : "Observação perdida";
+    return { state: health.state, title, detail: `${title}: ${health.reason}` };
+}
+
 async function startInterface() {
     const $ = id => document.getElementById(id);
     const token = new URLSearchParams(location.hash.slice(1)).get("token");
@@ -119,7 +127,7 @@ async function startInterface() {
         return data;
     }
     function alertState() {
-        const warnings = [failure, windowFailure, shownState?.health_error, ...(shownState?.evidence.warnings ?? [])].filter(Boolean);
+        const warnings = [failure, windowFailure, shownState?.reader_error, ...(shownState?.evidence.warnings ?? [])].filter(Boolean);
         if (shownState && !connected && selectedId === currentId) warnings.unshift("Conexão interrompida. Os dados exibidos podem estar desatualizados.");
         $("alert").hidden = !warnings.length;
         $("alert").textContent = warnings.join(" ");
@@ -216,9 +224,11 @@ async function startInterface() {
         $("running-count").textContent = data.agents.filter(agent => visibleAgentStatus(agent) === "running").length;
         $("cycle-count").textContent = selectedCycle ? `${selectedCycle} / ${data.evidence.max_cycles}` : "Pré-ciclo";
         $("run-status").textContent = ({ observing: "Observação iniciada", active: "Execução em andamento", closing: "Encerramento solicitado; aguardando confirmação do runtime", completed: "Encerramento registrado", escalated: "Escalação registrada", aborted: "Interrupção registrada" })[data.status] ?? "Estado não registrado";
-        $("session-status").textContent = sessionLabel(data, selectedCycle, connected);
-        $("session-status").className = `session-state${!archived(data, selectedCycle) && connected && data.session_activity?.status === "processing" ? " processing" : ""}`;
-        $("session-status").title = archived(data, selectedCycle)
+        const stall = healthLabel(data, selectedCycle, connected);
+        $("session-status").textContent = stall ? stall.title : sessionLabel(data, selectedCycle, connected);
+        $("session-status").className = `session-state${stall ? ` ${stall.state}`
+            : !archived(data, selectedCycle) && connected && data.session_activity?.status === "processing" ? " processing" : ""}`;
+        $("session-status").title = stall ? stall.detail : archived(data, selectedCycle)
             ? "O registro encerrado não informa se a sessão iniciou outro trabalho."
             : "Atividade do agente principal observada no runtime, separada da disponibilidade dos subagentes.";
         const scale = data.evidence.grade_scale;

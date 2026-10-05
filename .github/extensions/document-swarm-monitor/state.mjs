@@ -45,16 +45,94 @@ export async function atomicJson(destination, data) {
     }
 }
 
+export const RECOVERY_RULES = new Set(["R1", "R2", "R3", "R4", "R5"]);
+export const RECOVERY_LIMITS = { perAgentCycle: 2, perExecution: 6 };
+
 export function initialState({ executionId, sessionId, evidence }) {
     return {
         schema_version: 1, execution_id: executionId, session_id: sessionId,
         swarm_id: evidence.swarm_id, title: evidence.title,
         cycle: 0, phase: "setup", status: "observing", connection: "connected",
         created_at: now(), updated_at: now(), sequence: 0,
-        agents: evidence.agents, dispatches: [], edges: [], events: [],
+        agents: evidence.agents, dispatches: [], edges: [], events: [], recoveries: [],
         session_activity: { status: "unknown", observed_at: null, stale: true },
         closure: null,
         seen_ids: [], evidence,
+    };
+}
+
+export const INACTIVITY_THRESHOLD = 180;
+const TERMINAL_STATUS = new Set(["completed", "escalated", "aborted"]);
+const DISPATCH_COUNTS = ["queued", "running", "idle", "completed", "failed", "cancelled", "unknown"];
+
+function stamp(value) {
+    const parsed = Date.parse(value ?? "");
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Measure how long this execution has been without any observed progress.
+ *
+ * The caller cannot trust `session_activity.status` alone: a wedged agent loop
+ * stays on `processing` forever.  What separates work from a wedge is the age
+ * of the newest observation, so the age decides and the label only explains.
+ */
+export function vitality(state, { threshold = INACTIVITY_THRESHOLD, at = Date.now() } = {}) {
+    const marks = [];
+    const session = state.session_activity ?? {};
+    if (session.observed_at) marks.push([stamp(session.observed_at), `sessão ${session.status}`]);
+    for (const dispatch of state.dispatches) {
+        for (const [value, label] of [[dispatch.observed_at, "observação"], [dispatch.started_at, "início"],
+            [dispatch.bound_at, "chamada"], [dispatch.registered_at, "registro"]]) {
+            if (value) marks.push([stamp(value), `${label} de ${dispatch.agent_id}`]);
+        }
+    }
+    // Last, so a stable sort keeps the specific signal ahead of the generic one on a tie.
+    marks.push([stamp(state.updated_at), "último evento registrado"]);
+    const newest = marks.filter(([value]) => value !== null).sort((a, b) => b[0] - a[0])[0] ?? null;
+    const inactive = newest ? Math.max(0, (at - newest[0]) / 1000) : null;
+    const counts = Object.fromEntries(DISPATCH_COUNTS.map(name => [name, 0]));
+    let stale = 0;
+    for (const dispatch of state.dispatches) {
+        if (dispatch.status in counts) counts[dispatch.status] += 1;
+        if (dispatch.observation_stale && ["queued", "running", "idle", "unknown"].includes(dispatch.status)) stale += 1;
+    }
+    const working = counts.running > 0;
+    const everObserved = !!session.observed_at;
+    let health;
+    let reason;
+    if (TERMINAL_STATUS.has(state.status)) {
+        health = "closed";
+        reason = `encerramento ${state.status} registrado`;
+    } else if (state.connection !== "connected" || (everObserved && session.stale === true) || inactive === null) {
+        health = "unobserved";
+        reason = "a extensão não tem observação atual desta sessão";
+    } else if (inactive > threshold * 3) {
+        health = "stalled";
+        reason = `nada observado há ${Math.round(inactive)} s, além do triplo do limiar`;
+    } else if (inactive > threshold && !working) {
+        health = "stalled";
+        reason = `nada observado há ${Math.round(inactive)} s e nenhum agente em execução`;
+    } else if (session.status === "processing") {
+        health = "active";
+        reason = "a sessão está processando dentro do limiar";
+    } else if (working || counts.queued > 0) {
+        health = "waiting";
+        reason = `${counts.running} em execução e ${counts.queued} na fila dentro do limiar`;
+    } else {
+        health = "waiting";
+        reason = `sem despacho em curso; última observação há ${Math.round(inactive)} s`;
+    }
+    return {
+        state: health, reason, threshold_seconds: threshold,
+        inactive_seconds: inactive === null ? null : Number(inactive.toFixed(1)),
+        last_progress_at: newest ? new Date(newest[0]).toISOString() : null,
+        last_progress_signal: newest ? newest[1] : null,
+        observed_at: new Date(at).toISOString(),
+        connection: state.connection,
+        session_activity: { status: session.status ?? "unknown", observed_at: session.observed_at ?? null, stale: session.stale !== false },
+        dispatches: counts,
+        stale_dispatches: stale,
     };
 }
 
@@ -128,6 +206,18 @@ export function reduce(state, event) {
         next.closure = { status: data.status, requested_at: event.at, confirmation: "not_recorded" };
         next.status = data.await_runtime_idle === true ? "closing" : data.status;
         next.phase = data.await_runtime_idle === true ? "delivery" : "done";
+    } else if (event.type === "recovery") {
+        if (!RECOVERY_RULES.has(data.rule)) throw new Error("Unknown recovery rule");
+        if (data.agent_id && !next.agents.some(agent => agent.id === data.agent_id)) throw new Error("Recovery target is not a declared agent");
+        const recoveries = next.recoveries ?? [];
+        if (recoveries.length >= RECOVERY_LIMITS.perExecution) {
+            throw new Error(`Recovery ceiling reached for this execution (${RECOVERY_LIMITS.perExecution}); escalate to the user`);
+        }
+        const sameTarget = recoveries.filter(item => item.agent_id === data.agent_id && item.cycle === data.cycle);
+        if (data.agent_id && sameTarget.length >= RECOVERY_LIMITS.perAgentCycle) {
+            throw new Error(`Recovery ceiling reached for ${data.agent_id} in cycle ${data.cycle}; escalate to the user`);
+        }
+        next.recoveries = [...recoveries, { ...data, id: event.id, at: event.at, attempt: sameTarget.length + 1 }];
     } else if (event.type === "connection") {
         if (!["connected", "disconnected", "historical"].includes(data.connection)) throw new Error("Invalid connection state");
         next.connection = data.connection;
@@ -213,7 +303,7 @@ export class RunStore extends EventEmitter {
                         if (index !== lines.length - 1) throw new Error("Corrupted monitor journal", { cause: error });
                         await fs.writeFile(path.join(directory, `torn-${randomUUID()}.txt`), lines[index], "utf8");
                         await fs.writeFile(journalFile, `${lines.slice(0, index).join("\n")}\n`, "utf8");
-                        store.healthError = "Journal incompleto recuperado; diagnóstico preservado.";
+                        store.readerError = "Journal incompleto recuperado; diagnóstico preservado.";
                         break;
                     }
                     if (entry.sequence > state.sequence) state = reduce(state, entry);
@@ -237,13 +327,14 @@ export class RunStore extends EventEmitter {
         this.directory = directory;
         this.owner = owner;
         this.queue = Promise.resolve();
-        this.healthError = null;
+        this.readerError = null;
+        this.health = null;
         this.closed = false;
     }
 
     get publicState() {
         const { seen_ids, ...state } = this.state;
-        return { ...state, health_error: this.healthError };
+        return { ...state, reader_error: this.readerError, health: this.health };
     }
 
     record(type, producer, source = "coordinator", options = {}) {
@@ -266,8 +357,8 @@ export class RunStore extends EventEmitter {
             return data;
         });
         this.queue = pending.catch(error => {
-            this.healthError = error.message;
-            this.emit("health", error.message);
+            this.readerError = error.message;
+            this.emit("reader", error.message);
         });
         return pending;
     }
@@ -412,6 +503,21 @@ export class RunStore extends EventEmitter {
                 await this.record("runtime", { dispatch_id: dispatch.id, observation_stale: true }, "observer");
             }
         }
+    }
+
+    async publishHealth(options = {}) {
+        if (this.closed) return this.health;
+        const measured = vitality(this.state, options);
+        const record = {
+            schema_version: 1, execution_id: this.state.execution_id, swarm_id: this.state.swarm_id,
+            cycle: this.state.cycle, phase: this.state.phase, status: this.state.status, ...measured,
+        };
+        const changed = this.health?.state !== record.state || this.health?.reason !== record.reason;
+        this.health = record;
+        // The file is the only channel that survives this process; publish it even when nothing changed.
+        await atomicJson(path.join(this.directory, "health.json"), record);
+        if (changed) this.emit("change", this.publicState);
+        return record;
     }
 
     async close() {

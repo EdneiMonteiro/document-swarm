@@ -1,6 +1,6 @@
 ---
 name: document-swarm
-skill_version: "3.4.0"
+skill_version: "3.5.0"
 description: "Use when the user asks for a substantial document (playbook, whitepaper, report, RFC, policy, technical guide, comparison), for a presentation delivered as offline HTML plus a faithful and an editable PowerPoint file, or wants to evolve an artefact an earlier swarm produced. The skill frames the request, creates declarative specialist agents with session-validated model provenance, runs evidence-based improvement cycles, executes deterministic source/table/composition/quality gates, and stops only when every evaluated topic reaches at least A or the work is explicitly escalated. Do not use for short text such as a paragraph or email."
 ---
 
@@ -473,6 +473,102 @@ atesta legibilidade nem redação: os revisores abrem as páginas nos três form
 Sintaxe do DeckSpec, temas, limites, qualificação do ambiente, evidência de
 isolamento e publicação estão em [docs/presentations.md](docs/presentations.md).
 
+### 2.6. Vigia de saúde e retomada
+
+Uma execução pode parar sem aviso: um despacho registrado que nunca virou chamada
+real, um subagente que falhou sem resultado, um turno que terminou no meio do
+fluxo. O vigia existe para tornar isso visível e retomar **apenas o que é
+determinístico**. Ele recupera execução, nunca qualidade: não atribui nota, não
+aprova entrega e não decide que um documento está bom.
+
+Dois scripts stdlib sustentam o vigia e nunca modificam o swarm:
+
+```bash
+python3 "<DOCSWARM>/scripts/checks/health.py" . --threshold 180
+python3 "<DOCSWARM>/scripts/checks/resume.py" . --output reports/resume.json
+```
+
+`health.py` imprime a tabela e sai `1` quando o estado é `stalled` ou `invalid`.
+`resume.py` projeta o próximo passo do contrato do ciclo e grava o registro
+durável, com os hashes dos artefatos que sustentam a projeção.
+
+#### Armar o vigia
+
+Depois do brief e antes de gerar agentes, arme um prompt agendado a cada 5
+minutos com `manage_schedule`, e encerre esse agendamento na entrega, na
+escalação ou na interrupção. O prompt deve mandar executar `health.py` na pasta
+do swarm, publicar a tabela no terminal e agir conforme o estado:
+
+```text
+Vigia do swarm <swarm_id>. Execute:
+python3 "<DOCSWARM>/scripts/checks/health.py" "<OUTPUT_ROOT>/<swarm_id>" --threshold 180
+Publique a tabela no terminal, sem resumir nem reformatar. Se o estado for
+active, waiting ou closed, não faça mais nada. Se for stalled, execute resume.py
+e aplique no máximo uma ação do catálogo R1–R5 da seção 2.6, registrando-a com
+operation recovery. Se for invalid, publique o erro e escale. Nunca atribua nota,
+pule revisor ou aprove entrega.
+```
+
+Um subagente de background não serve para isso: a saída dele vai para a
+transcrição dele, e ele não despacha agentes no lugar do coordenador. O prompt
+agendado injeta um turno na sessão principal, que é onde a retomada acontece.
+
+| Estado | Significado | Ação do vigia |
+|---|---|---|
+| `active` | Progresso observado dentro do limiar | Publicar a tabela e parar |
+| `waiting` | Trabalho em curso dentro do limiar | Publicar a tabela e parar |
+| `stalled` | Sem progresso além do limiar, com trabalho pendente | Uma ação de recuperação |
+| `closed` | Entrega completa, escalação ou encerramento registrado | Publicar e desarmar |
+| `unobserved` | A extensão perdeu observação | Publicar como não observado |
+| `invalid` | Artefatos ilegíveis | Publicar o erro e escalar |
+
+`unobserved` nunca é apresentado como `active`, e `stalled` nunca é apresentado
+como falha do documento.
+
+#### Recuperação permitida
+
+| # | Situação detectada | Ação |
+|---|---|---|
+| R1 | Despacho registrado sem chamada real observada | Redespachar o mesmo agente, no mesmo ciclo |
+| R2 | Subagente `failed` ou `cancelled` | Redespachar uma vez, respeitando o teto |
+| R3 | Subagente `idle` sem resultado registrado | Ler o resultado; se não houver, redespachar |
+| R4 | Check obrigatório do ciclo não executado | Executar o script correspondente |
+| R5 | Fase publicada sem artefato correspondente | Retomar aquela fase |
+
+Proibido em qualquer caso: atribuir ou alterar nota, pular revisor ou rubber
+duck, aprovar entrega, mudar `max_cycles`, trocar modelo declarado sem registro,
+ou reexecutar o portão sobre uma revisão que mudou sem revalidar.
+
+Limites: no máximo uma ação por tique, duas retomadas por agente por ciclo e seis
+no total por execução. Esgotado o teto, o vigia para de agir, continua publicando
+a tabela e escala ao usuário.
+
+Toda recuperação vira evento próprio no jornal do monitor, com
+`operation: "recovery"`, e aparece no relatório final. Uma execução retomada não
+pode parecer uma execução limpa.
+
+#### Limitação explícita
+
+Se o laço do agente estiver travado, o prompt agendado fica na fila e não
+executa. Nada dentro da sessão recupera uma sessão travada. Por isso a detecção
+contínua vive no processo da extensão do monitor, que publica
+`reports/progress/<execution_id>/health.json` a cada poucos segundos, fora do
+laço do agente. Se o processo do CLI morrer, a extensão morre junto e só os
+registros em disco sobrevivem; a retomada acontece na sessão seguinte.
+
+#### Retomar em uma sessão nova
+
+Ao receber um pedido de retomada, evolução ou continuação sobre uma pasta
+existente, procure `reports/resume.json` antes de qualquer outra coisa:
+
+1. rode `resume.py <pasta> --check reports/resume.json`;
+2. exit `0`: a projeção continua válida; execute o próximo passo registrado;
+3. exit `1`: algum artefato mudou; recalcule a projeção em vez de confiar nela;
+4. na dúvida, recalcule. O registro é um atalho, não uma autoridade.
+
+A projeção segue o contrato do ciclo descrito na Fase 3. Mudanças nesse contrato
+exigem atualizar `resume.py` junto.
+
 ## 3. Convenções de caminho e versão
 
 - Todos os caminhos lógicos desta skill usam `/`.
@@ -600,7 +696,7 @@ Além do relatório Markdown, cada ciclo deve gerar
 
 ```yaml
 schema_version: 1
-skill_version: "3.4.0"
+skill_version: "3.5.0"
 quality_contract: editorial-v1
 mode: document
 cycle: 2
@@ -807,7 +903,7 @@ No modo evolução, pergunte somente o que mudou.
 ```yaml
 ---
 swarm_id: <swarm_id>
-skill_version: "3.4.0"
+skill_version: "3.5.0"
 mode: document
 max_cycles: 5
 editorial_profile: <perfil definido no enquadramento>
@@ -829,6 +925,9 @@ deliverables:
    e idioma. Mantenha nomes e referências autorais no Markdown, não no gerador.
 5. Se habilitado e disponível, inicie `docswarm_monitor` conforme a seção 2.3,
    para que a criação das declarações já apareça na tela.
+6. Arme o vigia de saúde conforme a seção 2.6: um prompt agendado a cada 5
+   minutos que executa `health.py` na pasta do swarm, publica a tabela no
+   terminal e só age quando o estado for `stalled`.
 
 ### Fase 2 — Memória, agentes e modelos
 
@@ -991,10 +1090,16 @@ execute o gate novamente. O monitor não substitui as chamadas aos scripts.
 6. Entregue os caminhos e um resumo curto.
 7. Registre `finish` no monitor após a conclusão real. Em escalação ou
    interrupção, registre o estado correspondente, sem declarar aprovação.
+8. Desarme o prompt agendado do vigia com `manage_schedule`. Um vigia esquecido
+   continua consumindo turnos sobre uma execução encerrada.
 
 ## 12. Modo evolução
 
 ### E.0 — Diagnóstico
+
+Antes de qualquer leitura, verifique se existe `reports/resume.json` pendente e
+trate-o conforme a seção 2.6: a pasta pode ser uma execução interrompida, não um
+trabalho concluído que está sendo evoluído.
 
 Leia `brief.md`, documento atual, último relatório/review estruturado,
 agentes e artefatos de checks. Identifique tópicos afetados e novos tópicos.
@@ -1394,6 +1499,8 @@ Todos usam somente Python stdlib. Consulte `--help` para opções exatas.
 | `pdf_contract.py` | verifica os registros e hashes das inspeções PDF no gate | inspeção falhou, está ausente ou não corresponde aos artefatos atuais |
 | `presentation_contract.py` | reconstrói páginas, navegação e cobertura de uma apresentação e confere seus registros | contrato, evidência ou cobertura não correspondem à entrega atual |
 | `progress.py` | projeta artefatos para observação local, sem modificá-los | não é um portão; problemas de leitura são explícitos |
+| `health.py` | compõe a tabela de saúde da execução a partir de medições | não é um portão; sai `1` em `stalled` ou `invalid` |
+| `resume.py` | projeta o próximo passo determinístico e grava `resume.json` | não é um portão; sai `1` quando a projeção registrada está desatualizada |
 | `inspect_nomenclature.py` | lista candidatos lexicais e suas ocorrências | não dá nota; erros de leitura são explícitos |
 | `final_report.py` | deriva fatos do relatório final | artefatos estão ausentes/inválidos |
 | `update_memory.py` | propõe e, após aprovação, aplica memória | swarm não aprovado ou fonte inelegível |
@@ -1435,6 +1542,8 @@ no gate usando apenas a biblioteca padrão.
 - [ ] Documento final tem índice e bibliografia.
 - [ ] Monitor habilitado recebeu marcos reais e encerramento correto; se
       indisponível, houve aviso e o fluxo documental continuou no terminal.
+- [ ] Vigia de saúde armado no início e desarmado no encerramento; cada
+      recuperação está registrada no jornal e no relatório final.
 
 ## 16. Resposta ao usuário
 
