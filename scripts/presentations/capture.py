@@ -257,6 +257,14 @@ def exercise(package: Path, layout: dict[str, Any]) -> dict[str, Any]:
             before = visible()
             page.keyboard.press("ArrowRight")
             observations["dialog_paginates"] = visible() != before
+            observations["support_position_correct"] = page.evaluate(
+                "() => { const dialog = document.querySelector('dialog.support[open]');"
+                " const pages = dialog ? Array.from(dialog.querySelectorAll('.page')) : [];"
+                " const index = pages.findIndex(item => !item.hidden);"
+                " const labels = JSON.parse(document.getElementById('deck-data').textContent).labels;"
+                " const expected = labels.position.replace('{current}', String(index + 1))"
+                " .replace('{total}', String(pages.length));"
+                " return index >= 0 && document.getElementById('position').textContent === expected; }")
             page.keyboard.press("Escape")
             observations["escape_closes"] = page.evaluate(
                 "() => document.querySelector('dialog.support[open]') === null")
@@ -264,7 +272,8 @@ def exercise(package: Path, layout: dict[str, Any]) -> dict[str, Any]:
                 "(id) => document.activeElement && document.activeElement.dataset.actionId === id",
                 support["action_id"])
             if not all(observations.get(key) for key in
-                       ("dialog_modal", "focus_inside_dialog", "dialog_paginates", "escape_closes", "focus_returned")):
+                       ("dialog_modal", "focus_inside_dialog", "dialog_paginates", "support_position_correct",
+                        "escape_closes", "focus_returned")):
                 findings.append({"code": "dialog_behaviour", "observations": observations})
 
         sequence = [item["page_id"] for item in layout["pages"] if item["kind"] in ("index", "slide")]
@@ -283,6 +292,34 @@ def exercise(package: Path, layout: dict[str, Any]) -> dict[str, Any]:
         if observations["keyboard_advance"] != wanted:
             findings.append({"code": "keyboard_sequence", "from": start,
                              "expected": wanted, "observed": observations["keyboard_advance"]})
+        index_entries = [item for item in layout["navigation"]
+                         if item["page_id"] == start and item.get("target_page_id") in sequence]
+        index_entry = next((item for item in index_entries if item["target_page_id"] != wanted),
+                           index_entries[0] if index_entries else None)
+        if index_entry is not None and index_control.count():
+            tap(page, anchor, index_control)
+            entry = page.locator(
+                f'[data-page-id="{start}"] [data-action-id="{index_entry["action_id"]}"]').first
+            entry.focus()
+            page.keyboard.press("Space")
+            observations["space_activates_control"] = visible() == index_entry["target_page_id"]
+            if not observations["space_activates_control"]:
+                findings.append({"code": "space_control_activation", "expected": index_entry["target_page_id"],
+                                 "observed": visible()})
+        if support is not None:
+            show(support["page_id"])
+            trigger = page.locator(
+                f'[data-page-id="{support["page_id"]}"] [data-action-id="{support["action_id"]}"]').first
+            tap(page, support["page_id"], trigger)
+            page.keyboard.press("Escape")
+            page.keyboard.press("Home")
+            page.wait_for_function(
+                "(id) => { const node = document.querySelector(`[data-page-id=\"${CSS.escape(id)}\"]`);"
+                " return node && !node.hidden; }", arg=sequence[0], timeout=5000)
+            observations["home_after_escape"] = visible() == sequence[0]
+            if not observations["home_after_escape"]:
+                findings.append({"code": "home_after_escape", "expected": sequence[0],
+                                 "observed": visible()})
         observations["runtime_errors"] = errors
         observations["blocked_requests"] = blocked
         if errors or blocked:

@@ -16,7 +16,7 @@ from pptx.util import Emu
 
 from scripts.checks.common import InputError
 from scripts.presentations.capture import png_size
-from scripts.presentations.ooxml import almost_transparent, emu, hide_from_slideshow, link_to_slide, link_to_url, set_notes
+from scripts.presentations.ooxml import almost_transparent, emu, hide_from_slideshow, link_to_slide, link_to_url, set_description, set_notes
 
 BLANK_LAYOUT = 6
 
@@ -47,6 +47,7 @@ def export(document: dict[str, Any], layout: dict[str, Any], frames: list[dict[s
             raise InputError(f"the frame of {page['page_id']} does not keep the stage aspect ratio")
         picture = slide.shapes.add_picture(str(source), 0, 0, Emu(emu(stage["width"])), Emu(emu(stage["height"])))
         picture.name = f"frame::{page['page_id']}"
+        set_description(picture, f"{page['title']}. Imagem da página; use a versão editável para ler o texto.")
         objects.append({"page_id": page["page_id"], "block_id": f"sys:frame:{page['page_id']}",
                         "native": "picture", "text": ""})
         for item in layout["navigation"]:
@@ -57,6 +58,7 @@ def export(document: dict[str, Any], layout: dict[str, Any], frames: list[dict[s
                 MSO_SHAPE.RECTANGLE, emu(region["x"]), emu(region["y"]),
                 emu(max(region["width"], 1)), emu(max(region["height"], 1)))
             shape.name = f"hotspot::{item['action_id']}"
+            set_description(shape, item["name"])
             almost_transparent(shape)
             shape.text_frame.text = ""
             if item.get("reference_id"):

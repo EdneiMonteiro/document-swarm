@@ -183,6 +183,10 @@ O HTML funciona a partir de `file:`, sem servidor, CDN, service worker ou
 recursos locais enumerados; a geometria vai para `runtime/pages.css` justamente
 para não precisar de estilos inline. Os apoios abrem em `dialog` modal, com foco
 contido, fechamento por Escape e retorno do foco ao botão que os abriu.
+O contador usa a sequência do apoio enquanto o diálogo está aberto. Espaço
+aciona o controle focado; fora de um controle, avança a apresentação. Home volta
+ao sumário com o diálogo fechado, inclusive após Escape; um evento de fechamento
+atrasado não desfaz essa navegação.
 
 Os rótulos do sumário usam a tipografia de corpo, correspondente à geometria
 planejada, com texto escuro sobre a página clara. O teste de regressão mede
@@ -192,6 +196,9 @@ tinta no raster dos rótulos e inclui um controle de texto branco invisível.
 transparentes sobre ela. `deck-editable.pptx` tem título, texto, tabelas, formas
 e conectores nativos; imagens continuam imagens. Nos dois, as páginas de apoio
 ficam ocultas na sequência normal e são alcançadas pelos links visíveis.
+Os controles dos dois PPTX recebem descrições alternativas. Cada imagem de página
+do arquivo fiel também recebe uma descrição com o título e a indicação de usar
+o arquivo editável para ler o texto; isso não torna o texto da imagem selecionável.
 
 ## Inspeção
 
@@ -204,7 +211,7 @@ de entradas, expansão e nomes, e percorridos como XML.
 | Conteúdo | Palavra, linha, célula, rótulo, legenda ou nota ausente em qualquer formato. |
 | Inventário | Página, arquivo ou objeto ausente ou acrescentado sem declaração. |
 | Navegação | Destino errado, controle ausente, extremo habilitado e link externo alterado. |
-| Interação | Diálogo modal, foco contido, Escape, retorno do foco e avanço por teclado, no navegador real. |
+| Interação | Diálogo modal, contador do apoio, foco contido, Escape, retorno do foco, Espaço no controle focado e Home após fechamento, no navegador real. |
 | Estrutura nativa | Texto achatado em imagem, conector sem ancoragem e objeto fora do palco. |
 | Pacote | Macro, objeto OLE, relacionamento externo indevido e hyperlink não `https`. |
 | Ambiente | Edição que não persiste depois de salvar e reabrir, e divergência visual acima da tolerância. |

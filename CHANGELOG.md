@@ -7,6 +7,16 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve native Space activation on focused presentation controls, scope the
+  position counter to support pages, and prevent delayed dialog-close events
+  from undoing subsequent navigation.
+- Keep disabled HTML controls fully opaque and add alternative descriptions to
+  saved PowerPoint controls and the faithful deck's page images.
+- Exercise keyboard activation against a non-adjacent index destination, with
+  deliberately broken keyboard and support-counter controls in regression tests.
+
 ## [3.5.0] - 2026-10-05
 
 ### Added

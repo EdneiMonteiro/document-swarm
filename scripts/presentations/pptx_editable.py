@@ -180,6 +180,8 @@ class EditableExporter:
     def button(self, slide, page_id: str, element: dict[str, Any]) -> None:
         entry = element["type"] == "index-entry"
         shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, *box(element))
+        shape.name = f"control::{element['block_id']}"
+        set_description(shape, element["text"])
         enabled = element.get("enabled", True)
         colour = "accent" if element["type"] != "chrome" else "support"
         shape.fill.solid()

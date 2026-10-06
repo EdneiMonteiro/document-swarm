@@ -55,16 +55,18 @@
       if (child.classList.contains("page")) { child.hidden = child !== page; }
     });
     current = pageId;
-    var index = sequence.indexOf(pageId);
+    var dialog = dialogOf(pageId);
+    var scope = dialog
+      ? Array.prototype.map.call(dialog.querySelectorAll(".page"), function (item) { return item.dataset.pageId; })
+      : sequence;
+    var index = scope.indexOf(pageId);
     if (index >= 0 && position) {
       position.textContent = data.labels.position
         .replace("{current}", String(index + 1))
-        .replace("{total}", String(sequence.length));
+        .replace("{total}", String(scope.length));
     }
     showNotes(pageId);
     fit();
-    var heading = page.querySelector(".title");
-    if (heading) { heading.setAttribute("tabindex", "-1"); heading.focus({ preventScroll: true }); }
   }
 
   function closeDialog(dialog) {
@@ -111,6 +113,15 @@
     if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) { return; }
     var typing = /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
     if (typing) { return; }
+    if (event.key === "Escape") {
+      var dialog = document.querySelector("dialog.support[open]");
+      if (dialog) {
+        event.preventDefault();
+        closeDialog(dialog);
+      }
+      return;
+    }
+    if (event.key === " " && event.target.closest("button, a, [role='button']")) { return; }
     if (event.key === "ArrowRight" || event.key === "PageDown" || event.key === " ") {
       event.preventDefault();
       step(1);
@@ -126,8 +137,9 @@
   Array.prototype.forEach.call(document.querySelectorAll("dialog.support"), function (dialog) {
     dialog.addEventListener("close", function () {
       var origin = dialog.dataset.origin;
-      if (origin) { activate(origin); }
-      if (opener && document.contains(opener)) { opener.focus({ preventScroll: true }); }
+      var restore = origin && dialogOf(current) === dialog;
+      if (restore) { activate(origin); }
+      if (restore && opener && document.contains(opener)) { opener.focus({ preventScroll: true }); }
       opener = null;
     });
   });

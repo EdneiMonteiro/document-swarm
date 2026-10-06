@@ -200,9 +200,10 @@ html, body {
 
 .element.control[disabled] {
   background: var(--panel);
-  color: var(--muted);
+  color: var(--accent);
   border-color: var(--line);
   cursor: default;
+  opacity: 1;
 }
 
 .element.control:focus-visible,

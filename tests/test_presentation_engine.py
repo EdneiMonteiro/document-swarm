@@ -113,6 +113,53 @@ class DetectorTests(EngineFixture):
             with self.subTest(check=check["check_id"]):
                 self.assertEqual(check["findings"], [], check["check_id"])
 
+    def test_space_skipping_the_focused_index_entry_is_detected(self):
+        from scripts.presentations import capture
+
+        candidate = self.copy()
+        runtime = candidate / "runtime" / "app.js"
+        text = runtime.read_text(encoding="utf-8")
+        guard = """    if (event.key === " " && event.target.closest("button, a, [role='button']")) { return; }"""
+        self.assertIn(guard, text)
+        runtime.write_text(text.replace(guard, "", 1), encoding="utf-8")
+        report = capture.exercise(candidate / "index.html", self.layout)
+        self.assertIn("space_control_activation", self.codes(report["findings"]))
+
+    def test_support_position_using_the_main_sequence_is_detected(self):
+        from scripts.presentations import capture
+
+        candidate = self.copy()
+        runtime = candidate / "runtime" / "app.js"
+        text = runtime.read_text(encoding="utf-8")
+        position = '.replace("{total}", String(scope.length));'
+        self.assertIn(position, text)
+        runtime.write_text(text.replace(position, '.replace("{total}", String(sequence.length));', 1),
+                           encoding="utf-8")
+        report = capture.exercise(candidate / "index.html", self.layout)
+        self.assertFalse(report["observations"]["support_position_correct"])
+        self.assertIn("dialog_behaviour", self.codes(report["findings"]))
+
+    def test_saved_pptx_controls_and_faithful_frames_have_descriptions(self):
+        from xml.etree import ElementTree
+        from scripts.presentations.inspect import read_package, slide_order
+
+        for filename, prefix in (("deck-editable.pptx", "control::"),
+                                 ("deck-faithful.pptx", "hotspot::")):
+            with self.subTest(format=filename):
+                parts = read_package(self.candidate / filename)
+                nodes = [node for part in slide_order(parts)
+                         for node in ElementTree.fromstring(parts[part]).iter(f"{P}cNvPr")]
+                controls = [node for node in nodes if node.get("name", "").startswith(prefix)]
+                self.assertTrue(controls)
+                for node in controls:
+                    self.assertTrue(node.get("descr", "").strip(), node.get("name"))
+                if filename == "deck-faithful.pptx":
+                    frames = {node.get("name"): node for node in nodes
+                              if node.get("name", "").startswith("frame::")}
+                    self.assertEqual(len(frames), len(self.layout["pages"]))
+                    for page in self.layout["pages"]:
+                        self.assertIn(page["title"], frames[f"frame::{page['page_id']}"].get("descr", ""))
+
     def test_removed_wording_is_detected_in_the_delivered_html(self):
         from scripts.presentations.inspect import inspect_html
 
