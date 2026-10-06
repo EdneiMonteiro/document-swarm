@@ -14,7 +14,7 @@ de notas e relatório final.
 
 > **Fonte da verdade:** [`SKILL.md`](./SKILL.md)
 >
-> **Versão atual:** `3.5.0`
+> **Versão atual:** `3.6.0`
 >
 > **Histórico:** [`CHANGELOG.md`](./CHANGELOG.md)
 
@@ -33,6 +33,9 @@ de notas e relatório final.
 - **Rastreabilidade:** brief, agentes, modelos, fontes, ciclos, notas e checks.
 - **Monitor visual local:** grafo de agentes, estados observados, rodadas, notas
   por revisor, bloqueios e histórico, em canvas ou navegador.
+- **Executor determinístico opcional:** o código conduz o ciclo, em paralelo e
+  retomável, e os agentes ficam só com o que exige julgamento; as notas e a
+  aprovação continuam sendo dos revisores e do `gate.py`.
 - **Memória curada:** fontes e perfis aprovados podem ser reutilizados por swarms
   futuros sem aceitar avisos ou falhas.
 
@@ -178,6 +181,28 @@ rubber duck e não aprova entrega. Se o laço do agente estiver travado, nenhum
 prompt agendado executa; a detecção continua e a retomada acontece na sessão
 seguinte. Detalhes no [guia do monitor](./docs/monitor.md#saúde-da-execução-e-retomada).
 
+## Executor determinístico
+
+No fluxo padrão, o coordenador conduz o ciclo turno a turno, e a maior parte do tempo
+de relógio se perde entre os turnos. Em treze execuções medidas (53,3 h), algum agente
+rodava em 25 % do tempo, a máquina dormia em 18 % e ficava acordada sem nenhum agente
+rodando em 57 %. O executor opcional faz em código o que o contrato já determina e
+deixa com agentes só a autoria, a consolidação, a revisão independente e o rubber
+duck. Nenhuma exigência de qualidade muda: as notas vêm dos revisores e só o
+`gate.py` aprova.
+
+```powershell
+python .\scripts\orchestration run <pasta-do-swarm> --plan-only
+python .\scripts\orchestration run <pasta-do-swarm> --parallel 4
+```
+
+Cada agente roda como um processo `copilot` não interativo, com só as ferramentas do
+seu papel, sem escrita e sem comandos, e o resultado volta como JSON validado. O mesmo
+comando retoma uma execução parada. Esta versão cobre documentos Markdown novos; o
+backend foi testado com um CLI substituto e deve ser qualificado com o comando
+`qualify`, que faz poucas chamadas reais e exige `--yes`. Veja o
+[guia do executor](./docs/executor.md).
+
 ## PDFs profissionais
 
 O motor lê o Markdown autoral e gera um bundle com PDF, prévias PNG, texto
@@ -277,6 +302,11 @@ A inspeção lexical não aprova nomenclatura, e a inspeção mecânica não apr
 redação. As notas factuais, editoriais e visuais continuam sob responsabilidade
 dos revisores.
 
+Com o [executor determinístico](./docs/executor.md#o-ciclo), o mesmo ciclo é conduzido
+por código: autores, consolidação, checagens em paralelo, revisores, matriz, rubber
+duck e portão, com reparo dirigido aos autores afetados quando uma checagem mecânica
+falha.
+
 O diagrama histórico do pipeline de validação da versão 2.0 está em
 [`docs/project/fluxo-ideal.excalidraw`](./docs/project/fluxo-ideal.excalidraw).
 A arquitetura da observação visual está no [guia do monitor](./docs/monitor.md#arquitetura).
@@ -288,7 +318,7 @@ biblioteca padrão do Python.
 
 | Script | Responsabilidade |
 |---|---|
-| `verify_sources.py` | Testa URLs, classifica `ok/warn/fail` e mantém cache. |
+| `verify_sources.py` | Testa URLs em paralelo (até 3 por host), classifica `ok/warn/fail` e mantém cache. |
 | `verify_tables.py` | Recalcula tabelas Markdown explicitamente auditáveis. |
 | `lint_agents.py` | Valida frontmatter, modelo declarado e swarm do agente. |
 | `gate.py` | Aplica a régua, o veto crítico, o limite de ciclos e o contrato editorial da entrega. |
@@ -301,6 +331,11 @@ biblioteca padrão do Python.
 | `pdf_contract.py` | Verifica no gate os hashes e resultados do motor PDF opcional, sem importar suas dependências. |
 | `presentation_contract.py` | Reconstrói páginas, navegação e cobertura de uma apresentação e confronta os registros com os arquivos reais. |
 
+O executor determinístico opcional fica em [`scripts/orchestration/`](./scripts/orchestration/),
+também só com a biblioteca padrão, e se usa por `python scripts\orchestration <comando>`:
+`init`, `next`, `record`, `status`, `run`, `qualify` e `metrics`. Ele não é um portão:
+quem aprova continua sendo o `gate.py`.
+
 Detalhes operacionais, formatos e exit codes:
 
 - [Matriz computável e portão](./SKILL.md#6-régua-e-matriz-computável)
@@ -308,6 +343,7 @@ Detalhes operacionais, formatos e exit codes:
 - [Tabelas auditáveis](./SKILL.md#8-tabelas-auditáveis)
 - [Loop determinístico](./SKILL.md#fase-3--loop-determinístico-por-ciclo)
 - [Vigia de saúde e retomada](./SKILL.md#26-vigia-de-saúde-e-retomada)
+- [Executor determinístico](./SKILL.md#27-executor-determinístico-opcional)
 - [Referência dos scripts](./SKILL.md#14-referência-dos-scripts-determinísticos)
 
 ## Estrutura de uma execução
@@ -329,6 +365,15 @@ Detalhes operacionais, formatos e exit codes:
 │  │  ├─ snapshot.json
 │  │  ├─ events.jsonl
 │  │  └─ health.json
+│  ├─ execution/             # somente quando o executor determinístico conduz o ciclo
+│  │  ├─ plan.json
+│  │  ├─ journal.jsonl
+│  │  ├─ results/
+│  │  ├─ feedback/
+│  │  ├─ documents/
+│  │  ├─ checks/
+│  │  ├─ usage/
+│  │  └─ driver.json
 │  ├─ resume.json
 │  └─ final-report.md
 ├─ sources/
@@ -374,6 +419,8 @@ O README é apenas uma porta de entrada. As regras completas vivem em:
 - [Contrato do monitor visual](./SKILL.md#23-monitor-visual-de-execução)
 - [Composição e inspeção PDF](./SKILL.md#24-composição-e-inspeção-profissional-de-pdf)
 - [Apresentações como tipo de entrega](./SKILL.md#25-apresentações-como-tipo-de-entrega)
+- [Executor determinístico](./SKILL.md#27-executor-determinístico-opcional) e o
+  [guia do executor](./docs/executor.md)
 - [Proveniência de modelos](./SKILL.md#9-proveniência-de-modelos)
 - [Memória entre swarms](./SKILL.md#10-memória-entre-swarms)
 - [Fluxo do modo documento](./SKILL.md#11-fluxo--modo-documento)
@@ -393,6 +440,10 @@ Execute a suíte stdlib:
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+Os testes do executor nunca chamam um modelo: usam um CLI substituto
+(`tests/fake_copilot.py`) e `DOCSWARM_NO_REAL_CLI=1` faz qualquer caminho até o
+`copilot` real falhar. Só o comando `qualify` faz chamadas reais, e só com `--yes`.
 
 Para a extensão, use o runner nativo do Node:
 

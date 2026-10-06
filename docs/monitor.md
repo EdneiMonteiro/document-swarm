@@ -266,6 +266,21 @@ sessão seguinte. Se o processo do CLI morrer, a extensão morre junto e só os
 registros em disco sobrevivem. O protocolo completo está na seção 2.6 do
 `SKILL.md`.
 
+### Execuções conduzidas pelo executor determinístico
+
+Um swarm conduzido pelo [executor determinístico](./executor.md) não tem prompt
+agendado nem despachos do coordenador. O processo `run` regrava
+`reports/execution/driver.json` a cada 15 segundos e todo o progresso vai para o
+`reports/execution/journal.jsonl`. `health.py` lê os dois: sem batimento por mais de
+60 segundos, ou com o estado `blocked`, `failed` ou `interrupted`, a execução é
+`stalled`; com o encerramento registrado, `closed`; do contrário, `active`. A linha
+"Retomar" da tabela traz o comando que continua de onde parou, e `metrics` decompõe o
+relógio em agente, código e ocioso.
+
+O painel visual e o `health.json` da extensão não são alimentados por essa execução,
+porque dependem dos despachos que só o coordenador registra. O painel continua
+servindo ao fluxo do coordenador.
+
 ## Persistência e proteção de dados
 
 Cada execução guarda `events.jsonl`, `snapshot.json` e sua identificação de

@@ -1,6 +1,6 @@
 ---
 name: document-swarm
-skill_version: "3.5.0"
+skill_version: "3.6.0"
 description: "Use when the user asks for a substantial document (playbook, whitepaper, report, RFC, policy, technical guide, comparison), for a presentation delivered as offline HTML plus a faithful and an editable PowerPoint file, or wants to evolve an artefact an earlier swarm produced. The skill frames the request, creates declarative specialist agents with session-validated model provenance, runs evidence-based improvement cycles, executes deterministic source/table/composition/quality gates, and stops only when every evaluated topic reaches at least A or the work is explicitly escalated. Do not use for short text such as a paragraph or email."
 ---
 
@@ -490,7 +490,10 @@ python3 "<DOCSWARM>/scripts/checks/resume.py" . --output reports/resume.json
 
 `health.py` imprime a tabela e sai `1` quando o estado é `stalled` ou `invalid`.
 `resume.py` projeta o próximo passo do contrato do ciclo e grava o registro
-durável, com os hashes dos artefatos que sustentam a projeção.
+durável, com os hashes dos artefatos que sustentam a projeção. Em um swarm
+conduzido pelo executor determinístico (seção 2.7), `health.py` lê o batimento
+`reports/execution/driver.json` e o journal do executor, classifica por eles e
+imprime o comando que retoma; nesse caso não há prompt agendado a armar.
 
 #### Armar o vigia
 
@@ -569,6 +572,71 @@ existente, procure `reports/resume.json` antes de qualquer outra coisa:
 A projeção segue o contrato do ciclo descrito na Fase 3. Mudanças nesse contrato
 exigem atualizar `resume.py` junto.
 
+### 2.7. Executor determinístico (opcional)
+
+No fluxo padrão, você conduz o ciclo turno a turno. Em execuções reais, a maior
+parte do tempo de relógio se perde entre os turnos, não nos agentes: em treze
+execuções medidas, algum agente rodava em 25 % do tempo e, em 57 %, a máquina
+estava acordada sem nenhum agente rodando. O executor determinístico faz em
+código o que o contrato já determina (ordem das etapas, paralelismo, checagens,
+matriz de notas, portão, feedback e entrega) e deixa com agentes a autoria, a
+consolidação semântica, a revisão independente e o rubber duck.
+
+Ele não muda nenhuma exigência de qualidade. As notas continuam vindo dos
+revisores, `gate.py` continua sendo o único que aprova, todo tópico precisa de
+`A` ou `A+` e não existe modo rápido. Guia completo, com as proteções e o que ainda
+não foi qualificado: [docs/executor.md](docs/executor.md).
+
+**Quando oferecer:** documento novo em Markdown, com uma única entrega em `output/`
+e até 9 autores. **Quando não usar:** apresentação, PDF, evolução de um swarm que já
+tem ciclos, ou quando o usuário quiser acompanhar e decidir cada passo. O executor
+recusa o que não suporta antes de gastar qualquer chamada.
+
+Além do brief usual, o executor exige o mapa de tópicos e o revisor editorial:
+
+```yaml
+quality_contract: editorial-v1
+editorial_reviewer: reviewer-03-clarity
+deliverables:
+  - output/<documento-final>.md
+topics:
+  T01: Enquadramento
+  T02: Alternativas e custos
+```
+
+Conduta quando o usuário escolhe o executor:
+
+1. Faça as fases 0 a 2 como sempre: enquadramento, brief, memória, agentes, modelos
+   confirmados e `lint_agents.py`.
+2. Não despache agentes nem execute à mão os scripts do ciclo. Execute o comando
+   abaixo e acompanhe a tabela que ele imprime a cada minuto. O vigia da seção 2.6
+   não se aplica: o executor mantém o próprio batimento em
+   `reports/execution/driver.json`, que `health.py` lê.
+3. Retomar é repetir o mesmo comando, depois de uma queda, de uma máquina que
+   dormiu ou de Ctrl+C. O estado vem dos artefatos e do journal.
+4. A entrega, o relatório derivado, a narrativa e a proposta de memória são feitos
+   pelo executor. Revise a proposta e aplique a memória só pelo fluxo explícito do
+   script, como na Fase 4.
+
+```bash
+python3 "<DOCSWARM>/scripts/orchestration" run "<OUTPUT_ROOT>/<swarm_id>" --plan-only
+python3 "<DOCSWARM>/scripts/orchestration" run "<OUTPUT_ROOT>/<swarm_id>" --parallel 4
+```
+
+`--plan-only` valida tudo e mostra os primeiros agentes e seus comandos sem gastar
+nada. A saída de `run` é `0` aprovado, `1` escalado ao usuário, `2` entrada
+inválida, `3` bloqueado ou falhou (leia a mensagem; não contorne) e `130`
+interrompido. Escalação e bloqueio são decisões da pessoa, nunca uma aprovação.
+
+`run` e `qualify` fazem chamadas reais a modelos e **gastam créditos**. Só os execute
+com a autorização do usuário. Antes do primeiro uso real, `qualify --model <o mais
+barato> --yes` verifica com poucas chamadas mínimas o que o backend promete: prompt
+por stdin, restrição de ferramentas, ferramenta web sob a restrição, paralelismo e
+modelo registrado. Uma sonda que falha desqualifica o backend.
+
+Quem preferir dirigir o motor de outro lugar usa `init`, `next`, `record` e `status`;
+a interface está no guia. `metrics` decompõe o relógio em agente, código e ocioso.
+
 ## 3. Convenções de caminho e versão
 
 - Todos os caminhos lógicos desta skill usam `/`.
@@ -628,6 +696,15 @@ por data: `<YYYY-MM-DD>-SWARM-<XX>`.
 │  │  ├─ snapshot.json
 │  │  ├─ events.jsonl
 │  │  └─ health.json
+│  ├─ execution/              # somente no executor determinístico (seção 2.7)
+│  │  ├─ plan.json
+│  │  ├─ journal.jsonl
+│  │  ├─ results/
+│  │  ├─ feedback/
+│  │  ├─ documents/
+│  │  ├─ checks/
+│  │  ├─ usage/
+│  │  └─ driver.json
 │  ├─ resume.json
 │  └─ final-report.md
 ├─ sources/
@@ -700,7 +777,7 @@ Além do relatório Markdown, cada ciclo deve gerar
 
 ```yaml
 schema_version: 1
-skill_version: "3.5.0"
+skill_version: "3.6.0"
 quality_contract: editorial-v1
 mode: document
 cycle: 2
@@ -886,6 +963,9 @@ Use `ask_user` antes de gerar agentes. Cubra:
 - perfil editorial, propondo `principal-cloud-solution-architect` para
   arquitetura de nuvem e ajustando a linguagem ao público;
 - monitor visual, habilitado por padrão e dispensável para a produção;
+- modo de execução: o padrão é o coordenador (este fluxo). Para um documento novo
+  em Markdown, ofereça o executor determinístico da seção 2.7, que remove o tempo
+  perdido entre turnos sem alterar nenhuma exigência de qualidade;
 - tipo/formato;
 - profundidade/extensão;
 - idioma;
@@ -907,7 +987,7 @@ No modo evolução, pergunte somente o que mudou.
 ```yaml
 ---
 swarm_id: <swarm_id>
-skill_version: "3.5.0"
+skill_version: "3.6.0"
 mode: document
 max_cycles: 5
 editorial_profile: <perfil definido no enquadramento>
@@ -1503,7 +1583,7 @@ Todos usam somente Python stdlib. Consulte `--help` para opções exatas.
 
 | Script | Função | Bloqueia quando |
 |---|---|---|
-| `verify_sources.py` | testa URLs e mantém cache auditável | há fonte `fail` |
+| `verify_sources.py` | testa URLs em paralelo (até 3 por host) e mantém cache auditável | há fonte `fail` |
 | `verify_tables.py` | recalcula tabelas marcadas | conta marcada não fecha |
 | `lint_agents.py` | valida frontmatter e swarm dos agentes | agente está inválido |
 | `gate.py` | aplica régua, crítico, `max_cycles` e contrato editorial atual | retorna exit `1`, `2` ou `3` |
@@ -1515,6 +1595,7 @@ Todos usam somente Python stdlib. Consulte `--help` para opções exatas.
 | `inspect_nomenclature.py` | lista candidatos lexicais e suas ocorrências | não dá nota; erros de leitura são explícitos |
 | `final_report.py` | deriva fatos do relatório final | artefatos estão ausentes/inválidos |
 | `update_memory.py` | propõe e, após aprovação, aplica memória | swarm não aprovado ou fonte inelegível |
+| `scripts/orchestration` | executor determinístico opcional: `init`, `next`, `record`, `status`, `run`, `qualify` e `metrics` (seção 2.7) | não é um portão; só `gate.py` aprova; `run` sai `1` em escalação e `3` quando precisa de uma pessoa |
 
 O motor opcional `python -m scripts.pdf render|inspect` é separado desses checks.
 Ele usa as dependências de PDF, enquanto `pdf_contract.py` verifica seus registros
@@ -1555,6 +1636,9 @@ no gate usando apenas a biblioteca padrão.
       indisponível, houve aviso e o fluxo documental continuou no terminal.
 - [ ] Vigia de saúde armado no início e desarmado no encerramento; cada
       recuperação está registrada no jornal e no relatório final.
+- [ ] Se o executor determinístico foi usado, `run` saiu `0` (ou `1` com a
+      escalação relatada), `reports/execution/journal.jsonl` está presente e
+      nenhum agente foi despachado nem script do ciclo executado à mão.
 
 ## 16. Resposta ao usuário
 

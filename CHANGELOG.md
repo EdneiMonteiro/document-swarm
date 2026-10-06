@@ -5,7 +5,72 @@ All notable changes to this skill are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
-## [Unreleased]
+## [3.6.0] - 2026-10-06
+
+### Added
+
+- Opt-in deterministic executor (`python scripts/orchestration`). Code runs the
+  cycle that the coordinator used to carry in model turns: authors, consolidation,
+  the mechanical checks in parallel, reviewers, the matrix, the rubber duck, the
+  gate, the feedback of the next round and the delivery. Agents keep authorship,
+  consolidation, independent review and the audit; `gate.py` keeps sole authority
+  over approval, and every quality requirement is unchanged. Commands: `init`,
+  `next`, `record`, `status`, `run`, `qualify` and `metrics`. Guide:
+  `docs/executor.md`, `SKILL.md` section 2.7.
+- The engine derives every answer from artifacts and an append-only journal, so a
+  crash loses nothing and the same command resumes. It writes the files the
+  coordinator flow wrote, which the unmodified legacy readers accept.
+- Agents return JSON validated against a per-role contract: exact topic coverage,
+  quotes present in the reviewed text, enough sources for fact reviewers, ownership
+  of section files, and safe portable paths (no traversal, drive or stream
+  characters, reserved Windows names, trailing dots, case collisions or links out
+  of the swarm). A malformed answer is refused at once with the exact reason and a
+  retry prompt that carries it.
+- Verdicts are never trusted from a file. The recorded gate result is a cache bound
+  to the review's bytes and stands only if the matrix still derives from the
+  reviewers' grades and `gate.py`'s own evaluation reproduces it. An edited or
+  forged record, a changed deliverable and an altered rejected cycle are refused
+  instead of re-run, and source verdicts are snapshotted per round so the final
+  recheck cannot reopen a review for a timestamp.
+- `run` executes each agent as one non-interactive `copilot` process, in parallel,
+  with only the tools of its role, shell and writes denied, an empty scratch folder,
+  no custom instructions and the prompt on stdin. Results are recorded as they
+  arrive. A timeout or cancel ends the whole process tree and never waits on a pipe
+  an orphan holds. It prints a table every minute and keeps
+  `reports/execution/driver.json` as a heartbeat.
+- `qualify` checks the CLI with a handful of minimal real calls (stdin prompt, no
+  write under read-only tools, a web tool under the restriction, parallelism, the
+  model in the usage record) and refuses to run without `--yes` because it spends
+  credits. `run --plan-only` shows the first agents and their exact commands without
+  running anything.
+- `health.py` understands executor runs: it reads the heartbeat and the journal,
+  classifies them as active, stalled or closed and prints the command that resumes.
+- `metrics` decomposes an execution into agent time, code time and idle time, for
+  executor journals and for monitor journals.
+- `DOCSWARM_NO_REAL_CLI=1` makes any path to the real `copilot` fail. The tests set
+  it, so a test, or a rule deliberately disabled by mutation testing, can never
+  spend credits.
+
+### Changed
+
+- `verify_sources.py` checks URLs concurrently: 8 at a time and at most 3 per host
+  by default (`--workers`, `--per-host`). The report keeps the index order and
+  `--workers 1` is the sequential behaviour.
+- The prompt of an executor task embeds the JSON schema its answer must obey, so a
+  backend without native schema enforcement still sees the contract.
+- At most 9 authors are supported by the executor: each owns a range of one hundred
+  source identifiers.
+
+### Known limits
+
+- Markdown only, and only for new swarms. Presentations, PDF and the evolution of a
+  swarm that already has cycles keep the coordinator flow; the executor refuses them
+  before spending anything.
+- The `copilot` backend rests on the CLI's documented options and was tested with a
+  stand-in CLI. It has not been qualified with real calls: run `qualify`. No paid
+  benchmark was run, so there is no promised percentage gain.
+- The visual monitor panel is not driven by the executor, and a dead source found by
+  the final recheck blocks the delivery until someone replaces it.
 
 ### Fixed
 

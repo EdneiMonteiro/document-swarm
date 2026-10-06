@@ -2,8 +2,8 @@ cff-version: 1.2.0
 message: "Se usar este material, por favor cite."
 title: "Document Swarm — Skill de Enxame de Agentes para Produção de Documentos"
 type: software
-version: "3.5.0"
-date-released: "2026-10-05"
+version: "3.6.0"
+date-released: "2026-10-06"
 authors:
   - given-names: Ednei
     family-names: Monteiro

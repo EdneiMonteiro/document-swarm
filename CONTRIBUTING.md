@@ -154,3 +154,31 @@ See [monitor architecture and development](./docs/monitor.md).
   the ceiling cases and the negative controls.
 
 See [execution health and resume](./docs/monitor.md#saúde-da-execução-e-retomada).
+
+## Deterministic executor
+
+- `scripts/orchestration/` is stdlib-only, like the checks. The engine derives every
+  answer from artifacts and the journal, never from memory, so a crash between two
+  calls loses nothing. Keep it that way: a decision that cannot be recomputed from
+  disk does not belong in the engine.
+- The executor never assigns a grade and never approves a delivery. Grades come from
+  the reviewers' own results and approval comes from `gate.py`. A recorded verdict is
+  a cache that stands only if `gate.evaluate_current` reproduces it now.
+- Agents return JSON and never write. Every path, count and string that reaches the
+  disk from an agent result is validated first. When a defect is found in one member
+  of a family (a path form, a limit, a type), enumerate and fix the whole family.
+- Every rule needs a test that fails when the rule is disabled. Disable the rule by
+  hand, or with a script that applies one textual mutation to a copy of `scripts/`
+  and `tests/`, run the test, and expect it to fail. A rule no test notices is a rule
+  without a test. Mutate on a copy, never in place.
+- Tests never call a model. They use `tests/fake_copilot.py`, and
+  `DOCSWARM_NO_REAL_CLI=1` (set by `tests/test_orchestration_backend.py`) makes any
+  path to the real `copilot` fail, including under mutation testing. Only
+  `qualify --yes` makes real calls; do not run it, or `run`, without being told to.
+- Keep the engine suites sequential with other suites that share `tests/.work`:
+  `python -m unittest tests.test_orchestration_engine tests.test_orchestration_backend
+  tests.test_orchestration_cli tests.test_executor_health -v`.
+- A change to the cycle contract in `SKILL.md` needs the same change in `engine.py`,
+  `resume.py` and `health.py`.
+
+See [the executor guide](./docs/executor.md).

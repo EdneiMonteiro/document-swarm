@@ -139,7 +139,7 @@ o texto e não a apresente como prova de cobertura completa.
 O brief informa:
 
 ```yaml
-skill_version: "3.5.0"
+skill_version: "3.6.0"
 quality_contract: editorial-v1
 editorial_reviewer: reviewer-03-clarity
 pdf_engine: reportlab-v1
