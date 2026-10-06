@@ -48,6 +48,16 @@ sintético mínimo. Não envie decks, notas do apresentador ou pacotes com conte
 de cliente. Os [limites e comandos](./docs/presentations.md) descrevem o que o
 perfil cobre e o que permanece `not_evaluated`.
 
+Para o executor determinístico, informe a versão do Copilot CLI e do Python, o
+comando e o código de saída de `run`, a saída de `python scripts/orchestration
+status <swarm>`, o relatório de `qualify` quando existir e o estado em
+`reports/execution/driver.json`. Os arquivos de `reports/execution/results/` e
+`documents/` guardam o texto produzido pelos agentes; o `journal.jsonl` guarda só
+metadados, mas as mensagens de erro podem citar trechos. Não publique nada disso sem
+remover o conteúdo do cliente, e use um swarm sintético mínimo para reproduzir. O
+[guia do executor](./docs/executor.md) lista as proteções, os códigos de saída e os
+limites conhecidos.
+
 ## Limites de suporte
 
 Este projeto:
