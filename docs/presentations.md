@@ -184,6 +184,10 @@ recursos locais enumerados; a geometria vai para `runtime/pages.css` justamente
 para não precisar de estilos inline. Os apoios abrem em `dialog` modal, com foco
 contido, fechamento por Escape e retorno do foco ao botão que os abriu.
 
+Os rótulos do sumário usam a tipografia de corpo, correspondente à geometria
+planejada, com texto escuro sobre a página clara. O teste de regressão mede
+tinta no raster dos rótulos e inclui um controle de texto branco invisível.
+
 `deck-faithful.pptx` tem uma imagem por página mais áreas de clique quase
 transparentes sobre ela. `deck-editable.pptx` tem título, texto, tabelas, formas
 e conectores nativos; imagens continuam imagens. Nos dois, as páginas de apoio
