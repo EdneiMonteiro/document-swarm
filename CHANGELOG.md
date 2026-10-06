@@ -9,6 +9,13 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
 ### Fixed
 
+- `resume.py` no longer asks a presentation swarm to "compose" forever. It looked for
+  `output/*.md`, which a presentation never has, so every watchdog tick projected a
+  recomposition: one recorded run took five R5 recoveries and rebuilt the deck three
+  times (`presentation-cycle-03-r2`, `-r3`, `-r4`). The delivery is now the list the
+  brief declares in `deliverables`, validated like the gate validates it, and each
+  declared file is hash-bound evidence of the projection. Swarms that declare none keep
+  the original Markdown lookup.
 - Preserve native Space activation on focused presentation controls, scope the
   position counter to support pages, and prevent delayed dialog-close events
   from undoing subsequent navigation.

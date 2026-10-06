@@ -25,16 +25,19 @@ class Swarm:
              "nomenclature", "reviews", "matrix", "rubberduck", "gate", "final", "memory")
 
     def __init__(self, root: Path, *, cycle: int = 1, max_cycles: int = 3,
-                 skill_version: str = "3.1.0") -> None:
+                 skill_version: str = "3.1.0", deliverables: tuple[str, ...] = ()) -> None:
         self.root = root
         self.cycle = cycle
         self.max_cycles = max_cycles
+        self.deliverables = deliverables
         self.tag = f"cycle-{cycle:02d}"
         for folder in ("agents", "reports", "output", "sources"):
             (root / folder).mkdir(parents=True, exist_ok=True)
+        declared = "".join(f"  - {item}\n" for item in deliverables)
+        declared = f"deliverables:\n{declared}" if declared else ""
         (root / "brief.md").write_text(
             f'---\nswarm_id: watchdog-fixture\nskill_version: "{skill_version}"\nmode: document\n'
-            f"max_cycles: {max_cycles}\n---\n# Fixture do vigia\n", encoding="utf-8")
+            f"max_cycles: {max_cycles}\n{declared}---\n# Fixture do vigia\n", encoding="utf-8")
 
     def write(self, relative: str, text: str) -> Path:
         path = self.root / relative
@@ -66,7 +69,11 @@ class Swarm:
         if reached("authors"):
             self.write(f"reports/{self.tag}-authors.md", "# Rodada de autores\n")
         if reached("consolidation"):
-            self.write("output/documento.md", "# Documento\n\nConteúdo sintético.\n")
+            if self.deliverables:
+                for name in self.deliverables:
+                    self.write(name, f"entrega sintetica de {name}\n")
+            else:
+                self.write("output/documento.md", "# Documento\n\nConteúdo sintético.\n")
         if reached("editorial"):
             self.write(f"reports/{self.tag}-editorial-text.txt", "Documento\nConteudo sintetico.\n")
         if reached("sources"):
@@ -236,6 +243,49 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(result["phase"], "reviews")
         self.assertEqual({item["target"] for item in result["next"]}, set(REVIEWERS))
         self.assertTrue(any(item["path"].startswith("reports/cycle-1-") for item in result["evidence"]["present"]))
+
+    def test_a_presentation_swarm_with_no_markdown_is_not_asked_to_compose_forever(self):
+        # Regression: the projection looked for output/*.md.  A presentation has none, so the
+        # watchdog projected "compose" on every tick and a real run recomposed the deck three times.
+        deck = ("output/presentation-cycle-01/index.html", "output/presentation-cycle-01/deck-editable.pptx")
+        swarm = self.swarm("editorial", name="presentation", deliverables=deck)
+        result = project(swarm.root)
+        self.assertEqual(list(swarm.root.joinpath("output").rglob("*.md")), [])
+        self.assertNotEqual(result["phase"], "consolidation")
+        self.assertNotIn("output", {item["target"] for item in result["next"]})
+        self.assertEqual(result["phase"], "sources")
+
+    def test_a_missing_declared_deliverable_is_named_not_reported_generically(self):
+        deck = ("output/presentation-cycle-01/index.html", "output/presentation-cycle-01/deck-editable.pptx")
+        swarm = self.swarm("consolidation", name="missing", deliverables=deck)
+        result = project(swarm.root)
+        self.assertEqual(result["phase"], "consolidation")
+        self.assertEqual({item["target"] for item in result["next"]}, set(deck))
+        swarm.write(deck[0], "so uma das entregas\n")
+        remaining = project(swarm.root)
+        self.assertEqual({item["target"] for item in remaining["next"]}, {deck[1]})
+
+    def test_the_declared_deliverables_are_hash_bound_evidence(self):
+        deck = ("output/presentation-cycle-01/index.html",)
+        swarm = self.swarm("editorial", name="bound", deliverables=deck)
+        result = project(swarm.root)
+        self.assertIn(deck[0], {item["path"] for item in result["evidence"]["present"]})
+        swarm.write(deck[0], "a entrega mudou depois da projecao\n")
+        self.assertIn(deck[0], verify(swarm.root, result))
+
+    def test_a_deliverable_outside_the_swarm_is_refused(self):
+        swarm = self.swarm("editorial", name="escape", deliverables=("../fora.pptx",))
+        with self.assertRaises(InputError):
+            project(swarm.root)
+
+    def test_legacy_markdown_swarms_without_a_declared_delivery_still_work(self):
+        swarm = self.swarm("editorial", name="legacy-doc")
+        self.assertEqual(project(swarm.root)["phase"], "sources")
+        bare = self.root / "no-document"
+        bare.mkdir()
+        empty = Swarm(bare).upto("consolidation")
+        result = project(empty.root)
+        self.assertEqual((result["phase"], result["next"][0]["target"]), ("consolidation", "output"))
 
     def test_the_projection_never_writes_into_the_swarm(self):
         swarm = self.swarm("reviews")

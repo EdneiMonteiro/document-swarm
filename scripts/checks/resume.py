@@ -20,7 +20,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.checks.common import InputError, write_json_atomic
-from scripts.checks.gate import requires_editorial
+from scripts.checks.gate import artifact_descriptor, requires_editorial
 from scripts.checks.lint_agents import frontmatter_text
 from scripts.checks.progress import snapshot
 
@@ -75,6 +75,15 @@ class Projection:
     def agents_of(self, kind: str) -> list[str]:
         return [item["id"] for item in self.data["agents"] if item["kind"] == kind]
 
+    def declared_deliverables(self) -> list[str]:
+        """The deliveries the brief names, validated like the gate validates them."""
+        value = self.brief.get("deliverables")
+        if value is None:
+            return []
+        if not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value):
+            raise InputError("brief deliverables must be a list of paths")
+        return [artifact_descriptor({"path": item, "sha256": "0" * 64})[0] for item in value]
+
     # -- phases ------------------------------------------------------------
     def composition(self) -> list[dict[str, Any]] | None:
         authors, reviewers = self.agents_of("author"), self.agents_of("reviewer")
@@ -119,12 +128,21 @@ class Projection:
         if not self.exists(f"reports/{tag}-authors.md"):
             return "authors", [step("dispatch", name, "o ciclo não registrou a rodada de autores", cycle=cycle)
                                for name in authors]
-        documents = sorted(path for path in (self.root / "output").rglob("*.md") if path.is_file())
-        if not documents:
-            return "consolidation", [step("compose", "output", "não há documento consolidado para este ciclo",
-                                          cycle=cycle)]
-        self.present.append({"path": documents[0].relative_to(self.root).as_posix(),
-                             "sha256": digest(documents[0])})
+        declared = self.declared_deliverables()
+        if declared:
+            # The brief names the real delivery.  A presentation has no Markdown to find, and
+            # asking for one projected "compose" on every tick of a real run.
+            missing = [name for name in declared if not self.exists(name)]
+            if missing:
+                return "consolidation", [step("compose", name, "a entrega declarada no brief não existe neste ciclo",
+                                              cycle=cycle) for name in missing]
+        else:
+            documents = sorted(path for path in (self.root / "output").rglob("*.md") if path.is_file())
+            if not documents:
+                return "consolidation", [step("compose", "output", "não há documento consolidado para este ciclo",
+                                              cycle=cycle)]
+            self.present.append({"path": documents[0].relative_to(self.root).as_posix(),
+                                 "sha256": digest(documents[0])})
         # The full-text record only exists under the editorial contract.
         if requires_editorial(self.brief) and not self.exists(f"reports/{tag}-editorial-text.txt"):
             return "consolidation", [step("compose", "editorial-text",
