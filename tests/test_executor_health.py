@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,7 +55,10 @@ class ExecutorHealthTests(EngineCase):
         self.assertIn("2 agente(s) em execução", record["reason"])
         table = health.render(record)
         self.assertIn("author-01 · author-02", table)
-        self.assertIn("driver running, batimento há 5 s", table)
+        # The beat is stamped in whole seconds and rendered a moment later, so the age is a little over the 5 s asked for.
+        beat_age = re.search(r"driver running, batimento há (\d+) s", table)
+        self.assertIsNotNone(beat_age, table)
+        self.assertTrue(5 <= int(beat_age.group(1)) <= 15, f"the table states the age of the beat: {beat_age.group(0)}")
         self.assertIn(f'run "{self.root.resolve()}"', table, "the table says how to resume")
 
     def test_without_a_driver_the_table_says_there_is_no_coordinator_session_to_observe(self):

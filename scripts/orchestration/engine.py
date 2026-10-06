@@ -179,6 +179,19 @@ class Engine:
     def write_json(self, relative: str, value: Any) -> str:
         return atomic_json(self.contained(relative), value)
 
+    def write_if_changed(self, relative: str, text: str) -> bool:
+        text = text if text.endswith("\n") else text + "\n"
+        if self.sha(relative) == digest_text(text):
+            return False
+        self.write(relative, text)
+        return True
+
+    def write_json_if_changed(self, relative: str, value: Any) -> bool:
+        if self.sha(relative) == digest_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"):
+            return False
+        self.write_json(relative, value)
+        return True
+
     def task_id(self, cycle: int, round_number: int, stage: str, agent: str) -> str:
         return f"c{cycle:02d}.r{round_number}.{stage}.{agent}"
 
@@ -188,6 +201,44 @@ class Engine:
     def load_record(self, task_id: str) -> dict[str, Any] | None:
         path = self.record_path(task_id)
         return read_json(path) if path.is_file() else None
+
+    def result_altered(self, record: dict[str, Any]) -> bool:
+        """True if the stored result is no longer the one the journal attested when it was accepted.
+
+        The record file holds the only copy of an accepted result, so an edit to it would change a grade,
+        a veto or the reference text of the deliverable without leaving a trace.  The digest of the
+        accepted result goes into the journal in the same call that accepts it.  A record with no digest
+        (a crash between the two writes) has nothing to compare and stands.
+        """
+        attempt = record.get("accepted")
+        if attempt is None:
+            return False
+        events = self.journal.find("task_recorded", task_id=record["task_id"], attempt=attempt, outcome="accepted")
+        digests = {item.get("accepted_sha256") for item in events} - {None}
+        return bool(digests) and digest_json(record["result"]) not in digests
+
+    def accepted_result(self, record: dict[str, Any] | None) -> dict[str, Any] | None:
+        """The accepted result of a record, or None if there is none or the stored copy was altered."""
+        if not record or record.get("accepted") is None or self.result_altered(record):
+            return None
+        return record["result"]
+
+    def latest_accepted(self, cycle: int, stage: str, agent: str | None = None) -> dict[str, Any] | None:
+        """The verified record of the latest round of one stage in a cycle, optionally of one agent.
+
+        Rounds are compared as numbers: as text, ``r10`` would sort before ``r2``.
+        """
+        pattern = re.compile(rf"c{cycle:02d}\.r(\d+)\.{re.escape(stage)}\.(.+)\.json")
+        best: tuple[int, dict[str, Any]] | None = None
+        for path in (self.exec / "results").glob(f"c{cycle:02d}.r*.{stage}.*.json"):
+            match = pattern.fullmatch(path.name)
+            if not match or (agent is not None and match.group(2) != agent):
+                continue
+            record = read_json(path)
+            round_number = int(match.group(1))
+            if self.accepted_result(record) is not None and (best is None or round_number > best[0]):
+                best = (round_number, record)
+        return best[1] if best else None
 
     def owners(self) -> dict[str, str]:
         path = self.exec / "ownership.json"
@@ -233,14 +284,13 @@ class Engine:
         """Mandatory pending items after a rejected cycle, taken from its own artifacts."""
         tag = self.tag(previous)
         items: list[dict[str, Any]] = []
-        for reviewer in self.spec_of("reviewer"):
-            path = f"reports/{tag}-{reviewer.name}.json"
-            if not self.has(path):
-                continue
-            report = read_json(self.root / path)
+        # A cycle can only have been rejected on a matrix derived from every reviewer's verified result, so a
+        # reviewer missing here is not a gap to skip: someone changed the record between two calls.
+        for report in self.reviewer_reports(previous):
+            reviewer_name = report["reviewer"]
             for row in report.get("topics", []):
                 if GRADE_INDEX[row["grade"]] < APPROVING:
-                    items.append({"kind": "topic", "topic": row["topic"], "reviewer": reviewer.name, "grade": row["grade"],
+                    items.append({"kind": "topic", "topic": row["topic"], "reviewer": reviewer_name, "grade": row["grade"],
                                   "justification": row["justification"], "action": row["action"]})
             editorial = report.get("editorial")
             if editorial:
@@ -259,11 +309,7 @@ class Engine:
             for finding in parse_data(self.read(review_path))["rubberduck"]["achados"]:
                 if isinstance(finding, dict) and finding.get("severity") in ("critical", "important"):
                     items.append({"kind": "duck", **finding})
-        latest = None
-        for path in sorted((self.exec / "results").glob(f"c{previous:02d}.*.consolidation.*.json")):
-            record = read_json(path)
-            if record.get("accepted") is not None:
-                latest = record
+        latest = self.latest_accepted(previous, "consolidation")
         if latest is not None:
             for row in latest["result"]["divergences"]:
                 items.append({"kind": "divergence", **row})
@@ -439,8 +485,8 @@ class Engine:
         index = self.sources_text()
         checks = self.checks_text(cycle, round_number)
         inputs = {"brief": self.brief_sha, "spec": agent.sha256, "document": digest_text(document),
-                  "checks": self.check_hashes(cycle, round_number), "topics": self.topics, "cycle": cycle,
-                  "round": round_number}
+                  "index": digest_text(index), "checks": self.check_hashes(cycle, round_number), "topics": self.topics,
+                  "cycle": cycle, "round": round_number}
         task_id = self.task_id(cycle, round_number, "reviewers", agent.name)
         schema = contracts.reviewer_schema(editorial=editorial, fact=agent.evidence_class == "fact")
 
@@ -455,7 +501,25 @@ class Engine:
                      "evidence_class": agent.evidence_class, "sources_min": agent.sources_min})
 
     def reviewer_reports(self, cycle: int) -> list[dict[str, Any]]:
-        return [read_json(self.root / f"reports/{self.tag(cycle)}-{item.name}.json") for item in self.spec_of("reviewer")]
+        """Each reviewer's accepted assessment of the cycle, taken from the verified result records.
+
+        The files under reports/ are a copy for the legacy readers.  Grades are never read back from them:
+        a grade edited there would otherwise reach the matrix and the gate.
+        """
+        reports = []
+        for item in self.spec_of("reviewer"):
+            record = self.latest_accepted(cycle, "reviewers", item.name)
+            if record is None:
+                raise InputError(f"reviewer {item.name} has no verified assessment for cycle {cycle}")
+            reports.append(record["result"])
+        return reports
+
+    def restore_reviews(self, cycle: int) -> None:
+        """Rewrite the reviewers' files from their verified results, so what legacy readers see is what was accepted."""
+        tag = self.tag(cycle)
+        for report in self.reviewer_reports(cycle):
+            self.write_json_if_changed(f"reports/{tag}-{report['reviewer']}.json", report)
+            self.write_if_changed(f"reports/{tag}-{report['reviewer']}.md", contracts.render_reviewer_md(report, self.topics))
 
     def editorial_of(self, reports: list[dict[str, Any]]) -> dict[str, Any] | None:
         if not self.editorial:
@@ -511,7 +575,7 @@ class Engine:
         record = self.load_record(task.task_id)
         if record and record["inputs_sha256"] == task.inputs_sha256:
             if record["accepted"] is not None:
-                return "done", record["accepted"], []
+                return ("altered" if self.result_altered(record) else "done"), record["accepted"], []
             attempts = record["attempts"]
             errors = attempts[-1]["errors"] if attempts else []
             if len(attempts) >= self.options.max_attempts:
@@ -521,13 +585,21 @@ class Engine:
 
     def directive(self, tasks: list[Task], cycle: int, round_number: int, stage: str) -> dict[str, Any] | None:
         """The tasks of one stage that still need an agent; None when the stage is complete."""
-        pending, exhausted = [], []
+        pending, exhausted, altered = [], [], []
         for task in tasks:
             state, attempt, errors = self.attempt_state(task)
-            if state == "exhausted":
+            if state == "altered":
+                altered.append(task.task_id)
+            elif state == "exhausted":
                 exhausted.append({"task_id": task.task_id, "errors": errors})
             elif state != "done":
                 pending.append((task, attempt, errors))
+        if altered:
+            # Neither trusted nor silently paid for again: a person decides whether the file or the journal is right.
+            return {"status": "blocked", "kind": "result_altered", "cycle": cycle, "stage": stage,
+                    "detail": "the stored result of " + ", ".join(altered) + " no longer matches what the journal attested "
+                              "when it was accepted; restore reports/execution/results/<task>.json from a backup, or "
+                              "delete it so that the agent runs again", "tasks": altered}
         if exhausted:
             return {"status": "blocked", "kind": "task_failed", "cycle": cycle, "stage": stage,
                     "detail": "an agent could not produce a valid result within the attempt limit; a person must decide",
@@ -619,6 +691,7 @@ class Engine:
 
     def stage_matrix(self, cycle: int) -> None:
         """Write the consolidated matrix.  It is always consistent with the reviewers and the audit."""
+        self.restore_reviews(cycle)
         duck = self.accepted_duck(cycle)
         text = self.review_text(cycle, duck)
         review = self.render_review(cycle, duck)
@@ -629,11 +702,7 @@ class Engine:
             self.journal.append("matrix_written", cycle=cycle, duck_recorded=duck is not None, review_sha256=digest_text(text))
 
     def accepted_duck(self, cycle: int) -> dict[str, Any] | None:
-        latest = None
-        for path in sorted((self.exec / "results").glob(f"c{cycle:02d}.r*.rubber-duck.*.json")):
-            record = read_json(path)
-            if record.get("accepted") is not None:
-                latest = record
+        latest = self.latest_accepted(cycle, "rubber-duck")
         if latest is None:
             return None
         # The audit counts only for the reviews it audited.
@@ -765,6 +834,14 @@ class Engine:
         # again on an identical review rewrites a timestamp and must not redo the delivery.
         gate_sha = read_json(self.root / f"reports/{self.tag(cycle)}-gate.json")["review_sha256"]
         warnings: list[str] = []
+        for earlier in range(1, cycle + 1):
+            # Legacy readers show these files: keep them equal to what was accepted.  A cycle that cannot be
+            # restored matters only if it is the delivered one, and then the verdict could not have been verified.
+            try:
+                self.restore_reviews(earlier)
+            except InputError:
+                if earlier == cycle:
+                    raise
 
         def finished(step: str) -> bool:
             """Done only if it succeeded.  The memory proposal is housekeeping: it is tried once."""
@@ -781,6 +858,13 @@ class Engine:
                         "detail": result["stderr"] or f"exit code {result['exit_code']}"}
             return None
 
+        index_sha = self.sha("sources/sources-index.md")
+        settled = [item for item in self.journal.find("delivery_step", step="sources", gate_sha=gate_sha) if item.get("ok")]
+        if outcome == "approved" and settled and settled[-1].get("index_sha256") not in (None, index_sha):
+            return {"status": "blocked", "kind": "final_sources_changed", "cycle": cycle,
+                    "detail": "sources/sources-index.md changed after the final recheck of the approved delivery, so the "
+                              "recheck and the final report no longer describe it; restore the file, or start a new "
+                              "cycle so that the sources are reviewed again"}
         if outcome == "approved" and not finished("sources"):
             result = self.run_script("verify_sources", [str(CHECKS / "verify_sources.py"), "sources/sources-index.md",
                                                         "--output", "sources/sources-check.json", "--force"])
@@ -791,7 +875,7 @@ class Engine:
             # a site that recovers, is picked up by the next call instead of being skipped for good.
             self.journal.append("delivery_step", step="sources", gate_sha=gate_sha, ok=ran and not dead,
                                 exit_code=result["exit_code"], seconds=result["seconds"], detail=result["stderr"],
-                                failed=dead)
+                                failed=dead, index_sha256=index_sha)
             if not ran:
                 return {"status": "failed", "kind": "script_error", "script": "verify_sources",
                         "detail": result["stderr"] or f"exit code {result['exit_code']}"}
@@ -805,6 +889,13 @@ class Engine:
             if failure:
                 return failure
         if not finished("narrative"):
+            if NARRATIVE_MARKER not in self.read("reports/final-report.md"):
+                # A crash between writing the narrative into the report and journaling the step leaves a report
+                # with no marker.  Rebuilding the facts brings it back, so the narrative goes in exactly once, and
+                # the facts being the same the accepted narrative is reused instead of paid for again.
+                failure = run("report", "final_report", [str(CHECKS / "final_report.py"), str(self.root), "--force"])
+                if failure:
+                    return failure
             # Inserting the narrative rewrites the report the task read, so a finished task is
             # settled by the journal and never rebuilt from the changed report.
             task = self.build_narrative(cycle, self.round_of(cycle), outcome)
@@ -825,8 +916,8 @@ class Engine:
                 "report": "reports/final-report.md", "warnings": warnings}
 
     def insert_narrative(self, task: Task) -> None:
-        record = self.load_record(task.task_id)
-        narrative = record["result"]["narrative_markdown"]
+        # Reached only after the stage directive verified this very record, so it is read as it is.
+        narrative = self.load_record(task.task_id)["result"]["narrative_markdown"]
         report = self.read("reports/final-report.md")
         if NARRATIVE_MARKER in report:
             report = report.replace(NARRATIVE_MARKER, narrative)
@@ -858,9 +949,18 @@ class Engine:
             state, expected, _ = self.attempt_state(task)
             if state == "done":
                 return {"accepted": True, "duplicate": True, "retry": False, "errors": []}
+            if state == "altered":
+                return {"accepted": False, "stale": False, "retry": False,
+                        "errors": ["the stored result of this task no longer matches the journal; ask for the next directive"]}
             if attempt != expected:
                 return {"accepted": False, "stale": True, "retry": False,
                         "errors": [f"expected attempt {expected}, received {attempt}"]}
+            # A result is accepted only for an attempt this engine issued: the identity of a task is public,
+            # so a caller that merely computes it must not be able to seed results for work nobody asked for.
+            issued = next((item for item in self.journal.find("task_issued", task_id=task_id, attempt=attempt)), None)
+            if issued is None:
+                return {"accepted": False, "stale": True, "retry": False,
+                        "errors": ["this attempt was never issued; ask for the next directive"]}
             parse_problem = None
             if isinstance(result, str):
                 result, parse_problem = contracts.parse_agent_json(result)
@@ -878,9 +978,7 @@ class Engine:
             if not record or record["inputs_sha256"] != task.inputs_sha256:
                 record = {"task_id": task_id, "stage": task.stage, "cycle": task.cycle, "round": task.round,
                           "inputs_sha256": task.inputs_sha256, "attempts": [], "accepted": None, "result": None}
-            issued = next((item for item in self.journal.find("task_issued", task_id=task_id, attempt=attempt)), None)
-            seconds = round(self.clock() - datetime.fromisoformat(issued["at"].replace("Z", "+00:00")).timestamp(), 3) \
-                if issued else None
+            seconds = round(self.clock() - datetime.fromisoformat(issued["at"].replace("Z", "+00:00")).timestamp(), 3)
             missing = result is None and not parse_problem
             entry = {"attempt": attempt, "outcome": "accepted" if not errors else ("null" if missing else "rejected"),
                      "errors": errors, "result_sha256": digest_json(result) if storable else None,
@@ -891,9 +989,10 @@ class Engine:
                 record["accepted"], record["result"] = attempt, normal
             self.write_json(f"reports/execution/results/{task_id}.json", record)
             retry = bool(errors) and len(record["attempts"]) < self.options.max_attempts
+            attested = {} if errors else {"accepted_sha256": digest_json(normal)}
             self.journal.append("task_recorded", task_id=task_id, stage=task.stage, kind=task.kind, agent=task.spec.name,
                                 cycle=task.cycle, round=task.round, attempt=attempt, outcome=entry["outcome"],
-                                errors=errors, seconds=seconds, runtime=runtime or {})
+                                errors=errors, seconds=seconds, runtime=runtime or {}, **attested)
             return {"accepted": not errors, "retry": retry, "errors": errors}
 
     def task_for(self, task_id: str) -> Task | None:

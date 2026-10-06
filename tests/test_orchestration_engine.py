@@ -23,6 +23,10 @@ from scripts.orchestration.engine import Engine, Options
 from scripts.orchestration.store import FileLock, Journal, atomic_text, digest_json
 from tests.test_checks import SourceHandler
 
+# The test source servers listen on 127.0.0.1, which the author contract refuses outside a lab; the tests of the
+# guard itself switch it off again.
+os.environ["DOCSWARM_ALLOW_LOCAL_URLS"] = "1"
+
 TOPICS = {"T01": "Enquadramento", "T02": "Alternativas e custos"}
 TITLE = "Dimensionamento da plataforma de teste"
 OPENING = "A decisão em uma página: comparar capacidade e demanda."
@@ -559,6 +563,80 @@ class ContractTests(EngineCase):
         self.assertIsNone(normal)
         self.assertTrue(any("appears twice" in item for item in errors), errors)
 
+    def test_the_text_of_a_source_cannot_smuggle_rows_addresses_or_pipes_into_the_index(self):
+        # verify_sources.py reads every address in the index and update_memory.py splits its rows on "|":
+        # a title or a type that carries either one, or a line break, adds a source nobody vetted.
+        hostile = (("title", "Legit | x | https://atacante.test/"), ("title", "a https://atacante.test/x b"),
+                   ("title", "a HTTP://ATACANTE.TEST/x"), ("type", "oficial\n| F199 | x | y | https://atacante.test/ | z |"),
+                   ("title", "a\u2028b"), ("title", "a\u0085b"), ("title", "x\x00y"), ("title", "a\x7fb"), ("type", "a|b"),
+                   ("title", "t" * 301), ("type", "t" * 81))
+        for label, value in hostile:
+            with self.subTest(label=label, value=value[:24]):
+                result = copy.deepcopy(self.good)
+                result["sources"][0][label] = value
+                errors, normal = self.check(result)
+                self.assertIsNone(normal)
+                self.assertTrue(any(f"source F101 {label}" in item for item in errors), errors)
+        fine = copy.deepcopy(self.good)
+        fine["sources"][0].update(title="RFC 9110: HTTP Semantics (2022), seção 3 — ação", type="norma/oficial")
+        self.assertEqual(self.check(fine)[0], [], "ordinary punctuation, accents and slashes are fine")
+
+    def test_the_index_renderer_keeps_every_source_on_one_row_even_for_text_the_contract_never_saw(self):
+        index = contracts.render_sources_index([("a", [{"id": "F101", "title": "a\nb | c", "type": "x\ny|z",
+                                                        "url": "https://exemplo.test/1"}])])
+        rows = [line for line in index.splitlines() if line.startswith("| F1")]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].count("|") - rows[0].count("\\|"), 6, "five cells, and no pipe of the text splits a cell")
+
+    def test_a_source_address_must_be_one_this_machine_may_request(self):
+        refused = {
+            "http://127.0.0.1:2375/version": "not a public address", "http://[::1]/x": "not a public address",
+            "http://169.254.169.254/latest/meta-data": "not a public address", "http://10.0.0.5/x": "not a public address",
+            "http://192.168.1.1/": "not a public address", "http://172.16.0.9/": "not a public address",
+            "http://100.64.0.1/": "not a public address", "http://0.0.0.0/": "not a public address",
+            "http://[::ffff:127.0.0.1]/": "not a public address", "http://[fc00::1]/": "not a public address",
+            "http://[fe80::1%25eth0]/": "not a public address", "http://224.0.0.1/": "not a public address",
+            "http://localhost/admin": "names this machine", "http://LOCALHOST./x": "names this machine",
+            "http://a.localhost/": "names this machine", "http://printer.local/": "names this machine",
+            "http://host.internal/x": "names this machine",
+            "http://2130706433/": "unusual form", "http://0x7f.0.0.1/": "unusual form", "http://127.1/": "unusual form",
+            "http://0177.0.0.1/": "unusual form", "http://0x7f000001/": "unusual form",
+            "http://usuario:senha@exemplo.test/": "credentials", "http://exemplo.test@127.0.0.1/": "credentials",
+            "https://exemplo.test:99999/x": "malformed",
+        }
+        with mock.patch.dict(os.environ, {contracts.ALLOW_LOCAL_URLS: "0"}):
+            for url, fragment in refused.items():
+                with self.subTest(url=url):
+                    result = copy.deepcopy(self.good)
+                    result["sources"][0]["url"] = url
+                    errors, normal = self.check(result)
+                    self.assertIsNone(normal)
+                    self.assertTrue(any("source F101 cannot be used" in item and fragment in item for item in errors), errors)
+            for url in ("https://learn.microsoft.com/en-us/azure/", "http://93.184.216.34/", "https://8.8.8.8/",
+                        "https://[2606:4700:4700::1111]/dns", "https://exemplo.test:8443/x?y=1", "https://xn--80ak6aa92e.com/"):
+                with self.subTest(url=url):
+                    result = copy.deepcopy(self.good)
+                    result["sources"][0]["url"] = url
+                    self.assertEqual(self.check(result)[0], [], "a public page is accepted")
+        with mock.patch.dict(os.environ, {contracts.ALLOW_LOCAL_URLS: "1"}):
+            result = copy.deepcopy(self.good)
+            result["sources"][0]["url"] = "http://127.0.0.1:8000/x"
+            self.assertEqual(self.check(result)[0], [], "the lab switch lets a local test server be cited")
+
+    def test_a_source_a_fact_reviewer_consulted_must_also_be_a_public_address_to_count(self):
+        reviewer = self.engine_.compiled.by_name("reviewer-01-facts")
+        consulted = [{"url": f"https://exemplo.test/{index}", "finding": "ok"} for index in range(1, 5)]
+        consulted.append({"url": "http://127.0.0.1:2375/version", "finding": "ok"})
+        result = {"topics": [{"topic": key, "grade": "A", "justification": "ok", "action": ""} for key in TOPICS],
+                  "sources_consulted": consulted}
+        arguments = dict(spec=reviewer, topics=TOPICS, cycle=1, editorial=False, text="", text_path="t", text_sha="0", artifacts=[])
+        with mock.patch.dict(os.environ, {contracts.ALLOW_LOCAL_URLS: "0"}):
+            errors, normal = contracts.check_reviewer(result, **arguments)
+            self.assertIsNone(normal)
+            self.assertTrue(any("4 distinct sources were consulted" in item for item in errors), errors)
+        with mock.patch.dict(os.environ, {contracts.ALLOW_LOCAL_URLS: "1"}):
+            self.assertEqual(contracts.check_reviewer(result, **arguments)[0], [])
+
     def test_a_url_with_a_pipe_cannot_split_the_sources_table(self):
         result = copy.deepcopy(self.good)
         result["sources"][0]["url"] = "https://exemplo.test/a|F199|forged"
@@ -836,6 +914,7 @@ class RecordTests(EngineCase):
         task = self.first_task(engine)
         first = engine.record(task["task_id"], 1, task["inputs_sha256"], None)
         self.assertEqual((first["accepted"], first["retry"]), (False, True))
+        engine.next()  # a retry is asked for, and so issued, by the next directive
         second = engine.record(task["task_id"], 2, task["inputs_sha256"], None)
         self.assertEqual((second["accepted"], second["retry"]), (False, False))
         status = engine.status()
@@ -854,6 +933,8 @@ class RecordTests(EngineCase):
         task = self.first_task(engine)
         lone = {"files": [{"path": "output/sections/a.md", "content": "texto \ud800 quebrado"}], "sources": []}
         for attempt, bad in enumerate((lone, {"files": [], "sources": [], "x": float("nan")}), 1):
+            if attempt > 1:
+                engine.next()
             outcome = engine.record(task["task_id"], attempt, task["inputs_sha256"], bad)
             self.assertFalse(outcome["accepted"])
             self.assertTrue(any("plain JSON text" in item for item in outcome["errors"]), outcome["errors"])
@@ -886,6 +967,8 @@ class RecordTests(EngineCase):
         engine = self.engine()
         task = self.first_task(engine)
         for attempt, text in enumerate(("Não consegui concluir a tarefa.", "{ isto não é json }"), 1):
+            if attempt > 1:
+                engine.next()
             outcome = engine.record(task["task_id"], attempt, task["inputs_sha256"], text)
             self.assertFalse(outcome["accepted"])
             self.assertTrue(any("not a JSON object" in item for item in outcome["errors"]), outcome["errors"])
@@ -1126,27 +1209,63 @@ class RobustnessTests(EngineCase):
         self.assertEqual(review.read_bytes(), honest, "the same grades and audit give the same bytes")
         self.assertEqual(len(agent.calls), calls)
 
-    def test_a_tampered_reviewer_grade_cannot_be_hidden_by_a_cached_record(self):
-        self.finish()
+    def drive_until_recorded(self, engine: Engine, agent: Scripted, kind: str, cycle: int = 1) -> None:
+        """Run the swarm by hand until every task of the directive that holds a ``kind`` result has been recorded."""
+        for _ in range(60):
+            directive = engine.next()
+            self.assertEqual(directive["status"], "agents", f"the run ended before a {kind} result: {directive}")
+            found = False
+            for task in directive["tasks"]:
+                outcome = engine.record(task["task_id"], task["attempt"], task["inputs_sha256"], agent(task))
+                self.assertTrue(outcome["accepted"], outcome)
+                found = found or (task["kind"] == kind and task["cycle"] == cycle)
+            if found:
+                return
+        self.fail(f"no {kind} result was recorded")
+
+    def test_a_reviewer_file_edited_after_the_fact_is_restored_and_changes_no_verdict(self):
+        # The reviewers' own accepted results are the grades.  The files under reports/ are a copy for the
+        # legacy readers: an edit there, up or down, is undone and counts for nothing.
+        agent = self.agent()
+        self.finish(agent)
         report = self.root / "reports" / "cycle-01-reviewer-01-facts.json"
-        data = json.loads(report.read_text(encoding="utf-8"))
+        honest = report.read_bytes()
+        data = json.loads(honest)
         data["topics"][0]["grade"], data["topics"][0]["action"] = "B", "Corrigir."
         report.write_text(json.dumps(data), encoding="utf-8")
-        engine = self.engine()
-        outcome = engine.next()
-        self.assertEqual((outcome["status"], outcome["stage"]), ("agents", "rubber-duck"),
-                         "the audit covered other grades, so it is asked again before any verdict")
-        matrix = parse_data((self.root / "reports" / "cycle-01-review.yaml").read_text(encoding="utf-8"))
-        self.assertEqual({row["topico"]: row["nota_minima"] for row in matrix["topics"]}["T01"], "B")
-        self.assertTrue(matrix["rubberduck"]["critico"],
-                        "until the audit covers these grades again, the matrix on disk fails closed")
-        done = self.engine().run(self.agent())
-        self.assertEqual((done["outcome"], done["cycle"]), ("approved", 2),
-                         "the lowered grade rejects cycle 1; the work is redone, not approved")
+        calls = len(agent.calls)
+        outcome = self.engine().next()
+        self.assertEqual((outcome["status"], outcome["outcome"], outcome["cycle"]), ("done", "approved", 1))
+        self.assertEqual(report.read_bytes(), honest, "rewritten from the verified result")
+        self.assertEqual(len(agent.calls), calls, "an edited copy costs no agent")
+
+    def test_a_grade_raised_in_a_reviewer_file_before_the_verdict_never_reaches_the_matrix(self):
+        path = self.root / "reports" / "cycle-01-reviewer-01-facts.json"
+        upgraded, seen_later = [], []
+
+        def raise_the_grade(task, result):
+            if task["kind"] == "rubber-duck" and task["cycle"] == 1:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                for row in data["topics"]:
+                    row["grade"], row["action"] = "A", ""
+                path.write_text(json.dumps(data), encoding="utf-8")
+                upgraded.append(path)
+            if task["kind"] == "author" and task["cycle"] == 2 and not seen_later:
+                # Cycle 1 has been judged but nothing has been delivered yet.
+                seen_later.append({row["topic"]: row["grade"] for row in json.loads(path.read_text(encoding="utf-8"))["topics"]})
+            return result
+
+        agent = self.agent(grades={(1, "reviewer-01-facts", "T02"): "B+"}, mutate=raise_the_grade)
+        done = self.finish(agent)
+        self.assertEqual(len(upgraded), 1)
         first = json.loads((self.root / "reports" / "cycle-01-gate.json").read_text(encoding="utf-8"))
-        self.assertEqual((first["exit_code"], first["result"]["outcome"]), (1, "rejected"))
-        journal = Journal(self.root / "reports" / "execution" / "journal.jsonl")
-        self.assertEqual(journal.count("verdict_withdrawn", cycle=1), 1)
+        self.assertEqual((first["exit_code"], first["result"]["outcome"]), (1, "rejected"),
+                         "the reviewer said B+ for T02, so cycle 1 is rejected whatever the file says now")
+        matrix = parse_data((self.root / "reports" / "cycle-01-review.yaml").read_text(encoding="utf-8"))
+        self.assertEqual({row["topico"]: row["nota_minima"] for row in matrix["topics"]}["T02"], "B+")
+        self.assertEqual(seen_later, [{"T01": "A", "T02": "B+"}],
+                         "the matrix stage already rewrote the file, so a reader mid-run sees what was accepted")
+        self.assertEqual((done["outcome"], done["cycle"]), ("approved", 2), "the work is redone, not approved")
 
     def test_a_forged_gate_record_does_not_approve_what_the_gate_would_not(self):
         root = build_swarm(Path(self.temporary.name) / "forged", max_cycles=1)
@@ -1252,6 +1371,164 @@ class RobustnessTests(EngineCase):
         self.assertEqual((outcome["status"], outcome["kind"], outcome["cycle"]), ("blocked", "history_altered", 1))
         self.assertIn("cycle-01-review.yaml", outcome["detail"])
         self.assertEqual(len(agent.calls), calls)
+
+    def results(self, name: str) -> Path:
+        return self.root / "reports" / "execution" / "results" / f"{name}.json"
+
+    def test_an_accepted_result_edited_in_its_record_blocks_the_stage_instead_of_being_trusted(self):
+        agent = self.agent(grades={(1, "reviewer-01-facts", "T02"): "B+"})
+        self.drive_until_recorded(self.engine(), agent, "rubber-duck")
+        path = self.results("c01.r0.reviewers.reviewer-01-facts")
+        honest = path.read_bytes()
+        record = json.loads(honest)
+        for row in record["result"]["topics"]:
+            row["grade"], row["action"] = "A", ""
+        path.write_text(json.dumps(record), encoding="utf-8")
+        calls = len(agent.calls)
+        outcome = self.engine().next()
+        self.assertEqual((outcome["status"], outcome["kind"]), ("blocked", "result_altered"))
+        self.assertEqual(outcome["tasks"], ["c01.r0.reviewers.reviewer-01-facts"])
+        self.assertEqual(len(agent.calls), calls, "it asks for a decision; it does not pay for the agent again")
+        self.assertFalse((self.root / "reports" / "cycle-01-gate.json").exists(), "no verdict rests on the edited grade")
+        engine = self.engine()
+        engine.init()
+        task = engine.task_for("c01.r0.reviewers.reviewer-01-facts")
+        refused = engine.record(task.task_id, 1, task.inputs_sha256, {})
+        self.assertFalse(refused["accepted"])
+        self.assertIn("no longer matches the journal", refused["errors"][0])
+        path.write_bytes(honest)
+        done = self.engine().run(agent)
+        self.assertEqual((done["outcome"], done["cycle"]), ("approved", 2),
+                         "with the honest record back, the B+ rejects cycle 1 and the work is redone")
+
+    def test_a_veto_erased_from_the_record_of_the_audit_is_not_believed(self):
+        veto = {"critical": True, "consistency_notes": "", "findings": [{
+            "severity": "critical", "target": "T01", "evidence": "A tabela contradiz o texto.", "correction": "Refazer a conta."}]}
+        agent = self.agent(ducks={1: veto})
+        self.drive_until_recorded(self.engine(), agent, "rubber-duck")
+        path = self.results("c01.r0.rubber-duck.rubber-duck")
+        record = json.loads(path.read_text(encoding="utf-8"))
+        self.assertTrue(record["result"]["critical"])
+        record["result"] = {"critical": False, "findings": [], "consistency_notes": ""}
+        path.write_text(json.dumps(record), encoding="utf-8")
+        outcome = self.engine().next()
+        self.assertEqual((outcome["status"], outcome["kind"]), ("blocked", "result_altered"))
+        matrix = parse_data((self.root / "reports" / "cycle-01-review.yaml").read_text(encoding="utf-8"))
+        self.assertTrue(matrix["rubberduck"]["critico"], "while the audit cannot be verified the matrix fails closed")
+        self.assertFalse((self.root / "reports" / "cycle-01-gate.json").exists())
+
+    def test_a_deliverable_edited_together_with_its_stored_consolidation_is_still_caught(self):
+        agent = self.agent()
+        self.finish(agent)
+        document = self.root / "output" / "document.md"
+        edited = document.read_text(encoding="utf-8") + "\nParágrafo acrescentado depois da aprovação.\n"
+        document.write_text(edited, encoding="utf-8")
+        path = self.results("c01.r0.consolidation.coordinator")
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["result"]["document_markdown"] = edited
+        path.write_text(json.dumps(record), encoding="utf-8")
+        calls = len(agent.calls)
+        outcome = self.engine().next()
+        self.assertEqual((outcome["status"], outcome["kind"]), ("blocked", "result_altered"),
+                         "hiding the edit by also editing the record that the drift check compares against")
+        self.assertEqual(len(agent.calls), calls)
+
+    def test_a_result_with_no_journal_digest_stands_and_one_with_a_digest_must_match_it(self):
+        engine = self.engine()
+        engine.init()
+        result = {"critical": False, "findings": [], "consistency_notes": ""}
+        record = {"task_id": "c01.r0.rubber-duck.rubber-duck", "stage": "rubber-duck", "cycle": 1, "round": 0,
+                  "inputs_sha256": "0" * 64, "attempts": [], "accepted": 1, "result": result}
+        # A crash between writing the record and journaling it leaves no digest; there is nothing to compare.
+        self.assertFalse(engine.result_altered(record))
+        self.assertEqual(engine.accepted_result(record), result)
+        engine.journal.append("task_recorded", task_id=record["task_id"], attempt=1, outcome="accepted",
+                              accepted_sha256=digest_json(result))
+        self.assertFalse(engine.result_altered(record))
+        record["result"] = {**result, "critical": True}
+        self.assertTrue(engine.result_altered(record))
+        self.assertIsNone(engine.accepted_result(record))
+        self.assertIsNone(engine.accepted_result({**record, "accepted": None}), "no accepted attempt, no result")
+
+    def test_the_latest_round_is_the_largest_number_not_the_last_in_alphabetical_order(self):
+        engine = self.engine()
+        engine.init()
+        for round_number in (2, 10, 3):
+            name = f"c01.r{round_number}.reviewers.reviewer-01-facts"
+            self.results(name).parent.mkdir(parents=True, exist_ok=True)
+            self.results(name).write_text(json.dumps({
+                "task_id": name, "stage": "reviewers", "cycle": 1, "round": round_number, "inputs_sha256": "0" * 64,
+                "attempts": [], "accepted": 1, "result": {"round": round_number}}), encoding="utf-8")
+        self.assertEqual(engine.latest_accepted(1, "reviewers", "reviewer-01-facts")["result"]["round"], 10,
+                         "as text r10 sorts before r2, and a run allowed ten repairs would use a stale assessment")
+        self.assertIsNone(engine.latest_accepted(1, "reviewers", "reviewer-02-clarity"), "another agent's records are not mixed in")
+        self.assertIsNone(engine.latest_accepted(2, "reviewers", "reviewer-01-facts"), "nor another cycle's")
+
+    def test_a_result_is_taken_only_for_an_attempt_the_engine_issued(self):
+        engine = self.engine()
+        engine.init()
+        task = engine.task_for("c01.r0.authors.author-01-platform")
+        answer = self.agent().author({"agent": task.spec.name, "cycle": 1, "round": 0, "context": task.context})
+        outcome = engine.record(task.task_id, 1, task.inputs_sha256, answer)
+        self.assertEqual((outcome["accepted"], outcome["stale"]), (False, True))
+        self.assertIn("never issued", outcome["errors"][0])
+        self.assertFalse((self.root / "output" / "sections").exists(), "nothing was written for work nobody asked for")
+        self.assertFalse(self.results(task.task_id).exists(), "and no record either")
+        issued = {item["task_id"] for item in engine.next()["tasks"]}
+        self.assertIn(task.task_id, issued)
+        self.assertTrue(engine.record(task.task_id, 1, task.inputs_sha256, answer)["accepted"],
+                        "once the engine has issued it, the same call is accepted")
+
+    def test_the_identity_of_a_review_covers_the_source_index_its_prompt_shows(self):
+        self.finish()
+        engine = self.engine()
+        engine.init()
+        reviewer = engine.compiled.by_name("reviewer-01-facts")
+        before = engine.build_reviewer(reviewer, 1, 0).inputs_sha256
+        fragment = self.root / "sources" / "fragments" / "author-01-platform.json"
+        sources = json.loads(fragment.read_text(encoding="utf-8"))
+        sources[0]["title"] = "Outra fonte"
+        fragment.write_text(json.dumps(sources), encoding="utf-8")
+        again = self.engine()
+        again.init()
+        self.assertNotEqual(again.build_reviewer(reviewer, 1, 0).inputs_sha256, before,
+                            "an answer given to a different index would otherwise be accepted as current")
+
+    def test_a_source_index_edited_after_the_final_recheck_blocks_until_it_is_restored(self):
+        agent = self.agent()
+        self.finish(agent)
+        index = self.root / "sources" / "sources-index.md"
+        honest = index.read_bytes()
+        index.write_bytes(honest + "| F999 | Intrusa | oficial | https://exemplo.test/x | pendente |\n".encode("utf-8"))
+        calls = len(agent.calls)
+        outcome = self.engine().next()
+        self.assertEqual((outcome["status"], outcome["kind"]), ("blocked", "final_sources_changed"))
+        self.assertIn("sources/sources-index.md", outcome["detail"])
+        self.assertEqual(len(agent.calls), calls)
+        index.write_bytes(honest)
+        restored = self.engine().next()
+        self.assertEqual((restored["status"], restored["outcome"]), ("done", "approved"))
+
+    def test_a_crash_between_the_narrative_and_its_journal_entry_neither_duplicates_it_nor_pays_twice(self):
+        agent = self.agent()
+        self.finish(agent)
+        journal = self.root / "reports" / "execution" / "journal.jsonl"
+        kept = []
+        for line in journal.read_text(encoding="utf-8").splitlines():
+            item = json.loads(line)
+            # What a crash right after the narrative went into the report would not have written yet.
+            if item["event"] == "run_finished" or (item["event"] == "delivery_step" and item.get("step") in ("narrative", "memory")):
+                continue
+            kept.append(line)
+        journal.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        narrative = "Decisões tomadas e riscos residuais registrados pelo coordenador."
+        report = self.root / "reports" / "final-report.md"
+        self.assertEqual(report.read_text(encoding="utf-8").count(narrative), 1)
+        calls = len(agent.calls)
+        outcome = self.engine().next()
+        self.assertEqual((outcome["status"], outcome["outcome"]), ("done", "approved"))
+        self.assertEqual(report.read_text(encoding="utf-8").count(narrative), 1, "inserted once, not twice")
+        self.assertEqual(len(agent.calls), calls, "the accepted narrative is reused, so no agent runs again")
 
     def test_a_broken_progress_hook_never_aborts_a_run(self):
         seen = []

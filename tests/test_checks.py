@@ -218,6 +218,26 @@ class GateTests(unittest.TestCase):
         self.assertEqual(gate.evaluate(review(critical=True))["outcome"], "rejected")
         self.assertEqual(gate.evaluate(review("B+", cycle=3, maximum=3))["outcome"], "escalate")
 
+    def test_a_matrix_cannot_drop_the_veto_by_a_flag_while_a_finding_is_critical(self):
+        # The flag and the findings state one fact.  An executor writes both; a hand-edited or damaged matrix
+        # that says "not critical" beside a critical finding must not approve.
+        def with_findings(findings, critical=False):
+            data = review(critical=critical)
+            data["rubberduck"]["achados"] = findings
+            return data
+
+        for severity in ("critical", "Critical", " CRITICAL ", "critico", "crítico"):
+            with self.subTest(severity=severity):
+                with self.assertRaisesRegex(gate.InputError, "the veto cannot be dropped"):
+                    gate.evaluate(with_findings([{"severity": severity, "target": "t", "evidence": "e", "correction": "c"}]))
+        with self.assertRaisesRegex(gate.InputError, "the veto cannot be dropped"):
+            gate.evaluate(with_findings([{"severidade": "critico"}]))
+        # What stays valid: a vetoing flag with its finding, findings that are not critical, and the plain
+        # strings the coordinator flow wrote, which carry no severity to contradict.
+        self.assertEqual(gate.evaluate(with_findings([{"severity": "critical"}], critical=True))["outcome"], "rejected")
+        self.assertEqual(gate.evaluate(with_findings([{"severity": "important"}, {"severity": "minor"}]))["outcome"], "approved")
+        self.assertEqual(gate.evaluate(with_findings(["texto livre", {"target": "sem severidade"}]))["outcome"], "approved")
+
     def test_legacy_deck_grades_still_block(self):
         self.assertEqual(gate.evaluate(review(slides=[{"slide": "1", "nota_minima": "B+"}]))["outcome"], "rejected")
         self.assertEqual(gate.evaluate(review(dimensions=[{"dimension": "contrast", "grade": "A-"}]))["outcome"], "rejected")

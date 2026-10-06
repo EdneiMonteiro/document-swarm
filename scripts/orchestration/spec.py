@@ -25,6 +25,9 @@ UNSET_EFFORT = {"", "standard", "padrão", "padrao", "default", "auto", "none"}
 CONTEXT_TIERS = ("default", "long_context")
 EVIDENCE_CLASSES = ("fact", "form")
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
+# Windows reads these as devices whatever the extension.  An agent name becomes part of file names
+# (sources/fragments/<name>.json), so the same set is refused here and in contracts.delivery_path.
+RESERVED_NAMES = {"con", "prn", "aux", "nul", *(f"com{n}" for n in range(1, 10)), *(f"lpt{n}" for n in range(1, 10))}
 TOPIC_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,31}$")
 FRONTMATTER = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|$)", re.S)
 MAX_DECLARATION_BYTES = 256 * 1024
@@ -148,8 +151,12 @@ def compile_agents(swarm: Path, *, models: Iterable[str] | None = None) -> Compi
         name, kind = front.get("name"), front.get("kind")
         if not isinstance(name, str) or not NAME.match(name):
             problems.append("name must be 1-81 characters of letters, digits, '.', '_' or '-'")
-        elif name in seen:
-            problems.append(f"duplicate agent name {name!r} (also {seen[name]})")
+        elif name.endswith(".") or name.split(".")[0].lower() in RESERVED_NAMES:
+            problems.append(f"agent name {name!r} is not portable: Windows reads it as a device or drops its trailing dot")
+        elif name.casefold() in seen:
+            # Names become file names, and on Windows and macOS two spellings that differ only by case are one file.
+            problems.append(f"duplicate agent name {name!r} (also {seen[name.casefold()]}); "
+                            "names are compared without regard to case")
         if kind not in KINDS:
             problems.append(f"kind must be one of {', '.join(KINDS)}")
         if brief_swarm and front.get("swarm") != brief_swarm:
@@ -189,7 +196,7 @@ def compile_agents(swarm: Path, *, models: Iterable[str] | None = None) -> Compi
         if problems:
             result.errors.extend(f"{where}: {item}" for item in problems)
             continue
-        seen[name] = where
+        seen[name.casefold()] = where
         policy = "reviewer-fact" if kind == "reviewer" and evidence == "fact" else \
                  "reviewer-form" if kind == "reviewer" else kind
         tools, tool_problem = tools_for(front, policy)

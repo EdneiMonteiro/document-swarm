@@ -12,16 +12,19 @@ code only checks that they are well formed, complete and quoted from the text.
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import os
 import re
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
+from urllib.parse import urlsplit
 
 from scripts.checks.common import GRADE_INDEX, InputError, SCALE, normalize_grade
 from scripts.checks.gate import EDITORIAL_SURFACES, editorial_blockers
-from scripts.orchestration.spec import AgentSpec
+from scripts.orchestration.spec import RESERVED_NAMES, AgentSpec
 
 SECTION_ROOTS = ("output/sections/", "output/figures/", "output/assets/")
 FILE_EXTENSIONS = {".md", ".svg", ".json", ".txt", ".csv"}
@@ -32,11 +35,70 @@ MAX_NARRATIVE_CHARS = 20000
 MAX_RESULT_BYTES = 16 * 1024 * 1024
 MAX_PATH_CHARS = 120
 FORBIDDEN_NAME_CHARACTERS = set('<>:"|?*')
-RESERVED_NAMES = {"con", "prn", "aux", "nul", *(f"com{n}" for n in range(1, 10)), *(f"lpt{n}" for n in range(1, 10))}
 # No pipe or backtick: a URL lands in a Markdown table row that the checkers split on "|".
 URL = re.compile(r"^https?://[^\s<>\"'|`\\]+$")
+# A source is one row of a Markdown table that verify_sources.py scans for addresses and update_memory.py splits on
+# "|", so the text around the address must not carry an address, a pipe or a line break of its own.
+SOURCE_TEXT_LIMITS = {"title": 300, "type": 80}
+ADDRESS_IN_TEXT = re.compile(r"https?://", re.I)
+LINE_BREAKS = {"\x85", "\u2028", "\u2029"}
+LOCAL_NAME_SUFFIXES = (".localhost", ".local", ".localdomain", ".internal", ".home.arpa")
+# Lab and test switch: the test servers listen on 127.0.0.1.  A real run never sets it.
+ALLOW_LOCAL_URLS = "DOCSWARM_ALLOW_LOCAL_URLS"
 SEVERITIES = ("critical", "important", "minor")
 APPROVING = GRADE_INDEX["A"]
+
+
+def source_text_problem(label: str, value: str) -> str | None:
+    if len(value) > SOURCE_TEXT_LIMITS[label]:
+        return f"is longer than {SOURCE_TEXT_LIMITS[label]} characters"
+    if any(ord(character) < 32 or ord(character) == 127 or character in LINE_BREAKS for character in value):
+        return "must be one line of plain text"
+    if "|" in value:
+        return "must not contain a pipe"
+    if ADDRESS_IN_TEXT.search(value):
+        return "must not contain a web address; the address goes in url"
+    return None
+
+
+def host_problem(url: str) -> str | None:
+    """Why a source address must not be requested from this machine, or None.
+
+    Static checks only, with no network access: credentials, names that mean this machine or a private
+    network, and addresses that are not public, written in any form a resolver would accept.  A public name
+    that resolves to a private address, or that redirects to one, is beyond what this can see.
+    """
+    try:
+        parts = urlsplit(url)
+        host = (parts.hostname or "").rstrip(".").lower()
+        _ = parts.port
+    except ValueError:
+        return "its host or port is malformed"
+    if "@" in parts.netloc:
+        return "it carries credentials"
+    if not host:
+        return "it has no host"
+    if host == "localhost" or host.endswith(LOCAL_NAME_SUFFIXES):
+        return "it names this machine or a private network"
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        if ":" in host:
+            return "its host is not a valid address"
+        # Resolvers read 2130706433, 0x7f.1, 0177.0.0.1 and 127.1 as addresses although they are not dotted
+        # quads, and no public name ends in a purely numeric label.
+        if re.fullmatch(r"0x[0-9a-f]+|[0-9]+", host.rsplit(".", 1)[-1]):
+            return "its host is a number written in an unusual form"
+        return None
+    for candidate in (address, getattr(address, "ipv4_mapped", None)):
+        if candidate is not None and (not candidate.is_global or candidate.is_multicast):
+            return f"{candidate} is not a public address"
+    return None
+
+
+def public_url(url: str) -> bool:
+    """A well formed address this machine may request."""
+    return bool(URL.match(url)) and (os.environ.get(ALLOW_LOCAL_URLS) == "1" or host_problem(url) is None)
 
 
 def text_field(value: Any, label: str, errors: list[str], *, empty: bool = False) -> str:
@@ -265,8 +327,16 @@ def check_author(result: Any, *, spec: AgentSpec, code: str, primary: str,
                           f"(for example {code}01), so it cannot collide with another author")
         if entry["id"] in identifiers:
             errors.append(f"source id {entry['id']!r} is repeated")
+        for label in ("title", "type"):
+            problem = source_text_problem(label, entry[label])
+            if problem:
+                errors.append(f"source {entry['id']} {label} {problem}")
         if not URL.match(entry["url"]):
             errors.append(f"source {entry['id']} has a malformed URL")
+        elif os.environ.get(ALLOW_LOCAL_URLS) != "1":
+            reason = host_problem(entry["url"])
+            if reason:
+                errors.append(f"source {entry['id']} cannot be used, because {reason}; cite a public page")
         identifiers.add(entry["id"])
         urls.add(entry["url"])
         sources.append(entry)
@@ -367,7 +437,7 @@ def check_reviewer(result: Any, *, spec: AgentSpec, topics: dict[str, str], cycl
     report: dict[str, Any] = {"schema_version": 1, "cycle": cycle, "reviewer": spec.name, "topics": rows}
     if spec.evidence_class == "fact":
         consulted = objects(result.get("sources_consulted"), "sources_consulted", errors)
-        urls = {str(row.get("url")) for row in consulted if isinstance(row.get("url"), str) and URL.match(row["url"])}
+        urls = {str(row.get("url")) for row in consulted if isinstance(row.get("url"), str) and public_url(row["url"])}
         if len(urls) < spec.sources_min:
             errors.append(f"{len(urls)} distinct sources were consulted, fewer than the {spec.sources_min} this reviewer declares")
         report["sources_consulted"] = [{"url": str(row.get("url")), "finding": str(row.get("finding") or "")} for row in consulted]
@@ -447,8 +517,9 @@ def render_sources_index(fragments: list[tuple[str, list[dict[str, str]]]]) -> s
              "| ID | Título | Tipo | URL | Verificado |", "|---|---|---|---|---|"]
     for _author, sources in fragments:
         for source in sorted(sources, key=lambda item: item["id"]):
-            title = source["title"].replace("|", "\\|").replace("\n", " ")
-            lines.append(f"| {source['id']} | {title} | {source['type'].replace('|', '/')} | {source['url']} | pendente de verify_sources.py |")
+            title = " ".join(source["title"].split()).replace("|", "\\|")
+            kind = " ".join(source["type"].split()).replace("|", "/")
+            lines.append(f"| {source['id']} | {title} | {kind} | {source['url']} | pendente de verify_sources.py |")
     return "\n".join(lines) + "\n"
 
 

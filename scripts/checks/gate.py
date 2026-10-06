@@ -23,6 +23,7 @@ from scripts.checks.pdf_contract import verify_pdf_inspections
 from scripts.checks.presentation_contract import verify_presentation
 
 EDITORIAL_SURFACES = ("titles", "openings", "body", "captions", "conclusions")
+CRITICAL_SEVERITIES = {"critical", "critico", "crítico"}
 
 
 def requires_editorial(data: dict[str, Any]) -> bool:
@@ -262,6 +263,11 @@ def evaluate(data: Any, *, require_editorial: bool = False) -> dict[str, Any]:
     findings = value(duck, "achados", "findings")
     if not isinstance(critical, bool) or not isinstance(findings, list):
         raise InputError("rubberduck requires boolean critico/critical and list achados/findings")
+    # A critical finding vetoes the delivery.  The flag and the findings are two statements of one fact: a
+    # matrix that says "not critical" beside a finding marked critical has dropped the veto, so it is refused.
+    if not critical and any(isinstance(item, dict) and str(value(item, "severity", "severidade") or "").strip().casefold()
+                            in CRITICAL_SEVERITIES for item in findings):
+        raise InputError("rubberduck.critico is false but a finding is marked critical; the veto cannot be dropped")
     if critical:
         blocked.append({"kind": "rubberduck", "name": "critical finding", "grade": ""})
     blocked.extend(editorial_blockers(data, cycle, require_editorial or requires_editorial(data)))

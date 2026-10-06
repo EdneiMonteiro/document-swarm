@@ -110,6 +110,24 @@ class SpecTests(unittest.TestCase):
         self.swarm.put("authors/copy.md", declaration("author-01-platform", "author"))
         self.assertTrue(any("duplicate agent name" in item for item in self.compile().errors))
 
+    def test_names_that_differ_only_by_case_are_one_name_because_they_become_one_file(self):
+        # Both would write sources/fragments/<name>.json and reports/<cycle>-<name>.json: on Windows and macOS
+        # that is one file, so the second agent would silently overwrite the first.
+        self.swarm.put("reviewers/reviewer-03-case.md", declaration("Reviewer-01-Facts", "reviewer",
+                                                                    extra="evidence_class: fact\n", sources=5))
+        errors = self.compile().errors
+        self.assertTrue(any("duplicate agent name 'Reviewer-01-Facts'" in item and "without regard to case" in item
+                            for item in errors), errors)
+
+    def test_a_name_that_windows_reads_as_a_device_or_trims_is_refused(self):
+        for name in ("con", "NUL", "aux.backup", "com1", "lpt9.x", "author-01.", "author-02-end."):
+            with self.subTest(name=name):
+                self.swarm.put("authors/odd.md", declaration(name, "author"))
+                self.assertTrue(any("is not portable" in item for item in self.compile().errors), name)
+        self.swarm.put("authors/odd.md", declaration("console-author", "author"))
+        self.assertFalse(any("is not portable" in item for item in self.compile().errors),
+                         "a name that merely starts like a device name is fine")
+
     def test_an_unsafe_name_is_rejected(self):
         self.swarm.put("authors/bad.md", declaration("../escape", "author"))
         self.assertTrue(any("name must be" in item for item in self.compile().errors))
