@@ -631,8 +631,9 @@ interrompido. Escalação e bloqueio são decisões da pessoa, nunca uma aprova�
 `run` e `qualify` fazem chamadas reais a modelos e **gastam créditos**. Só os execute
 com a autorização do usuário. Antes do primeiro uso real, `qualify --model <o mais
 barato> --yes` verifica com poucas chamadas mínimas o que o backend promete: prompt
-por stdin, restrição de ferramentas, ferramenta web sob a restrição, paralelismo e
-modelo registrado. Uma sonda que falha desqualifica o backend.
+por stdin, restrição de ferramentas, confinamento de caminhos, ferramenta web sob a
+restrição, paralelismo e modelo registrado. Uma sonda que falha desqualifica o
+backend.
 
 Quem preferir dirigir o motor de outro lugar usa `init`, `next`, `record` e `status`;
 a interface está no guia. `metrics` decompõe o relógio em agente, código e ocioso.

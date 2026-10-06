@@ -16,6 +16,9 @@ Behaviour switches come from the environment, so one script covers success, fail
     FAKE_COPILOT_MODEL    model name written to the usage file instead of the requested one
     FAKE_COPILOT_GRADES   JSON {"cycle|reviewer|topic": "B+"} for the scripted reviewers
     FAKE_COPILOT_DISOBEY  1: the no-write probe really writes the file (a CLI that ignores its tool restriction)
+    FAKE_COPILOT_LEAK     1: the confinement probe really reads the file outside the working folder (a CLI that
+                          ignores its path restriction)
+    FAKE_COPILOT_SILENT   name of one qualification probe the CLI answers with nothing at all
     FAKE_COPILOT_TITLE    the page title the web probe reports
     FAKE_COPILOT_CHILD    1: start a child process that outlives its parent unless the whole tree is killed;
                           orphan: start one whose parent is already gone, holding the CLI's pipes open
@@ -96,6 +99,8 @@ def task_from(prompt: str) -> dict:
 
 def answer_probe(name: str, prompt: str) -> int:
     """Answer the qualification probes like a CLI that honours its flags (or, when told, one that does not)."""
+    if os.environ.get("FAKE_COPILOT_SILENT") == name:
+        return 0
     if name.startswith("contract") or name == "large":
         print(json.dumps({"ok": True, "soma": 7}))
     elif name == "no-write":
@@ -105,6 +110,10 @@ def answer_probe(name: str, prompt: str) -> int:
             print(json.dumps({"created": True}))
         else:
             print(json.dumps({"created": False}))
+    elif name == "confined":
+        path = re.search(r"arquivo `([^`]+)`", prompt).group(1)
+        leaked = Path(path).read_text(encoding="utf-8") if os.environ.get("FAKE_COPILOT_LEAK") == "1" else None
+        print(json.dumps({"content": leaked}))
     elif name == "web":
         print(json.dumps({"title": os.environ.get("FAKE_COPILOT_TITLE", "Example Domain")}))
     return 0

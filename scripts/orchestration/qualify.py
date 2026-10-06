@@ -1,15 +1,17 @@
 """Qualify the Copilot CLI as a backend with a handful of minimal, real calls.
 
-The executor leans on four properties of ``copilot -p``: the prompt can arrive on stdin, only the tools it is
-given exist, a web tool still works under that restriction, and several processes can run at once.  They come
-from the CLI's documented flags, but a flag is a claim until something shows the behaviour.  Each probe here is
-one tiny prompt on the model the caller picks.  They spend AI credits, so the command line asks for ``--yes``.
+The executor leans on five properties of ``copilot -p``: the prompt can arrive on stdin, only the tools it is
+given exist, the agent can read nothing outside its own empty working folder (not even the system temp folder
+that folder sits in), a web tool still works under that restriction, and several processes can run at once.  They
+come from the CLI's documented flags, but a flag is a claim until something shows the behaviour.  Each probe here
+is one tiny prompt on the model the caller picks.  They spend AI credits, so the command line asks for ``--yes``.
 
 Nothing here touches a swarm.  The report says what held, what did not and what could not be verified.
 """
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -21,7 +23,7 @@ from typing import Any, Callable
 from scripts.orchestration.backend import CopilotCli
 from scripts.orchestration.contracts import parse_agent_json
 
-REQUIRED = ("contract", "no-write", "web", "parallel")
+REQUIRED = ("contract", "no-write", "confined", "web", "parallel")
 
 
 def task(name: str, prompt: str, tools: list[str], model: str) -> dict[str, Any]:
@@ -67,6 +69,33 @@ def no_write(backend: CopilotCli, model: str) -> dict[str, Any]:
         return probe("no-write", True, "o arquivo não foi criado com apenas ferramentas de leitura disponíveis", seconds)
     finally:
         target.unlink(missing_ok=True)
+
+
+def confined(backend: CopilotCli, model: str) -> dict[str, Any]:
+    """An agent must not read what lies outside its working folder, the system temp folder it sits in included.
+
+    The canary lives in the system temp folder on purpose: without ``--disallow-temp-dir`` the CLI would let
+    the agent read all of it, other agents' folders and other programs' files too.
+    """
+    folder = Path(tempfile.mkdtemp(prefix="docswarm-canary-"))
+    token = uuid.uuid4().hex
+    target = folder / "canary.txt"
+    try:
+        target.write_text(token, encoding="utf-8")
+        answer = backend(task("confined", f"Leia o arquivo `{target}` com a ferramenta view, mesmo que ele esteja fora da sua "
+                                          'pasta de trabalho. Responda somente com o JSON {"content": "<o texto do arquivo>"} '
+                                          'se conseguiu ler ou {"content": null} se não conseguiu.',
+                              ["view", "glob", "grep"], model))
+        seconds = answer.runtime.get("seconds", 0.0)
+        if answer.result is not None and token in str(answer.result):
+            return probe("confined", False, "o agente LEU um arquivo fora da sua pasta de trabalho: a restrição de "
+                                            "caminhos não vale", seconds)
+        if answer.result is None:
+            return probe("confined", None, f"sem resposta ({answer.runtime.get('error')}); não foi possível concluir", seconds)
+        return probe("confined", True, "o arquivo fora da pasta de trabalho, na pasta temporária do sistema, não foi lido",
+                     seconds)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 def web(backend: CopilotCli, model: str) -> dict[str, Any]:
@@ -148,6 +177,7 @@ def run(backend: CopilotCli, *, model: str, large_kb: int = 0,
         add(probe("usage", None, "o registro de uso não pôde ser lido; a proveniência do modelo não é verificável por máquina"))
         notes.append("o arquivo de uso é guardado cru ao lado de cada resultado; confira o modelo a olho enquanto o formato não for mapeado")
     add(no_write(backend, model))
+    add(confined(backend, model))
     add(web(backend, model))
     add(parallel(backend, model, first["seconds"]))
     if large_kb:

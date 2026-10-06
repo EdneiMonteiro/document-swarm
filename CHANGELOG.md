@@ -39,8 +39,9 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
   an orphan holds. It prints a table every minute and keeps
   `reports/execution/driver.json` as a heartbeat.
 - `qualify` checks the CLI with a handful of minimal real calls (stdin prompt, no
-  write under read-only tools, a web tool under the restriction, parallelism, the
-  model in the usage record) and refuses to run without `--yes` because it spends
+  write under read-only tools, no read outside the agent's own folder, a web tool
+  under the restriction, parallelism, the model in the usage record) and refuses to
+  run without `--yes` because it spends
   credits. `run --plan-only` shows the first agents and their exact commands without
   running anything.
 - `health.py` understands executor runs: it reads the heartbeat and the journal,
@@ -71,6 +72,12 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
   benchmark was run, so there is no promised percentage gain.
 - The visual monitor panel is not driven by the executor, and a dead source found by
   the final recheck blocks the delivery until someone replaces it.
+- Only run on Windows. The `fcntl` lock and the process-group kill are the Linux and
+  macOS paths and have never run; run the test suite there before relying on them.
+- Agents with web tools run with `--allow-all-urls` (research cannot work otherwise) and
+  receive the brief and the document in the prompt, so a page carrying malicious
+  instructions could try to make them put that text in a URL. Path confinement stops
+  reads of other files, not this. The coordinator flow has the equivalent exposure.
 
 ### Fixed
 

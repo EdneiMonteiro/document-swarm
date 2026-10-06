@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -124,6 +126,13 @@ class BackendCase(EngineCase):
         self.log = Path(self.temporary.name) / "calls.jsonl"
         self.state = Path(self.temporary.name) / "state"
         self.state.mkdir()
+        # The backend makes one scratch folder per agent in the system temp folder.  A deliberate orphan keeps its
+        # folder open, so it cannot be removed at once; pointing the temp folder inside the test's own tree keeps
+        # that leftover out of the user's real temp folder.
+        self.scratch = Path(self.temporary.name) / "tmp"
+        self.scratch.mkdir()
+        previous, tempfile.tempdir = tempfile.tempdir, str(self.scratch)
+        self.addCleanup(setattr, tempfile, "tempdir", previous)
 
     def environment(self, **extra: Any) -> dict[str, str]:
         return {"FAKE_COPILOT_LOG": str(self.log), "FAKE_COPILOT_ROOT": str(self.root), "FAKE_COPILOT_BASE": self.base,
@@ -260,6 +269,9 @@ class ProcessTests(BackendCase):
                     subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
                 elif alive(pid):
                     os.kill(pid, 9)
+            deadline = time.monotonic() + 15
+            while any(alive(pid) for pid in orphans) and time.monotonic() < deadline:
+                time.sleep(0.2)
 
     def test_a_result_is_recorded_the_moment_it_arrives_not_when_the_slowest_agent_finishes(self):
         journal = Journal(self.root / "reports" / "execution" / "journal.jsonl")
@@ -518,7 +530,10 @@ class RunCommandTests(BackendCase):
 
 class QualifyTests(BackendCase):
     def qualify_cli(self, *args: str, extra_env: dict[str, str] | None = None):
-        environment = {**os.environ, "PYTHONUTF8": "1", **self.environment(), **(extra_env or {})}
+        # The probes create files and folders in the temp folder; here that is the test's own, so that what they
+        # leave behind can be checked exactly.
+        where = {"TEMP": str(self.scratch), "TMP": str(self.scratch), "TMPDIR": str(self.scratch)}
+        environment = {**os.environ, "PYTHONUTF8": "1", **self.environment(), **where, **(extra_env or {})}
         output = Path(self.temporary.name) / "qualification.json"
         done = subprocess.run([sys.executable, "-S", "-m", "scripts.orchestration", "qualify", "--output", str(output),
                                "--copilot", sys.executable, "--copilot-arg=-S", f"--copilot-arg={FAKE}", *args],
@@ -538,11 +553,12 @@ class QualifyTests(BackendCase):
         report = json.loads(output.read_text(encoding="utf-8"))
         self.assertTrue(report["qualified"])
         passed = {item["probe"]: item["passed"] for item in report["probes"]}
-        self.assertEqual(passed, {"contract": True, "usage": True, "no-write": True, "web": True, "parallel": True,
-                                  "large-prompt": True})
+        self.assertEqual(passed, {"contract": True, "usage": True, "no-write": True, "confined": True, "web": True,
+                                  "parallel": True, "large-prompt": True})
         self.assertEqual(report["model"], "barato")
         self.assertEqual(report["inconclusive"], [])
         self.assertIn("QUALIFICADO", out)
+        self.assertEqual(list(self.scratch.iterdir()), [], "the probes leave no file or folder behind")
 
     def test_a_cli_that_ignores_the_tool_restriction_is_not_qualified_and_leaves_nothing_behind(self):
         code, out, err, output = self.qualify_cli("--model", "barato", "--yes", extra_env={"FAKE_COPILOT_DISOBEY": "1"})
@@ -553,6 +569,45 @@ class QualifyTests(BackendCase):
         self.assertEqual([item["probe"] for item in failed], ["no-write"])
         self.assertIn("CRIOU", failed[0]["detail"])
         self.assertIn("NÃO qualificado", out)
+        self.assertEqual(list(self.scratch.iterdir()), [], "the file the disobedient agent created is removed")
+
+    def test_a_cli_that_reads_outside_its_working_folder_is_not_qualified_and_leaves_nothing_behind(self):
+        code, out, err, output = self.qualify_cli("--model", "barato", "--yes", extra_env={"FAKE_COPILOT_LEAK": "1"})
+        self.assertEqual(code, 1, out + err)
+        report = json.loads(output.read_text(encoding="utf-8"))
+        self.assertFalse(report["qualified"])
+        failed = [item for item in report["probes"] if item["passed"] is False]
+        self.assertEqual([item["probe"] for item in failed], ["confined"])
+        self.assertIn("LEU", failed[0]["detail"])
+        self.assertEqual(list(self.scratch.iterdir()), [], "the canary folder is removed even when it was read")
+
+    def test_the_confinement_canary_sits_in_the_system_temp_folder_beside_the_agents_own_folder(self):
+        seen: list[tuple[str, str]] = []
+        real = CopilotCli.__call__
+
+        def spy(backend, task):
+            match = re.search(r"arquivo `([^`]+)`", task["prompt"])
+            if match and task["task_id"] == "qualify-confined":
+                seen.append((str(Path(match.group(1)).parent.parent), tempfile.gettempdir()))
+            return real(backend, task)
+
+        backend = CopilotCli(executable=[sys.executable, "-S", str(FAKE)], environment=self.environment())
+        with mock.patch.object(CopilotCli, "__call__", spy):
+            qualify.confined(backend, "barato")
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(os.path.normcase(seen[0][0]), os.path.normcase(seen[0][1]),
+                         "inside the system temp folder, where --disallow-temp-dir is what keeps the agent out")
+
+    def test_a_probe_that_gets_no_answer_is_inconclusive_and_a_required_one_blocks_the_qualification(self):
+        for name in ("no-write", "confined", "web"):
+            with self.subTest(probe=name):
+                backend = CopilotCli(executable=[sys.executable, "-S", str(FAKE)],
+                                     environment=self.environment(FAKE_COPILOT_SILENT=name))
+                report = qualify.run(backend, model="barato")
+                state = {item["probe"]: item["passed"] for item in report["probes"]}
+                self.assertIsNone(state[name], "no answer is not a pass and not a failure either")
+                self.assertIn(name, report["inconclusive"])
+                self.assertFalse(report["qualified"], "a required probe that could not be concluded does not qualify")
 
     def test_a_web_tool_that_does_not_work_under_the_restriction_is_not_qualified(self):
         code, out, err, output = self.qualify_cli("--model", "barato", "--yes", extra_env={"FAKE_COPILOT_TITLE": "404"})

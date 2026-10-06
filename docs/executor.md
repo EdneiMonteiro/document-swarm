@@ -119,10 +119,15 @@ python "<DOCSWARM>/scripts/orchestration" qualify --model <o-modelo-mais-barato>
 
 Cada sonda verifica uma propriedade de que o executor depende: o prompt chega por stdin
 e a resposta JSON é lida; um agente com ferramentas só de leitura não consegue criar um
-arquivo; uma ferramenta web continua funcionando com a lista restrita; dois processos
-rodam ao mesmo tempo; o registro de uso cita o modelo pedido. O relatório
+arquivo; um agente não consegue ler um arquivo fora da própria pasta de trabalho, nem na
+pasta temporária do sistema onde ela fica; uma ferramenta web continua funcionando com a
+lista restrita; dois processos rodam ao mesmo tempo; o registro de uso cita o modelo
+pedido. Cada sonda de proibição pede ao agente que tente a ação proibida e confere se ela
+aconteceu. Se a ação não acontece, a sonda passa, mas um modelo que simplesmente não
+tentou também passaria: repita-a se o resultado importar. O relatório
 (`copilot-cli-qualification.json`) diz o que se confirmou, o que falhou e o que não pôde
-ser verificado. Uma sonda que falha desqualifica o backend.
+ser verificado. Uma sonda que falha desqualifica o backend, e uma sonda obrigatória que
+não pôde ser concluída também impede a qualificação.
 
 ## Como cada agente é executado
 
@@ -133,7 +138,7 @@ decidido por opções que o CLI aplica, não por pedido no prompt:
 |---|---|
 | `--available-tools` | Só as ferramentas do papel existem: autores e revisores de fatos leem e pesquisam na web; revisores de forma só leem |
 | `--deny-tool shell` e `--deny-tool write` | Negam execução de comandos e escrita, que prevalecem sobre qualquer permissão |
-| pasta de trabalho vazia, fora do swarm | O agente não vê o swarm nem o resto da máquina; a pasta é removida ao fim |
+| pasta de trabalho vazia e `--disallow-temp-dir` | Por padrão o CLI só deixa o agente ler dentro da pasta de trabalho e da pasta temporária do sistema; a segunda opção fecha esta. Assim o agente não alcança o swarm nem o resto da máquina (`qualify` confere). A pasta é removida ao fim; se um processo órfão ainda a mantiver aberta, uma pasta vazia `docswarm-agent-*` pode sobrar no diretório temporário |
 | `--no-custom-instructions`, `--no-ask-user` | Só vale a declaração do agente; ninguém espera uma resposta humana |
 | prompt por stdin | O documento inteiro cabe; a linha de comando do Windows aceita cerca de 32 mil caracteres |
 | `--model`, `--reasoning-effort`, `--context` | Exatamente o que a declaração do agente pede |
@@ -284,5 +289,15 @@ esquema também está no prompt para quem não sabe.
   limites do provedor nem uma máquina que dorme. Uma execução longa desacompanhada
   precisa de um ambiente que não hiberne.
 - Markdown apenas; apresentações e PDF seguem o fluxo do coordenador.
+- Só foi executado no Windows. O bloqueio exclusivo por `fcntl` e o encerramento por
+  grupo de processos (`killpg`) são os caminhos de Linux e macOS, e nunca rodaram. Rode
+  `python3 -m unittest discover -s tests` nesses sistemas antes de depender do executor
+  neles.
+- Autores, revisores de fatos e rubber duck têm ferramentas web com `--allow-all-urls`,
+  porque a pesquisa não funciona sem abrir URLs que ninguém pode listar de antemão. Eles
+  recebem o brief e o documento no prompt, e uma página com instruções maliciosas pode
+  tentar induzi-los a pôr esse texto numa URL. O confinamento de caminhos impede a leitura
+  de outros arquivos, não esse vazamento. O fluxo do coordenador tem exposição
+  equivalente; para conteúdo que não pode chegar a pesquisas na web, nenhum dos dois serve.
 - Se uma fonte continuar morta na rechecagem final, a entrega fica bloqueada até que
   alguém a substitua e refaça a revisão; o executor ainda não abre esse reparo sozinho.
