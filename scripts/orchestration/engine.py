@@ -19,7 +19,7 @@ import re
 import subprocess
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -979,6 +979,7 @@ class Engine:
         issued = {(item["task_id"], item["attempt"]) for item in events if item["event"] == "task_issued"}
         recorded = [item for item in events if item["event"] == "task_recorded"]
         return {"swarm": self.swarm_id, "problems": self.problems, "cycle": self.current_cycle(),
+                "max_cycles": self.max_cycles,
                 "tasks_issued": len(issued), "tasks_recorded": len(recorded),
                 "accepted": sum(1 for item in recorded if item["outcome"] == "accepted"),
                 "rejected": sum(1 for item in recorded if item["outcome"] == "rejected"),
@@ -986,20 +987,44 @@ class Engine:
                 "repairs": sum(1 for item in events if item["event"] == "repair_started"),
                 "finished": [item for item in events if item["event"] == "run_finished"]}
 
-    def run(self, backend: Callable[[dict[str, Any]], Any], *, parallel: int = 4) -> dict[str, Any]:
-        """Drive the whole run in-process with ``backend`` answering each agent task."""
-        self.init()
+    def run(self, backend: Callable[[dict[str, Any]], Any], *, parallel: int = 4, models: list[str] | None = None,
+            on_event: Callable[[str, dict[str, Any]], None] | None = None) -> dict[str, Any]:
+        """Drive the whole run in-process: ``backend`` answers each agent task, and each answer is recorded as it arrives.
+
+        The backend returns an ``Answer`` or a bare result.  Recording one result before the slower
+        agents of the same step finish means a crash loses only the agents that were still running.
+        ``on_event`` is told about each directive, task start and task finish; a failure there never
+        interrupts the run.
+        """
+        def emit(name: str, **data: Any) -> None:
+            if on_event is not None:
+                try:
+                    on_event(name, data)
+                except Exception:  # a broken progress display must not abort a paid run
+                    pass
+
+        self.init(models=models)
         for _ in range(500):
             directive = self.next()
+            emit("directive", directive=directive)
             if directive["status"] != "agents":
                 return directive
+
             def answer(task: dict[str, Any]) -> Any:
                 try:
                     return backend(task)
                 except Exception:  # an agent that fails is a null result, never a crash of the run
                     return None
+
             with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
-                answers = list(pool.map(answer, directive["tasks"]))
-            for task, result in zip(directive["tasks"], answers):
-                self.record(task["task_id"], task["attempt"], task["inputs_sha256"], result)
+                futures = {}
+                for task in directive["tasks"]:
+                    emit("started", task=task)
+                    futures[pool.submit(answer, task)] = task
+                for future in as_completed(futures):
+                    task = futures[future]
+                    value = future.result()
+                    result, runtime = (value.result, value.runtime) if isinstance(value, contracts.Answer) else (value, None)
+                    outcome = self.record(task["task_id"], task["attempt"], task["inputs_sha256"], result, runtime)
+                    emit("finished", task=task, outcome=outcome, runtime=runtime or {})
         raise InputError("the run did not finish within the step limit")

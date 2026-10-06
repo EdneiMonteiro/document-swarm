@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -43,6 +44,18 @@ def text_field(value: Any, label: str, errors: list[str], *, empty: bool = False
         errors.append(f"{label} must be a non-empty string")
         return ""
     return value
+
+
+@dataclass
+class Answer:
+    """What a backend hands back for one task: the agent's result and what it can tell about the run.
+
+    ``result`` is a JSON object, or text that contains one, or None when the agent produced nothing.
+    ``runtime`` holds the few scalar facts worth keeping (model, seconds, exit code).
+    """
+
+    result: Any
+    runtime: dict[str, Any] = field(default_factory=dict)
 
 
 def storable(value: Any) -> bool:

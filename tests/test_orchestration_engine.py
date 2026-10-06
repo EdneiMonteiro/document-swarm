@@ -1253,6 +1253,17 @@ class RobustnessTests(EngineCase):
         self.assertIn("cycle-01-review.yaml", outcome["detail"])
         self.assertEqual(len(agent.calls), calls)
 
+    def test_a_broken_progress_hook_never_aborts_a_run(self):
+        seen = []
+
+        def broken(name, data):
+            seen.append(name)
+            raise RuntimeError("the display crashed")
+
+        done = self.engine().run(self.agent(), on_event=broken)
+        self.assertEqual((done["status"], done["outcome"]), ("done", "approved"))
+        self.assertIn("finished", seen)
+
     def test_an_agent_that_raises_is_a_null_result_not_a_crash_of_the_run(self):
         def explode(task, result):
             if task["agent"] == "rubber-duck":

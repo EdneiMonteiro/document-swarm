@@ -81,6 +81,69 @@ def command_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def backend_for(args: argparse.Namespace, usage_dir: Path | None) -> Any:
+    from scripts.orchestration.backend import CopilotCli
+
+    if args.copilot_arg and not args.copilot:
+        raise InputError("--copilot-arg only makes sense together with --copilot")
+    executable = [args.copilot, *args.copilot_arg] if args.copilot else None
+    return CopilotCli(executable=executable, timeout=args.timeout, usage_dir=usage_dir)
+
+
+def command_run(args: argparse.Namespace) -> int:
+    from scripts.orchestration import driver
+
+    models = [item.strip() for item in args.models.split(",") if item.strip()] if args.models else None
+    options = Options(max_attempts=args.max_attempts, max_repairs=args.max_repairs)
+    swarm = args.swarm.resolve(strict=True)
+    backend = backend_for(args, swarm / "reports" / "execution" / "usage")
+    if args.plan_only:
+        engine = Engine(swarm, options)
+        engine.init(models=models)
+        directive = engine.next()
+        tasks = [{"label": item["label"], "agent": item["agent"], "kind": item["kind"], "model": item["model"],
+                  "reasoning_effort": item["reasoning_effort"], "context_tier": item["context_tier"], "tools": item["tools"],
+                  "prompt_bytes": len(item["prompt"].encode("utf-8")),
+                  "command": backend.command(item, swarm / "reports" / "execution" / "usage" / f"{item['label']}.json")}
+                 for item in directive.get("tasks", [])]
+        emit({"status": directive["status"], "stage": directive.get("stage"), "tasks": tasks, "spends_credits": False},
+             pretty=args.pretty)
+        return 0
+    out = (lambda text: print(text, file=sys.stderr, flush=True)) if args.json else (lambda text: print(text, flush=True))
+    try:
+        directive = driver.execute(swarm, backend, options=options, models=models, parallel=args.parallel,
+                                   tick=args.tick, beat=min(15.0, args.tick), out=out, backend_name=backend.name)
+    except KeyboardInterrupt:
+        print("ERROR: interrupted; run the same command again to resume where it stopped", file=sys.stderr)
+        return 130
+    if args.json:
+        emit(directive, pretty=args.pretty)
+    if directive["status"] == "done":
+        return 0 if directive["outcome"] == "approved" else 1
+    if not args.json:
+        print(f"{directive['status']}: {directive.get('detail') or directive.get('kind')}", file=sys.stderr)
+    return 3
+
+
+def command_qualify(args: argparse.Namespace) -> int:
+    from scripts.orchestration import qualify
+
+    if not args.yes:
+        raise InputError("qualify makes real model calls and spends AI credits (about six minimal prompts); "
+                         "pass --yes to proceed")
+    output = args.output.resolve()
+    backend = backend_for(args, output.parent / f"{output.stem}.usage")
+    print(f"Qualificando o copilot CLI com o modelo {args.model} (chamadas mínimas, gasto real)...", flush=True)
+    report = qualify.run(backend, model=args.model, large_kb=args.large_kb, log=lambda text: print(text, flush=True))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    verdict = "QUALIFICADO" if report["qualified"] else "NÃO qualificado"
+    print(f"\n{verdict}: {output}", flush=True)
+    for note in report["notes"]:
+        print(f"  nota: {note}", flush=True)
+    return 0 if report["qualified"] else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m scripts.orchestration", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -102,6 +165,34 @@ def build_parser() -> argparse.ArgumentParser:
     swarm_command("next", "advance as far as code can and print what is needed next, or the outcome", command_next)
     swarm_command("record", "validate and persist one agent result read as JSON from stdin", command_record)
     swarm_command("status", "summarise the run from its journal", command_status)
+
+    def backend_options(command: argparse.ArgumentParser) -> None:
+        command.add_argument("--copilot", help="path to the copilot executable (default: the one on PATH)")
+        command.add_argument("--copilot-arg", action="append", default=[],
+                             help="an argument placed right after --copilot, repeatable (for a wrapper or a test double)")
+        command.add_argument("--timeout", type=float, default=3600.0, help="seconds one agent may run before it is stopped")
+
+    run = swarm_command("run", "run the whole swarm with no coordinator model; each agent is one copilot process", command_run)
+    backend_options(run)
+    run.add_argument("--models", help="comma-separated models available in this session (see init)")
+    run.add_argument("--parallel", type=int, default=4, help="agents running at the same time")
+    run.add_argument("--max-attempts", type=int, default=Options.max_attempts, help="attempts per agent task")
+    run.add_argument("--max-repairs", type=int, default=Options.max_repairs,
+                     help="repair rounds per cycle for failing mechanical checks")
+    run.add_argument("--tick", type=float, default=60.0, help="seconds between the status tables")
+    run.add_argument("--json", action="store_true", help="print the final answer as JSON on stdout, tables on stderr")
+    run.add_argument("--plan-only", action="store_true",
+                     help="validate, write the plan and show the first agents and their exact commands; runs nothing "
+                          "and spends nothing")
+
+    qualify = commands.add_parser("qualify", help="check the copilot CLI backend with a few minimal real calls (spends credits)")
+    backend_options(qualify)
+    qualify.add_argument("--model", required=True, help="the model for the probes; use the cheapest one available")
+    qualify.add_argument("--yes", action="store_true", help="confirm that real calls will be made")
+    qualify.add_argument("--large-kb", type=int, default=0, help="also send a prompt of about this many KB through stdin")
+    qualify.add_argument("--output", type=Path, default=Path("copilot-cli-qualification.json"),
+                         help="where to write the report")
+    qualify.set_defaults(handler=command_qualify)
 
     measure = commands.add_parser("metrics", help="decompose where an execution spent its wall-clock time")
     measure.add_argument("swarm", type=Path)
