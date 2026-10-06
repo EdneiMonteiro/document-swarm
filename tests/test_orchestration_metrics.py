@@ -12,6 +12,7 @@ from unittest import mock
 from scripts.checks.common import InputError
 from scripts.orchestration import __main__ as cli
 from scripts.orchestration import metrics
+from tests.test_orchestration_engine import EngineCase
 
 ORIGIN = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -167,6 +168,145 @@ class HostPowerTests(unittest.TestCase):
     def test_other_platforms_report_unknown(self):
         with mock.patch.object(metrics.sys, "platform", "linux"):
             self.assertIsNone(metrics.host_sleep(0, 10))
+
+
+class ExecutorJournal:
+    """Build an executor journal with exact timings."""
+
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+
+    def add(self, moment: float, event: str, **fields) -> "ExecutorJournal":
+        self.events.append({"seq": len(self.events) + 1, "at": at(moment), "event": event, **fields})
+        return self
+
+    def issue(self, seconds: float, task: str, agent: str, *, stage: str = "authors", kind: str = "author",
+              attempt: int = 1, cycle: int = 1, round: int = 0):
+        return self.add(seconds, "task_issued", task_id=task, agent=agent, stage=stage, kind=kind, attempt=attempt,
+                        cycle=cycle, round=round)
+
+    def record(self, seconds: float, task: str, agent: str, *, attempt: int = 1, outcome: str = "accepted"):
+        return self.add(seconds, "task_recorded", task_id=task, agent=agent, attempt=attempt, outcome=outcome)
+
+    def script(self, seconds: float, name: str, took: float, cycle: int = 1):
+        return self.add(seconds, "script_finished", script=name, seconds=took, cycle=cycle, round=0, exit_code=0)
+
+
+def sample_run() -> ExecutorJournal:
+    journal = ExecutorJournal().add(0, "run_started")
+    journal.issue(0, "t1", "author-01").issue(0, "t2", "author-02")
+    journal.record(100, "t1", "author-01").record(120, "t2", "author-02")
+    journal.script(130, "sources", 10).script(130, "tables", 4)
+    journal.issue(200, "r1", "reviewer-01", stage="reviewers", kind="reviewer").record(300, "r1", "reviewer-01")
+    journal.add(310, "gate_run", cycle=1, exit_code=0, seconds=5)
+    journal.add(400, "run_finished", outcome="approved", cycle=1)
+    return journal
+
+
+class ExecutorTests(unittest.TestCase):
+    def measure(self, journal: ExecutorJournal, **kwargs):
+        events, mechanical = metrics.executor_events(journal.events)
+        return metrics.execution(events, execution_id="executor", mechanical=mechanical, **kwargs)
+
+    def test_agent_code_and_idle_time_add_up_to_the_clock(self):
+        result = self.measure(sample_run())
+        self.assertEqual(result["wall_seconds"], 400)
+        self.assertEqual(result["agent_running_union_seconds"], 220)
+        self.assertEqual(result["mechanical_running_union_seconds"], 15, "sources and tables overlapped; code counts once")
+        self.assertEqual(result["idle_seconds"], 165)
+        self.assertEqual(result["idle_share"], 0.412)
+        self.assertEqual(result["parallelism"], round(320 / 220, 2))
+        self.assertEqual(result["dispatches"], 3)
+
+    def test_a_retry_is_a_second_dispatch_of_the_same_task(self):
+        journal = ExecutorJournal().add(0, "run_started")
+        journal.issue(0, "t1", "author-01").record(50, "t1", "author-01", outcome="null")
+        journal.issue(60, "t1", "author-01", attempt=2).record(160, "t1", "author-01", attempt=2)
+        result = self.measure(journal)
+        self.assertEqual((result["dispatches"], result["agent_running_union_seconds"]), (2, 150))
+        self.assertEqual(result["dispatches_without_an_end"], [])
+
+    def test_work_issued_and_never_recorded_is_listed_without_an_end(self):
+        journal = ExecutorJournal().add(0, "run_started")
+        journal.issue(10, "t1", "author-01").script(500, "sources", 3)
+        result = self.measure(journal)
+        [lost] = result["dispatches_without_an_end"]
+        self.assertEqual(lost["agent"], "author-01")
+        self.assertEqual(result["agent_running_union_seconds"], 0, "an agent nobody saw stop is not credited with hours")
+
+    def test_repairs_and_withdrawn_verdicts_are_recoveries(self):
+        journal = ExecutorJournal().add(0, "run_started").add(5, "repair_started", cycle=1, round=1)
+        journal.add(9, "verdict_withdrawn", cycle=1)
+        self.assertEqual(self.measure(journal)["recoveries"], ["repair", "verdict_withdrawn"])
+
+    def test_every_stage_and_script_is_a_phase_with_its_own_idle_time(self):
+        result = self.measure(sample_run())
+        self.assertEqual(set(result["phase_totals"]),
+                         {"setup", "authors", "sources", "tables", "reviews", "gate"})
+        for row in result["phase_totals"].values():
+            self.assertIn("idle_seconds", row)
+            self.assertLessEqual(row["idle_seconds"], row["seconds"])
+        self.assertEqual(result["phase_totals"]["reviews"]["idle_seconds"], 5 + 0, "the quiet before the gate belongs to reviews")
+
+    def test_any_other_journal_entry_still_extends_the_clock(self):
+        journal = ExecutorJournal().add(0, "run_started").add(900, "matrix_written", cycle=1)
+        self.assertEqual(self.measure(journal)["wall_seconds"], 900)
+
+    def test_an_entry_without_a_valid_time_is_ignored_not_fatal(self):
+        journal = sample_run()
+        journal.events.append({"seq": 99, "at": "not a time", "event": "task_issued", "task_id": "x"})
+        journal.events.append({"seq": 100, "at": "not a time", "event": "script_finished", "script": "sources", "seconds": 3})
+        journal.events.append({"seq": 101, "event": "gate_run", "seconds": 2})
+        self.assertEqual(self.measure(journal)["dispatches"], 3)
+
+    def test_a_machine_that_slept_is_told_apart_from_a_flow_that_was_idle(self):
+        origin = ORIGIN.timestamp()
+        result = self.measure(sample_run(), sleeps=[(origin + 310, origin + 390)])
+        self.assertEqual(result["host_asleep_seconds"], 80)
+        self.assertEqual(result["awake_idle_seconds"], 85)
+
+    def test_sleeping_while_code_was_running_is_not_counted_as_sleeping_through_an_idle_flow(self):
+        origin = ORIGIN.timestamp()
+        result = self.measure(sample_run(), sleeps=[(origin + 125, origin + 135)])
+        self.assertEqual(result["host_asleep_seconds"], 5, "only 130 to 135 was idle; 125 to 130 was the checks running")
+
+    def test_without_mechanical_work_given_the_legacy_figures_are_unchanged(self):
+        journal = Journal().add(0, "phase", phase="authors", cycle=1)
+        journal.dispatch("a", 0).run("a", 10, 110).add(1000, "phase", phase="reviews", cycle=1)
+        result = metrics.execution(journal.events)
+        for key in ("idle_seconds", "idle_share", "mechanical_running_union_seconds", "awake_idle_seconds"):
+            self.assertNotIn(key, result)
+        self.assertNotIn("idle_seconds", result["phase_totals"]["authors"])
+
+    def test_no_journal_means_nothing_to_measure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(metrics.executor(Path(folder)), [])
+
+
+class RealRunMetricsTests(EngineCase):
+    def test_a_real_run_is_measured_with_agents_code_and_idle_time(self):
+        self.finish()
+        [result] = metrics.executor(self.root)
+        self.assertEqual(result["dispatches"], 7)
+        self.assertGreater(result["mechanical_running_union_seconds"], 0, "the checks and the gate ran as code")
+        self.assertLessEqual(result["idle_seconds"], result["wall_seconds"])
+        self.assertEqual(result["recoveries"], [])
+        self.assertTrue({"authors", "reviews", "rubber-duck", "gate", "delivery"} <= set(result["phase_totals"]))
+        self.assertEqual(result["dispatches_without_an_end"], [])
+
+    def test_the_command_prints_the_executor_figures_and_selects_by_id(self):
+        self.finish()
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(["metrics", str(self.root)])
+        self.assertEqual(code, 0, err.getvalue())
+        for text in ("Agente ou código", "Ocioso", "do journal do executor", "Por fase (relógio, ocioso)"):
+            self.assertIn(text, out.getvalue())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.main(["metrics", str(self.root), "--json", "--execution", "executor"]), 0)
+        [result] = json.loads(out.getvalue())
+        self.assertEqual(result["execution_id"], "executor")
 
 
 class CommandTests(unittest.TestCase):

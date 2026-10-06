@@ -479,6 +479,18 @@ class RunCommandTests(BackendCase):
         self.assertEqual(first["command"][:3], [sys.executable, "-S", str(FAKE)])
         self.assertEqual(self.calls(), [], "no agent was started")
 
+    def test_a_declared_model_outside_the_session_list_is_refused_before_any_agent_is_paid_for(self):
+        author = self.root / "agents" / "authors" / "author-01-platform.md"
+        author.write_text(author.read_text(encoding="utf-8").replace("model: auto", "model: modelo-fantasma"), encoding="utf-8")
+        for mode in ((), ("--plan-only",)):
+            code, out, err = self.run_cli(*self.fake_args, "--tick", "3600", *mode, "--models", "modelo-real-1,modelo-real-2")
+            self.assertEqual(code, 2, (mode, out, err))
+            self.assertIn("modelo-fantasma", err)
+            self.assertEqual(self.calls(), [], "nothing was started")
+        code, out, err = self.run_cli(*self.fake_args, "--plan-only", "--models", " modelo-fantasma , modelo-real-1")
+        self.assertEqual(code, 0, err)
+        self.assertIn("modelo-fantasma", out, "a listed model is accepted, with the blanks around the names ignored")
+
     def test_the_wrapper_arguments_need_a_wrapper(self):
         code, _, err = self.run_cli("--copilot-arg=-S")
         self.assertEqual(code, 2)

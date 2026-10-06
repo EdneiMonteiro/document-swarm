@@ -13,6 +13,7 @@ import json
 import re
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,8 +30,11 @@ LABELS = {
     "active": "em andamento", "waiting": "aguardando", "stalled": "parado",
     "closed": "encerrado", "unobserved": "não observado", "invalid": "artefatos inválidos",
 }
-SELF_WRITTEN = re.compile(r"^(health|resume|snapshot|owner)\.json$|^events\.jsonl$|^torn-|\.tmp$")
+SELF_WRITTEN = re.compile(r"^(health|resume|snapshot|owner|driver)\.json$|^events\.jsonl$|^torn-|\.tmp$")
 MAX_SCANNED = 20000
+BEAT_GRACE = 60.0
+MAX_JOURNAL_BYTES = 64 * 1024 * 1024
+ORCHESTRATION = Path(__file__).resolve().parents[1] / "orchestration"
 
 
 def elapsed(seconds: float | None) -> str:
@@ -93,8 +97,89 @@ def current(monitor: dict[str, Any] | None, threshold: int) -> tuple[dict[str, A
     return monitor, ""
 
 
+def parse_stamp(value: Any) -> float | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def executor_state(root: Path) -> dict[str, Any] | None:
+    """What the deterministic executor says about itself: its journal and its driver's heartbeat.
+
+    Absent for a swarm run by the coordinator flow, so those keep the classification they always had.
+    """
+    execution = root / "reports" / "execution"
+    journal = execution / "journal.jsonl"
+    if not journal.is_file():
+        return None
+    try:
+        if journal.stat().st_size > MAX_JOURNAL_BYTES:
+            raise InputError("the executor journal exceeds the supported size")
+        events: list[dict[str, Any]] = []
+        for line in journal.read_text(encoding="utf-8").splitlines():
+            try:
+                item = json.loads(line) if line.strip() else None
+            except json.JSONDecodeError:
+                continue  # a torn final append; the engine repairs it on its next write
+            if isinstance(item, dict):
+                events.append(item)
+    except (OSError, UnicodeError):
+        return None
+    issued = {(item.get("task_id"), item.get("attempt")): item for item in events if item.get("event") == "task_issued"}
+    recorded = {(item.get("task_id"), item.get("attempt")) for item in events if item.get("event") == "task_recorded"}
+    finished = [item for item in events if item.get("event") == "run_finished"]
+    last_at = parse_stamp(events[-1].get("at")) if events else None
+    beat = None
+    beat_path = execution / "driver.json"
+    if beat_path.is_file():
+        try:
+            data = parse_strict_json(beat_path.read_text(encoding="utf-8"), name=beat_path.name)
+        except (OSError, UnicodeError, InputError):
+            data = None
+        if isinstance(data, dict) and data.get("schema_version") == 1:
+            stamp = parse_stamp(data.get("updated_at"))
+            beat = {key: data.get(key) for key in ("state", "stage", "cycle", "detail", "running", "backend", "pid")}
+            beat["age_seconds"] = None if stamp is None else max(0.0, time.time() - stamp)
+    return {
+        "finished": bool(finished), "outcome": finished[-1].get("outcome") if finished else None,
+        "last_event": events[-1].get("event") if events else None,
+        "last_event_age_seconds": None if last_at is None else max(0.0, time.time() - last_at),
+        "pending_agents": sorted({str(item.get("agent")) for key, item in issued.items() if key not in recorded}),
+        "driver": beat,
+    }
+
+
+def classify_executor(executor: dict[str, Any], threshold: int) -> tuple[str, str]:
+    """The health of a swarm run by the executor, from its own heartbeat first and its journal second."""
+    if executor["finished"]:
+        return "closed", f"o executor encerrou a execução: {executor['outcome']}"
+    beat = executor["driver"]
+    if beat is not None:
+        state, age = beat.get("state"), beat.get("age_seconds")
+        if state == "done":
+            return "closed", "o executor registrou o encerramento"
+        if state in ("blocked", "failed"):
+            return "stalled", f"o executor parou e precisa de uma pessoa: {beat.get('detail') or state}"
+        if state == "interrupted":
+            return "stalled", "o executor foi interrompido; o mesmo comando retoma de onde parou"
+        if age is None or age > BEAT_GRACE:
+            return "stalled", (f"o executor não dá sinal {elapsed(age)}: o processo terminou ou a máquina foi suspensa; "
+                               "o mesmo comando retoma de onde parou")
+        return "active", f"o executor está ativo com {len(beat.get('running') or [])} agente(s) em execução"
+    age = executor["last_event_age_seconds"]
+    if age is None:
+        return "unobserved", "o journal do executor não tem eventos datados"
+    if age > threshold:
+        return "stalled", f"o journal do executor não avança {elapsed(age)} e nenhum executor deu sinal"
+    return "waiting", f"último registro do executor {elapsed(age)}, sem batimento do driver"
+
+
 def classify(resume: dict[str, Any], monitor: dict[str, Any] | None,
-             artifact_age: float | None, threshold: int, lost: str = "") -> tuple[str, str]:
+             artifact_age: float | None, threshold: int, lost: str = "",
+             executor: dict[str, Any] | None = None) -> tuple[str, str]:
     """Decide the health state and say which observation supports it.
 
     The age of the newest observation decides; the session label only explains.
@@ -105,6 +190,8 @@ def classify(resume: dict[str, Any], monitor: dict[str, Any] | None,
         return "closed", "o ciclo aprovado tem todos os artefatos de entrega"
     if any(item["kind"] in ("escalation", "max_cycles") for item in resume.get("blocked", [])):
         return "closed", "a execução está escalada ao usuário; o vigia não decide por ele"
+    if executor is not None:
+        return classify_executor(executor, threshold)
     if monitor is None:
         if artifact_age is None:
             return "unobserved", f"não há extensão de monitoramento nem artefatos datados{lost}"
@@ -143,12 +230,14 @@ def compose(swarm: Path, threshold: int = DEFAULT_THRESHOLD) -> dict[str, Any]:
     artifact_age, artifact_name = newest_artifact(root)
     published = monitor_health(root)
     monitor, lost = current(published, threshold)
-    state, reason = classify(resume, monitor, artifact_age, threshold, lost)
+    executor = executor_state(root)
+    state, reason = classify(resume, monitor, artifact_age, threshold, lost, executor)
     cycle = resume["cycle"]
     recorded = {item["cycle"]: item for item in data["cycles"]}.get(cycle, {})
     return {
         "schema_version": 1,
         "swarm": data["swarm_id"],
+        "swarm_path": str(root),
         "title": data["title"],
         "execution_id": (published or {}).get("execution_id"),
         "state": state,
@@ -157,6 +246,7 @@ def compose(swarm: Path, threshold: int = DEFAULT_THRESHOLD) -> dict[str, Any]:
         "cycle": cycle,
         "max_cycles": data["max_cycles"],
         "phase": resume["phase"],
+        "executor": executor,
         "session": {
             "observed": monitor is not None,
             "status": ((monitor or {}).get("session_activity") or {}).get("status"),
@@ -187,15 +277,25 @@ def render(record: dict[str, Any]) -> str:
         lines.append(f"{'Diagnóstico':<18}{record.get('reason', 'artefatos inválidos')}")
         return "\n".join(lines)
     session = record["session"]
-    if not session["observed"]:
+    executor = record.get("executor")
+    if executor is not None:
+        beat = executor.get("driver")
+        session_text = ("não aplicável: execução pelo executor determinístico, sem coordenador"
+                        if beat is None else f"driver {beat.get('state') or 'desconhecido'}, batimento {elapsed(beat.get('age_seconds'))}")
+    elif not session["observed"]:
         session_text = "não observada (extensão do monitor ausente)"
     elif session["inactive_seconds"] is None:
         session_text = f"{session['status'] or 'desconhecida'}, sem carimbo de inatividade"
     else:
         session_text = f"{session['status'] or 'desconhecida'}, sem sinal {elapsed(session['inactive_seconds'])}"
     dispatches = record.get("dispatches") or {}
-    agents_text = ("não observados" if not dispatches else
-                   " · ".join(f"{count} {name}" for name, count in sorted(dispatches.items()) if count))
+    if executor is not None:
+        running = [str(item.get("agent")) for item in ((executor.get("driver") or {}).get("running") or [])] \
+            or executor.get("pending_agents") or []
+        agents_text = " · ".join(running) if running else "nenhum em curso"
+    else:
+        agents_text = ("não observados" if not dispatches else
+                       " · ".join(f"{count} {name}" for name, count in sorted(dispatches.items()) if count))
     checks = record["checks"]
     gate_text = checks["gate"] if not checks.get("gate_outcome") else f"{checks['gate']} ({checks['gate_outcome']})"
     rows = [
@@ -209,6 +309,8 @@ def render(record: dict[str, Any]) -> str:
     actions = record["next"]
     if record["complete"]:
         rows.append(("Ação", "nenhuma: a entrega está completa"))
+    elif executor is not None and record["state"] != "closed":
+        rows.append(("Retomar", f'python "{ORCHESTRATION}" run "{record.get("swarm_path", record["swarm"])}"'))
     elif record["blocked"] and not actions:
         rows.append(("Ação", "nenhuma: " + record["blocked"][0]["detail"]))
     elif actions:

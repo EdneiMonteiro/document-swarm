@@ -31,9 +31,10 @@ def emit(value: Any, *, pretty: bool = False) -> None:
 
 
 def command_metrics(args: argparse.Namespace) -> int:
-    results = metrics.legacy(args.swarm, host_power=args.host_power)
+    results = metrics.legacy(args.swarm, host_power=args.host_power) + metrics.executor(args.swarm, host_power=args.host_power)
     if not results:
-        print("ERROR: no monitor journal found under reports/progress", file=sys.stderr)
+        print("ERROR: no monitor journal under reports/progress and no executor journal under reports/execution",
+              file=sys.stderr)
         return 2
     if args.execution:
         results = [item for item in results if item["execution_id"].startswith(args.execution)]
@@ -47,8 +48,13 @@ def command_metrics(args: argparse.Namespace) -> int:
     return 0
 
 
+def declared_models(args: argparse.Namespace) -> list[str] | None:
+    """The models this session offers, or None when the caller did not say."""
+    return [item.strip() for item in args.models.split(",") if item.strip()] if args.models else None
+
+
 def command_init(args: argparse.Namespace) -> int:
-    models = [item.strip() for item in args.models.split(",") if item.strip()] if args.models else None
+    models = declared_models(args)
     engine = Engine(args.swarm, Options(max_attempts=args.max_attempts, max_repairs=args.max_repairs))
     emit(engine.init(models=models), pretty=args.pretty)
     return 0
@@ -93,7 +99,7 @@ def backend_for(args: argparse.Namespace, usage_dir: Path | None) -> Any:
 def command_run(args: argparse.Namespace) -> int:
     from scripts.orchestration import driver
 
-    models = [item.strip() for item in args.models.split(",") if item.strip()] if args.models else None
+    models = declared_models(args)
     options = Options(max_attempts=args.max_attempts, max_repairs=args.max_repairs)
     swarm = args.swarm.resolve(strict=True)
     backend = backend_for(args, swarm / "reports" / "execution" / "usage")

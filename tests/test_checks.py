@@ -33,12 +33,18 @@ class WorkTest(unittest.TestCase):
 
 class SourceHandler(BaseHTTPRequestHandler):
     calls = 0
+    guard = threading.Lock()
 
     def log_message(self, *_args):
         pass
 
+    def count(self):
+        # The checker asks for several URLs at once, so an unguarded += would lose counts.
+        with type(self).guard:
+            type(self).calls += 1
+
     def do_HEAD(self):
-        type(self).calls += 1
+        self.count()
         if self.path == "/get":
             self.send_response(405)
         elif self.path == "/warn":
@@ -53,7 +59,7 @@ class SourceHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        type(self).calls += 1
+        self.count()
         if self.path == "/warn":
             self.send_response(403)
         elif self.path == "/missing":
