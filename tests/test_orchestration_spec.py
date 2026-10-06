@@ -201,6 +201,16 @@ class RosterTests(unittest.TestCase):
         self.assertIn("the swarm declares more than one coordinator",
                       spec.check_roster(spec.compile_agents(self.root), self.brief))
 
+    def test_at_most_nine_authors_because_each_owns_a_hundred_source_identifiers(self):
+        for index in range(2, 11):
+            name = f"author-{index:02d}-extra"
+            self.swarm.put(f"authors/{name}.md", declaration(name, "author"))
+        problems = spec.check_roster(spec.compile_agents(self.root), self.brief)
+        self.assertTrue(any("more than 9 authors" in item for item in problems), problems)
+        (self.root / "agents" / "authors" / "author-10-extra.md").unlink()
+        self.assertEqual(spec.check_roster(spec.compile_agents(self.root), self.brief), [],
+                         "nine authors are the supported maximum")
+
     def test_the_editorial_reviewer_must_exist_and_judge_form(self):
         compiled = spec.compile_agents(self.root)
         self.assertTrue(any("not a declared reviewer" in item for item in

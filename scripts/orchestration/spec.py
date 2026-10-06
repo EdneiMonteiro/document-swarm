@@ -219,6 +219,8 @@ def check_roster(compiled: Compiled, brief: dict[str, Any]) -> list[str]:
         problems.append("the swarm declares more than one coordinator")
     if len(compiled.of("rubber-duck")) > 1:
         problems.append("the swarm declares more than one rubber duck")
+    if len(compiled.of("author")) > 9:
+        problems.append("more than 9 authors are not supported: each author owns a hundred source identifiers")
     editorial = brief.get("editorial_reviewer")
     if editorial is not None:
         names = {spec.name: spec for spec in compiled.of("reviewer")}
