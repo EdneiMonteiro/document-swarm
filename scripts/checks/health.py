@@ -33,6 +33,7 @@ LABELS = {
 SELF_WRITTEN = re.compile(r"^(health|resume|snapshot|owner|driver)\.json$|^events\.jsonl$|^torn-|\.tmp$")
 MAX_SCANNED = 20000
 BEAT_GRACE = 60.0
+BEAT_SKEW = 5.0
 MAX_JOURNAL_BYTES = 64 * 1024 * 1024
 ORCHESTRATION = Path(__file__).resolve().parents[1] / "orchestration"
 
@@ -106,6 +107,19 @@ def parse_stamp(value: Any) -> float | None:
         return None
 
 
+def age_of(stamp: float | None) -> float | None:
+    """Seconds since ``stamp``, or None when it cannot be trusted.
+
+    A stamp a little ahead of this clock is skew and counts as now.  One far ahead (a clock stepped back, or a
+    file written on purpose) says nothing about how long ago anything happened, and clamping it to zero would
+    make a dead driver look like a live one.
+    """
+    if stamp is None:
+        return None
+    delta = time.time() - stamp
+    return None if delta < -BEAT_SKEW else max(0.0, delta)
+
+
 def executor_state(root: Path) -> dict[str, Any] | None:
     """What the deterministic executor says about itself: its journal and its driver's heartbeat.
 
@@ -119,7 +133,9 @@ def executor_state(root: Path) -> dict[str, Any] | None:
         if journal.stat().st_size > MAX_JOURNAL_BYTES:
             raise InputError("the executor journal exceeds the supported size")
         events: list[dict[str, Any]] = []
-        for line in journal.read_text(encoding="utf-8").splitlines():
+        # Split on "\n" only, as the journal's writer does: str.splitlines() also breaks on U+2028, U+0085 and
+        # other separators that a JSON string may legitimately carry unescaped.
+        for line in journal.read_text(encoding="utf-8").split("\n"):
             try:
                 item = json.loads(line) if line.strip() else None
             except json.JSONDecodeError:
@@ -130,7 +146,9 @@ def executor_state(root: Path) -> dict[str, Any] | None:
         return None
     issued = {(item.get("task_id"), item.get("attempt")): item for item in events if item.get("event") == "task_issued"}
     recorded = {(item.get("task_id"), item.get("attempt")) for item in events if item.get("event") == "task_recorded"}
-    finished = [item for item in events if item.get("event") == "run_finished"]
+    # Finished only if nothing happened after the verdict: a person who raises the ceiling and runs again
+    # continues the same journal, and that run is not closed.
+    finished = [events[-1]] if events and events[-1].get("event") == "run_finished" else []
     last_at = parse_stamp(events[-1].get("at")) if events else None
     beat = None
     beat_path = execution / "driver.json"
@@ -142,11 +160,11 @@ def executor_state(root: Path) -> dict[str, Any] | None:
         if isinstance(data, dict) and data.get("schema_version") == 1:
             stamp = parse_stamp(data.get("updated_at"))
             beat = {key: data.get(key) for key in ("state", "stage", "cycle", "detail", "running", "backend", "pid")}
-            beat["age_seconds"] = None if stamp is None else max(0.0, time.time() - stamp)
+            beat["age_seconds"] = age_of(stamp)
     return {
         "finished": bool(finished), "outcome": finished[-1].get("outcome") if finished else None,
         "last_event": events[-1].get("event") if events else None,
-        "last_event_age_seconds": None if last_at is None else max(0.0, time.time() - last_at),
+        "last_event_age_seconds": age_of(last_at),
         "pending_agents": sorted({str(item.get("agent")) for key, item in issued.items() if key not in recorded}),
         "driver": beat,
     }
@@ -165,7 +183,10 @@ def classify_executor(executor: dict[str, Any], threshold: int) -> tuple[str, st
             return "stalled", f"o executor parou e precisa de uma pessoa: {beat.get('detail') or state}"
         if state == "interrupted":
             return "stalled", "o executor foi interrompido; o mesmo comando retoma de onde parou"
-        if age is None or age > BEAT_GRACE:
+        if age is None:
+            return "stalled", ("o carimbo do batimento do executor não é confiável (ilegível ou no futuro); o mesmo "
+                               "comando retoma de onde parou, e uma execução ainda ativa o recusa")
+        if age > BEAT_GRACE:
             return "stalled", (f"o executor não dá sinal {elapsed(age)}: o processo terminou ou a máquina foi suspensa; "
                                "o mesmo comando retoma de onde parou")
         return "active", f"o executor está ativo com {len(beat.get('running') or [])} agente(s) em execução"
@@ -186,12 +207,14 @@ def classify(resume: dict[str, Any], monitor: dict[str, Any] | None,
     A wedged agent loop keeps reporting ``processing`` forever, so trusting the
     label over the age is exactly how a stall stays invisible.
     """
+    if executor is not None:
+        # First, and by the executor's own journal: the legacy artifacts below describe a cycle that may already
+        # have been escalated or approved before a person raised the ceiling and ran the swarm again.
+        return classify_executor(executor, threshold)
     if resume.get("complete"):
         return "closed", "o ciclo aprovado tem todos os artefatos de entrega"
     if any(item["kind"] in ("escalation", "max_cycles") for item in resume.get("blocked", [])):
         return "closed", "a execução está escalada ao usuário; o vigia não decide por ele"
-    if executor is not None:
-        return classify_executor(executor, threshold)
     if monitor is None:
         if artifact_age is None:
             return "unobserved", f"não há extensão de monitoramento nem artefatos datados{lost}"
@@ -309,8 +332,10 @@ def render(record: dict[str, Any]) -> str:
     actions = record["next"]
     if record["complete"]:
         rows.append(("Ação", "nenhuma: a entrega está completa"))
-    elif executor is not None and record["state"] != "closed":
+    elif executor is not None and record["state"] in ("stalled", "unobserved"):
         rows.append(("Retomar", f'python "{ORCHESTRATION}" run "{record.get("swarm_path", record["swarm"])}"'))
+    elif executor is not None and record["state"] in ("active", "waiting"):
+        rows.append(("Ação", "nenhuma: o executor está em andamento; acompanhe a tabela impressa pelo `run`"))
     elif record["blocked"] and not actions:
         rows.append(("Ação", "nenhuma: " + record["blocked"][0]["detail"]))
     elif actions:

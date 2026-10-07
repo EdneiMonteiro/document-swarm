@@ -18,12 +18,15 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import unicodedata
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from scripts.checks.common import GRADE_INDEX, InputError, parse_data
 from scripts.checks.gate import artifact_descriptor, evaluate_current, requires_editorial
@@ -45,6 +48,13 @@ MAX_ADVANCE_STEPS = 64
 OK_EXIT = {"sources": (0, 1), "tables": (0, 1), "nomenclature": (0,), "gate": (0, 1, 2),
            "report": (0,), "memory": (0,)}
 GATE_CODES = {"approved": 0, "rejected": 1, "escalate": 2}
+# Not a status any script uses: what a checker is given when it ended without leaving a fresh report.
+NO_REPORT = 70
+# Windows refuses a path of 260 characters unless long paths are enabled, and every file is written through a
+# temporary name beside it.  The limits below leave room for that; POSIX allows far more.
+MAX_WRITE_PATH = 235 if os.name == "nt" else 1000
+ENGINE_PATH_RESERVE = len("reports/execution/usage/c01.r0.rubber-duck..a1.json") + 16
+EDITORIAL_REVIEWER = re.compile(r"reviewer-[A-Za-z0-9_-]+")  # the gate refuses any other name
 
 
 @dataclass(frozen=True)
@@ -80,6 +90,7 @@ class Engine:
         self.exec = self.root / "reports" / "execution"
         self.journal = Journal(self.exec / "journal.jsonl", clock)
         self.lock = FileLock(self.exec / ".lock")
+        self.run_lock = FileLock(self.exec / ".run.lock")
         self._loaded = False
 
     # -- configuration -------------------------------------------------------
@@ -138,8 +149,21 @@ class Engine:
         problems.extend(specs.check_roster(compiled, self.brief))
         self.editorial = requires_editorial(self.brief)
         self.editorial_name = self.brief.get("editorial_reviewer") if self.editorial else None
-        if self.editorial and not self.editorial_name:
+        # Everything the executor renders is an editorial-v1 review, so a brief that is not one cannot be
+        # approved: refuse it now, before the first agent is paid for, not at the gate after the whole cycle.
+        if not self.editorial:
+            problems.append("the executor delivers editorial-v1 reviews only: declare quality_contract: editorial-v1 "
+                            "in the brief")
+        elif not self.editorial_name:
             problems.append("the editorial contract needs editorial_reviewer in the brief")
+        elif not (isinstance(self.editorial_name, str) and EDITORIAL_REVIEWER.fullmatch(self.editorial_name)):
+            problems.append("editorial_reviewer must be named reviewer-<something>: the gate refuses any other name")
+        longest = max((len(item.name) for item in compiled.specs), default=0)
+        reach = len(str(self.root)) + 1 + ENGINE_PATH_RESERVE + longest
+        if os.name == "nt" and reach > 259:
+            problems.append(f"the swarm folder path has {len(str(self.root))} characters and the executor needs about "
+                            f"{reach - len(str(self.root))} more for its own files, past the 260 Windows allows by default; "
+                            "move the swarm to a shorter folder")
         self.compiled = compiled
         self.problems = problems
         if strict and problems:
@@ -348,11 +372,16 @@ class Engine:
     def select_authors(self, feedback: dict[str, Any]) -> list[AgentSpec]:
         authors = self.spec_of("author")
         items = feedback["items"]
-        if not items or {item["kind"] for item in items} & {"editorial", "duck", "check"}:
+        if not items or {item["kind"] for item in items} & {"editorial", "duck"}:
             return authors
         blocked = {item["topic"] for item in items if item["kind"] == "topic" and item.get("topic")}
         blocked |= {item["topic"] for item in items if item["kind"] == "divergence" and item.get("topic")}
         named = {item["author"] for item in items if item["kind"] == "divergence" and item.get("author")}
+        for item in items:
+            if item["kind"] == "check":
+                if not item.get("authors"):
+                    return authors  # a failing check nobody can be blamed for is about the whole document
+                named |= set(item["authors"])
 
         def included(agent: AgentSpec) -> bool:
             if agent.name in named:
@@ -362,6 +391,40 @@ class Engine:
             return owned is None or bool(owned & blocked)
 
         return [item for item in authors if included(item)] or authors
+
+    def authors_of_check(self, item: dict[str, Any]) -> set[str] | None:
+        """The authors a failing mechanical check goes back to, or None when that cannot be told.
+
+        A dead address belongs to the authors whose source lists hold it.  A table that does not close belongs to
+        the author whose section holds it, found by its header row in the consolidated document.  Anything that
+        cannot be pinned on someone is about the whole document and goes to everyone: unknown is not "not mine".
+        """
+        if item.get("check") == "fontes" and item.get("urls"):
+            found: set[str] = set()
+            for url in item["urls"]:
+                holders = {agent.name for agent in self.spec_of("author")
+                           if self.has(f"sources/fragments/{agent.name}.json")
+                           and any(isinstance(row, dict) and row.get("url") == url
+                                   for row in read_json(self.root / f"sources/fragments/{agent.name}.json"))}
+                if not holders:
+                    return None
+                found |= holders
+            return found
+        if item.get("check") == "tabelas" and item.get("lines"):
+            document = self.read(self.primary).splitlines()
+            owners = self.owners()
+            found = set()
+            for number in item["lines"]:
+                if not 1 <= number <= len(document) or not document[number - 1].strip():
+                    return None
+                header = document[number - 1].strip()
+                holders = {owner for path, owner in owners.items()
+                           if path.lower().endswith(".md") and self.has(path) and header in self.read(path)}
+                if len(holders) != 1:
+                    return None
+                found |= holders
+            return found
+        return None
 
     # -- task builders (pure functions of the current files) ----------------
     def author_code(self, agent: AgentSpec) -> str:
@@ -631,14 +694,45 @@ class Engine:
         return {"script": name, "exit_code": done.returncode, "seconds": round(self.clock() - started, 3),
                 "stderr": done.stderr.strip()[-800:]}
 
+    def stamp(self, relative: str) -> tuple[int, int] | None:
+        try:
+            info = self.contained(relative).stat()
+        except OSError:
+            return None
+        return info.st_mtime_ns, info.st_size
+
+    def run_checked(self, name: str, command: list[str], output: str) -> dict[str, Any]:
+        """Run a script that must leave a fresh, readable JSON report at ``output``.
+
+        Python ends an uncaught exception with status 1, the status the verifiers use for "findings".  A
+        checker that crashed therefore looks like one that ran and found something, and the report on disk is
+        whatever an earlier run left.  A report this run did not rewrite, or that is not JSON, means the run did
+        not complete, whatever the exit status says.
+        """
+        before = self.stamp(output)
+        result = self.run_script(name, command)
+        written = self.stamp(output) not in (None, before)
+        if written:
+            try:
+                read_json(self.root / output)
+            except (InputError, OSError, ValueError):
+                written = False
+        if written:
+            return result
+        reason = f"{Path(output).name} was not written by this run"
+        return {**result, "exit_code": NO_REPORT, "original_exit_code": result["exit_code"],
+                "stderr": (reason + (": " + result["stderr"] if result["stderr"] else ""))[-800:]}
+
     def stage_checks(self, cycle: int, round_number: int) -> dict[str, Any] | None:
         tag = self.tag(cycle)
         inputs = digest_json({"document": self.sha(self.primary), "index": self.sha("sources/sources-index.md")})
+        reports = {"sources": "sources/sources-check.json", "tables": f"reports/{tag}-tables-check.json",
+                   "nomenclature": f"reports/{tag}-nomenclature.json"}
         commands = {
-            "sources": [str(CHECKS / "verify_sources.py"), "sources/sources-index.md", "--output", "sources/sources-check.json"],
-            "tables": [str(CHECKS / "verify_tables.py"), self.primary, "--output", f"reports/{tag}-tables-check.json"],
+            "sources": [str(CHECKS / "verify_sources.py"), "sources/sources-index.md", "--output", reports["sources"]],
+            "tables": [str(CHECKS / "verify_tables.py"), self.primary, "--output", reports["tables"]],
             "nomenclature": [str(CHECKS / "inspect_nomenclature.py"), self.text_path(cycle), "--output",
-                             f"reports/{tag}-nomenclature.json"],
+                             reports["nomenclature"]],
         }
         finished = {item["script"] for item in self.journal.find("script_finished", cycle=cycle, round=round_number,
                                                                   inputs_sha256=inputs)
@@ -646,7 +740,7 @@ class Engine:
         todo = {name: cmd for name, cmd in commands.items() if name not in finished}
         if todo:
             with ThreadPoolExecutor(max_workers=len(todo)) as pool:
-                results = list(pool.map(lambda pair: self.run_script(pair[0], pair[1]), todo.items()))
+                results = list(pool.map(lambda pair: self.run_checked(pair[0], pair[1], reports[pair[0]]), todo.items()))
             for result in results:
                 self.journal.append("script_finished", cycle=cycle, round=round_number, inputs_sha256=inputs, **result)
             for result in results:
@@ -659,12 +753,16 @@ class Engine:
             fails = [row for row in read_json(self.root / "sources/sources-check.json").get("results", [])
                      if row.get("status") == "fail"]
             if fails:
-                items.append({"kind": "check", "check": "fontes", "detail": "estas URLs falharam e devem ser removidas "
-                              "ou substituídas: " + "; ".join(f"{row['url']} ({row.get('http_status', row.get('error', '?'))})" for row in fails)})
+                items.append({"kind": "check", "check": "fontes", "urls": [row["url"] for row in fails],
+                              "detail": "estas URLs falharam e devem ser removidas ou substituídas: "
+                                        + "; ".join(f"{row['url']} ({row.get('http_status', row.get('error', '?'))})" for row in fails)})
         tables = f"reports/{tag}-tables-check.json"
         if self.has(tables) and read_json(self.root / tables).get("failures", 0):
-            items.append({"kind": "check", "check": "tabelas",
-                          "detail": f"{read_json(self.root / tables)['failures']} tabela(s) marcada(s) não fecham as contas; corrija os valores"})
+            report = read_json(self.root / tables)
+            failing = [check["line"] for check in report.get("checks", [])
+                       if check.get("status") == "fail" and type(check.get("line")) is int]
+            items.append({"kind": "check", "check": "tabelas", "lines": failing,
+                          "detail": f"{report['failures']} tabela(s) marcada(s) não fecham as contas; corrija os valores"})
         if not items:
             return None
         repairs = self.journal.count("repair_started", cycle=cycle)
@@ -672,6 +770,12 @@ class Engine:
             return {"status": "blocked", "kind": "checks_failed", "cycle": cycle,
                     "detail": f"the mechanical checks still fail after {repairs} repair round(s)", "items": items}
         previous = self.feedback(cycle, repairs)
+        # Who the checks go back to is decided now and stored with the feedback: asked again after an author has
+        # repaired, the sources that named it are gone, and the selection would change under a round in progress.
+        for item in items:
+            owners = self.authors_of_check(item)
+            if owners is not None:
+                item["authors"] = sorted(owners)
         merged = [item for item in previous["items"] if item["kind"] != "check"] + items
         data = {"items": merged, "markdown": self.feedback_markdown(merged)}
         atomic_json(self.exec / "feedback" / f"c{cycle:02d}.r{repairs + 1}.json", data)
@@ -742,10 +846,15 @@ class Engine:
         if self.verified_outcome(cycle) is not None:
             return None
         review, gate = f"reports/{self.tag(cycle)}-review.yaml", f"reports/{self.tag(cycle)}-gate.json"
-        result = self.run_script("gate", [str(CHECKS / "gate.py"), review, "--output", gate])
+        result = self.run_checked("gate", [str(CHECKS / "gate.py"), review, "--output", gate], gate)
         self.journal.append("gate_run", cycle=cycle, exit_code=result["exit_code"], seconds=result["seconds"])
         if result["exit_code"] not in OK_EXIT["gate"]:
-            return {"status": "failed", "kind": "gate_invalid", "cycle": cycle, "detail": result["stderr"]}
+            return {"status": "failed", "kind": "gate_invalid", "cycle": cycle,
+                    "detail": result["stderr"] or f"exit code {result['exit_code']}"}
+        if self.verified_outcome(cycle) is None:
+            # Without this a gate whose record cannot be reproduced would be run again until the step limit.
+            return {"status": "failed", "kind": "gate_invalid", "cycle": cycle,
+                    "detail": "the gate ran, but its record does not reproduce from the review on disk"}
         return None
 
     # -- the cycle -----------------------------------------------------------
@@ -866,8 +975,9 @@ class Engine:
                               "recheck and the final report no longer describe it; restore the file, or start a new "
                               "cycle so that the sources are reviewed again"}
         if outcome == "approved" and not finished("sources"):
-            result = self.run_script("verify_sources", [str(CHECKS / "verify_sources.py"), "sources/sources-index.md",
-                                                        "--output", "sources/sources-check.json", "--force"])
+            result = self.run_checked("verify_sources", [str(CHECKS / "verify_sources.py"), "sources/sources-index.md",
+                                                         "--output", "sources/sources-check.json", "--force"],
+                                      "sources/sources-check.json")
             ran = result["exit_code"] in OK_EXIT["sources"]
             dead = [row["url"] for row in read_json(self.root / "sources/sources-check.json").get("results", [])
                     if row.get("status") == "fail"] if ran and self.has("sources/sources-check.json") else []
@@ -973,7 +1083,18 @@ class Engine:
                 errors, normal = ["the result is not plain JSON text the executor can store (invalid text encoding, "
                                   "NaN, or larger than the limit)"], None
             else:
-                errors, normal = self.validate(task, result)
+                try:
+                    errors, normal = self.validate(task, result)
+                except Exception as exc:
+                    # The result is untrusted text: whatever the validators did not foresee in it is still a
+                    # refusal of that answer, never an exception that ends the run and drops its siblings' results.
+                    errors, normal = [f"the result could not be validated ({type(exc).__name__}); "
+                                      "reply with a plainer JSON object"], None
+            if not errors:
+                try:
+                    self.materialise(task, normal)
+                except (OSError, ValueError) as exc:
+                    errors, normal = [f"the result could not be written ({type(exc).__name__}: {exc})"], None
             record = self.load_record(task_id)
             if not record or record["inputs_sha256"] != task.inputs_sha256:
                 record = {"task_id": task_id, "stage": task.stage, "cycle": task.cycle, "round": task.round,
@@ -985,7 +1106,6 @@ class Engine:
                      "runtime": runtime or {}}
             record["attempts"].append(entry)
             if not errors:
-                self.materialise(task, normal)
                 record["accepted"], record["result"] = attempt, normal
             self.write_json(f"reports/execution/results/{task_id}.json", record)
             retry = bool(errors) and len(record["attempts"]) < self.options.max_attempts
@@ -1022,9 +1142,18 @@ class Engine:
                                                     primary=self.primary, owners=self.owners())
             for item in (normal or {}).get("files", []):
                 try:
-                    self.contained(item["path"])
+                    target = self.contained(item["path"])
                 except InputError as exc:
                     errors.append(str(exc))
+                    continue
+                real = target.relative_to(self.root).as_posix()
+                # contained() resolves the path as the file system does: a Windows short name or a link comes
+                # back as the real name, which is the file the write would change and may belong to someone else.
+                if unicodedata.normalize("NFC", real).casefold() != unicodedata.normalize("NFC", item["path"]).casefold():
+                    errors.append(f"{item['path']} is another name for {real} (a short name or a link); use the real name")
+                elif len(str(target)) > MAX_WRITE_PATH:
+                    errors.append(f"{item['path']} would be {len(str(target))} characters long once placed in this swarm "
+                                  f"folder, past the {MAX_WRITE_PATH} the executor can write; use a shorter name")
             return (errors, None) if errors else (errors, normal)
         if task.kind == "consolidation":
             return contracts.check_consolidation(result, topics=self.topics,
@@ -1086,6 +1215,17 @@ class Engine:
                 "repairs": sum(1 for item in events if item["event"] == "repair_started"),
                 "finished": [item for item in events if item["event"] == "run_finished"]}
 
+    @contextmanager
+    def hold_run(self) -> Iterator[None]:
+        """Exclusive use of the swarm for a whole run.
+
+        Each ``next`` and ``record`` takes the swarm's lock for itself, which keeps the files consistent but not the
+        spending: two runs would each be handed the same pending agents and pay for them twice.
+        """
+        with self.run_lock.held(timeout=0, busy="another run is already operating this swarm, and two runs would pay "
+                                                 "every agent twice; wait for it or stop it, then run the same command again"):
+            yield
+
     def run(self, backend: Callable[[dict[str, Any]], Any], *, parallel: int = 4, models: list[str] | None = None,
             on_event: Callable[[str, dict[str, Any]], None] | None = None) -> dict[str, Any]:
         """Drive the whole run in-process: ``backend`` answers each agent task, and each answer is recorded as it arrives.
@@ -1093,8 +1233,14 @@ class Engine:
         The backend returns an ``Answer`` or a bare result.  Recording one result before the slower
         agents of the same step finish means a crash loses only the agents that were still running.
         ``on_event`` is told about each directive, task start and task finish; a failure there never
-        interrupts the run.
+        interrupts the run.  Only one run can operate a swarm at a time.
         """
+        with self.hold_run():
+            return self.drive(backend, parallel=parallel, models=models, on_event=on_event)
+
+    def drive(self, backend: Callable[[dict[str, Any]], Any], *, parallel: int = 4, models: list[str] | None = None,
+              on_event: Callable[[str, dict[str, Any]], None] | None = None) -> dict[str, Any]:
+        """The run loop, for a caller that already holds the run (see ``hold_run``)."""
         def emit(name: str, **data: Any) -> None:
             if on_event is not None:
                 try:
@@ -1108,22 +1254,83 @@ class Engine:
             emit("directive", directive=directive)
             if directive["status"] != "agents":
                 return directive
-
-            def answer(task: dict[str, Any]) -> Any:
-                try:
-                    return backend(task)
-                except Exception:  # an agent that fails is a null result, never a crash of the run
-                    return None
-
-            with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
-                futures = {}
-                for task in directive["tasks"]:
-                    emit("started", task=task)
-                    futures[pool.submit(answer, task)] = task
-                for future in as_completed(futures):
-                    task = futures[future]
-                    value = future.result()
-                    result, runtime = (value.result, value.runtime) if isinstance(value, contracts.Answer) else (value, None)
-                    outcome = self.record(task["task_id"], task["attempt"], task["inputs_sha256"], result, runtime)
-                    emit("finished", task=task, outcome=outcome, runtime=runtime or {})
+            self.run_stage(backend, directive["tasks"], parallel, emit)
         raise InputError("the run did not finish within the step limit")
+
+    def mark_started(self, task: dict[str, Any]) -> None:
+        """Journal the moment an agent really begins, which is later than the moment it was issued.
+
+        A run that stops and is resumed hours later runs again the tasks it had issued, so measuring from the issue
+        would count the pause as agent time.  A measurement is never worth stopping a paid agent: a failure is ignored.
+        """
+        try:
+            with self.lock.held():
+                self.journal.append("task_started", task_id=task["task_id"], attempt=task["attempt"], agent=task["agent"])
+        except (InputError, OSError):
+            pass
+
+    def run_stage(self, backend: Callable[[dict[str, Any]], Any], tasks: list[dict[str, Any]], parallel: int,
+                  emit: Callable[..., None]) -> None:
+        """Run the agents of one step and record each answer the moment it arrives.
+
+        One answer that cannot be recorded does not cost the others: they are recorded first and the
+        failure is raised at the end.  An interruption stops the agents that are still running at once,
+        before anything waits for them, and keeps what had already finished.
+        """
+        stopping = threading.Event()
+
+        def answer(task: dict[str, Any]) -> Any:
+            if stopping.is_set():
+                return None  # an interrupt arrived while this task was still queued: nothing new is started
+            # Announced when the worker begins, not when the task is queued: with fewer workers than tasks
+            # the others are waiting, and a table that lists them as running would be wrong.
+            emit("started", task=task)
+            self.mark_started(task)
+            try:
+                return backend(task)
+            except Exception:  # an agent that fails is a null result, never a crash of the run
+                return None
+
+        pool = ThreadPoolExecutor(max_workers=max(1, parallel))
+        futures: dict[Any, dict[str, Any]] = {}
+        recorded: set[Any] = set()
+        failures: list[Exception] = []
+
+        def take(future: Any) -> None:
+            task = futures[future]
+            try:
+                value = future.result()
+                result, runtime = (value.result, value.runtime) if isinstance(value, contracts.Answer) else (value, None)
+                outcome = self.record(task["task_id"], task["attempt"], task["inputs_sha256"], result, runtime)
+            except Exception as exc:
+                failures.append(exc)
+                emit("failed", task=task, error=f"{type(exc).__name__}: {exc}")
+            else:
+                emit("finished", task=task, outcome=outcome, runtime=runtime or {})
+            recorded.add(future)
+
+        try:
+            for task in tasks:
+                futures[pool.submit(answer, task)] = task
+            pending = set(futures)
+            while pending:
+                # A timeout keeps the wait interruptible.  Without one, Windows delivers Ctrl+C only after
+                # every agent has finished, which is exactly when stopping them no longer matters.
+                done, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                for future in done:
+                    take(future)
+        except BaseException:
+            # What had already finished is paid for and is recorded.  What is still running is stopped before
+            # anything waits for it, and the answers a cancelled agent returns afterwards are not results.
+            stopping.set()
+            finished = [future for future in futures if future.done() and future not in recorded]
+            cancel = getattr(backend, "cancel", None)
+            if cancel is not None:
+                cancel()
+            for future in finished:
+                take(future)
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        pool.shutdown(wait=True)
+        if failures:
+            raise failures[0]

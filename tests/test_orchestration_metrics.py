@@ -188,6 +188,9 @@ class ExecutorJournal:
     def record(self, seconds: float, task: str, agent: str, *, attempt: int = 1, outcome: str = "accepted"):
         return self.add(seconds, "task_recorded", task_id=task, agent=agent, attempt=attempt, outcome=outcome)
 
+    def start(self, seconds: float, task: str, agent: str, *, attempt: int = 1):
+        return self.add(seconds, "task_started", task_id=task, agent=agent, attempt=attempt)
+
     def script(self, seconds: float, name: str, took: float, cycle: int = 1):
         return self.add(seconds, "script_finished", script=name, seconds=took, cycle=cycle, round=0, exit_code=0)
 
@@ -225,6 +228,40 @@ class ExecutorTests(unittest.TestCase):
         result = self.measure(journal)
         self.assertEqual((result["dispatches"], result["agent_running_union_seconds"]), (2, 150))
         self.assertEqual(result["dispatches_without_an_end"], [])
+
+    def test_an_agent_is_measured_from_the_moment_it_started_not_from_the_moment_it_was_issued(self):
+        # Issued at 0, the process was stopped, and the same command ran it again four hours later.
+        journal = ExecutorJournal().add(0, "run_started").issue(0, "t1", "author-01")
+        journal.start(14400, "t1", "author-01").record(14500, "t1", "author-01")
+        result = self.measure(journal)
+        self.assertEqual(result["wall_seconds"], 14500)
+        self.assertEqual(result["agent_running_union_seconds"], 100, "the 4 h pause is idle time, not agent time")
+        self.assertEqual(result["idle_seconds"], 14400)
+
+    def test_an_earlier_start_that_ended_in_a_stop_is_not_given_the_pause_as_its_time(self):
+        journal = ExecutorJournal().add(0, "run_started").issue(0, "t1", "author-01").start(5, "t1", "author-01")
+        journal.start(14400, "t1", "author-01").record(14500, "t1", "author-01")
+        result = self.measure(journal)
+        self.assertEqual(result["dispatches"], 2, "the run that was stopped and the run that finished")
+        self.assertEqual(result["agent_running_union_seconds"], 100)
+        self.assertEqual([item["agent"] for item in result["dispatches_without_an_end"]], ["author-01"],
+                         "the stopped run is listed as having no end, honestly")
+
+    def test_a_journal_without_task_started_falls_back_to_the_issue(self):
+        journal = ExecutorJournal().add(0, "run_started").issue(10, "t1", "author-01").record(70, "t1", "author-01")
+        self.assertEqual(self.measure(journal)["agent_running_union_seconds"], 60)
+
+    def test_an_event_with_a_unicode_line_separator_is_one_event(self):
+        # str.splitlines() also breaks on U+2028 and U+0085, which a JSON string may carry unescaped.
+        journal = sample_run()
+        journal.events.insert(2, {"seq": 3, "at": at(1), "event": "task_issued", "task_id": "t0", "agent": "a\u2028b\x85c",
+                                  "stage": "authors", "kind": "author", "attempt": 1, "cycle": 1, "round": 0})
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "journal.jsonl"
+            path.write_text("".join(json.dumps(item, ensure_ascii=False) + "\n" for item in journal.events), encoding="utf-8")
+            read = metrics.read_journal(path)
+        self.assertEqual(len(read), len(journal.events))
+        self.assertEqual(read[2]["agent"], "a\u2028b\x85c")
 
     def test_work_issued_and_never_recorded_is_listed_without_an_end(self):
         journal = ExecutorJournal().add(0, "run_started")

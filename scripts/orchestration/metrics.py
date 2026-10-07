@@ -40,7 +40,9 @@ def read_journal(path: Path) -> list[dict[str, Any]]:
     if path.stat().st_size > MAX_JOURNAL_BYTES:
         raise InputError(f"{path.name} exceeds the supported journal size")
     events = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    # "\n" only: the journals are written one JSON object per line, and str.splitlines() also breaks on U+2028,
+    # U+0085 and other separators that a JSON string may carry unescaped, cutting one event in two.
+    for number, line in enumerate(path.read_text(encoding="utf-8").split("\n"), start=1):
         if not line.strip():
             continue
         try:
@@ -314,31 +316,51 @@ def stamp_of(seconds: float) -> str:
 def executor_events(journal: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[tuple[float, float]]]:
     """Translate the executor's journal into the monitor's vocabulary, so one decomposition measures both flows.
 
-    An agent task is a dispatch that runs from its issue to its record (the backend's own timing,
-    when it reports one, is kept in the journal for whoever needs it).  A script or a delivery step
-    is code at work, not an agent, and is returned apart as the intervals of mechanical work.
+    An agent task is a dispatch that runs from the moment its worker began (``task_started``) to its record.  A
+    journal without that entry, from a backend that drives ``next`` and ``record`` itself, falls back to the
+    moment of the issue.  When a run stopped and was resumed later, the attempt was started again: only the last
+    start is the run that finished, and an earlier one ended in the stop and is not given the pause as its time.
+    A script or a delivery step is code at work, not an agent, and is returned apart as the intervals of
+    mechanical work.
     """
     events: list[dict[str, Any]] = []
     mechanical: list[tuple[float, float]] = []
     opened: set[tuple[Any, Any, Any]] = set()
+    starts: dict[tuple[Any, Any], list[float]] = {}
+    issued: dict[tuple[Any, Any], dict[str, Any]] = {}
+    for item in journal:
+        key = (item.get("task_id"), item.get("attempt"))
+        if item.get("event") == "task_started" and parse_time(item.get("at")) is not None:
+            starts.setdefault(key, []).append(parse_time(item["at"]))  # type: ignore[arg-type]
+        elif item.get("event") == "task_issued":
+            issued[key] = item
+
+    def dispatch(ident: str, source: dict[str, Any], at: str) -> None:
+        events.append({"at": at, "type": "dispatch", "data": {
+            "id": ident, "agent_kind": source.get("kind"), "agent_id": source.get("agent"), "cycle": source.get("cycle")}})
+        events.append({"at": at, "type": "runtime", "data": {"dispatch_id": ident, "status": "running", "started_at": at}})
+
     for item in journal:
         kind, at = item.get("event"), item.get("at")
         moment = parse_time(at)
         if moment is None:
             continue
+        key = (item.get("task_id"), item.get("attempt"))
+        ident = f"{key[0]}.a{key[1]}"
         if kind in ("run_started", "plan_refreshed"):
             events.append({"at": at, "type": "phase", "data": {"phase": "setup", "cycle": 0}})
         elif kind == "task_issued":
-            ident = f"{item.get('task_id')}.a{item.get('attempt')}"
-            events.append({"at": at, "type": "dispatch", "data": {
-                "id": ident, "agent_kind": item.get("kind"), "agent_id": item.get("agent"), "cycle": item.get("cycle")}})
-            events.append({"at": at, "type": "runtime", "data": {"dispatch_id": ident, "status": "running", "started_at": at}})
-            key = (item.get("cycle"), item.get("round"), item.get("stage"))
-            if key not in opened and item.get("stage") in PHASE_OF_STAGE:
-                opened.add(key)
+            if key not in starts:
+                dispatch(ident, item, at)
+            phase = (item.get("cycle"), item.get("round"), item.get("stage"))
+            if phase not in opened and item.get("stage") in PHASE_OF_STAGE:
+                opened.add(phase)
                 events.append({"at": at, "type": "phase", "data": {"phase": PHASE_OF_STAGE[item["stage"]], "cycle": item.get("cycle")}})
+        elif kind == "task_started":
+            if key in issued:
+                later = sum(1 for other in starts[key] if other > moment)
+                dispatch(ident if not later else f"{ident}.s{later}", issued[key], at)
         elif kind == "task_recorded":
-            ident = f"{item.get('task_id')}.a{item.get('attempt')}"
             events.append({"at": at, "type": "runtime", "data": {"dispatch_id": ident, "status": "completed"}})
         elif kind in ("script_finished", "gate_run", "delivery_step"):
             seconds = float(item.get("seconds") or 0.0)

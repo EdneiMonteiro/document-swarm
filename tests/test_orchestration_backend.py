@@ -398,6 +398,52 @@ class MonitorTests(EngineCase):
             monitor.event("finished", {"task": {"label": "x", "agent": "a"}, "outcome": outcome})
             self.assertTrue(self.beat()["last"].endswith(expected), self.beat()["last"])
 
+    def test_a_result_that_could_not_be_recorded_leaves_the_running_list_and_says_so(self):
+        monitor = self.make()
+        monitor.event("started", {"task": {"label": "x", "agent": "author-01", "model": "m"}})
+        monitor.event("failed", {"task": {"label": "x", "agent": "author-01"}, "error": "OSError: disk full"})
+        beat = self.beat()
+        self.assertEqual(beat["running"], [])
+        self.assertIn("author-01: o resultado não pôde ser registrado (OSError: disk full)", beat["last"])
+
+    def test_an_event_after_the_run_ended_does_not_write_over_its_final_state(self):
+        # With fewer workers than tasks a worker can begin after an interrupt has already been handled.
+        monitor = self.make()
+        monitor.event("directive", {"directive": {"status": "agents", "cycle": 1, "stage": "authors"}})
+        monitor.finish("interrupted", "interrompido pelo usuário")
+        monitor.event("started", {"task": {"label": "late", "agent": "author-02", "model": "m"}})
+        beat = self.beat()
+        self.assertEqual((beat["state"], beat["running"]), ("interrupted", []))
+
+    def test_a_snapshot_taken_earlier_cannot_be_written_after_the_final_one(self):
+        # Snapshot and write are one step: a thread that took its snapshot while the run was "running" and is slow
+        # to write it must not leave that state on disk after the run has been marked interrupted.
+        monitor = self.make()
+        monitor.event("directive", {"directive": {"status": "agents", "cycle": 1, "stage": "authors"}})
+        entered, release = threading.Event(), threading.Event()
+        real, taken = monitor.snapshot, []
+
+        def slow_first_snapshot():
+            data = real()
+            if not taken:
+                taken.append(data)
+                entered.set()
+                release.wait(10)
+            return data
+
+        monitor.snapshot = slow_first_snapshot
+        writer = threading.Thread(target=monitor.write_heartbeat)
+        writer.start()
+        self.assertTrue(entered.wait(10))
+        finisher = threading.Thread(target=lambda: monitor.finish("interrupted", "interrompido"))
+        finisher.start()
+        time.sleep(0.3)
+        release.set()
+        writer.join(10)
+        finisher.join(10)
+        self.assertEqual(taken[0]["state"], "running")
+        self.assertEqual(self.beat()["state"], "interrupted")
+
     def test_the_outcome_and_the_reason_for_a_stop_are_recorded(self):
         monitor = self.make()
         monitor.event("directive", {"directive": {"status": "done", "outcome": "approved", "cycle": 2}})

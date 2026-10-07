@@ -299,6 +299,12 @@ def main(argv: list[str] | None = None) -> int:
         error = str(exc)
         code = 3
         print(f"INVALID: {error}", file=sys.stderr)
+    except Exception as exc:
+        # The gate decides approval.  An internal failure is not a verdict: it must not leave through Python's
+        # default exit status 1, which means "rejected", nor be mistaken for one.
+        error = f"internal error: {type(exc).__name__}: {exc}"
+        code = 3
+        print(f"INVALID: {error}", file=sys.stderr)
     if result is not None:
         print(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True))
     if args.output:

@@ -8,6 +8,10 @@ Supported markers immediately above a table are:
 
 Only marked tables can fail a run.  Unmarked Total/Soma columns are reported
 as information because their intended formula is unknowable.
+
+Exit status: 0 when every marked table closes, 1 when one does not, 2 when
+there is nothing to read, 3 when the check itself crashed.  A crash must never
+share the status of a finding, because Python gives an uncaught exception 1.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +31,8 @@ from scripts.checks.common import write_json
 
 MARKER = re.compile(r"<!--\s*check:\s*([^>]+?)\s*-->", re.I)
 NUMBER = re.compile(r"^-?(?:\d+(?:[.,]\d+)?|\.\d+)%?$")
+# Decimal arithmetic runs at 28 digits: beyond these bounds quantize() raises instead of rounding.
+MAX_MAGNITUDE, MIN_MAGNITUDE = 20, -30
 
 
 def cells(line: str) -> list[str]:
@@ -40,15 +46,31 @@ def is_separator(line: str) -> bool:
     return bool(parts) and all(re.fullmatch(r":?-{3,}:?", part.replace(" ", "")) for part in parts)
 
 
+def parse_decimal(text: str) -> Decimal:
+    """A number from a marker parameter, refusing what arithmetic cannot carry.
+
+    ``Decimal`` accepts NaN, infinities and exponents such as ``1e999999999``, and any of them makes a later
+    comparison or ``quantize`` raise.  The marker comes from the document, so it must not be able to do that.
+    """
+    value = Decimal(text)
+    if not value.is_finite() or not MIN_MAGNITUDE <= value.adjusted() <= MAX_MAGNITUDE:
+        raise ValueError(f"{text!r} is outside the range this check can compute with")
+    return value
+
+
 def as_number(value: str) -> Decimal | None:
     value = value.strip().replace(" ", "")
     if not NUMBER.fullmatch(value):
         return None
-    return Decimal(value.rstrip("%").replace(",", "."))
+    number = Decimal(value.rstrip("%").replace(",", "."))
+    return number if number.adjusted() <= MAX_MAGNITUDE else None
 
 
 def display(value: Decimal) -> str:
-    value = value.quantize(Decimal("0.01")).normalize()
+    try:
+        value = value.quantize(Decimal("0.01")).normalize()
+    except InvalidOperation:
+        return str(value)
     return format(value, "f").rstrip("0").rstrip(".") if "." in format(value, "f") else format(value, "f")
 
 
@@ -112,7 +134,7 @@ def weighted_check(table: dict[str, Any], marker: str) -> dict[str, Any]:
         parts = [part.strip() for part in weight_text.split(",")]
         if not parts or any(not part for part in parts):
             raise ValueError
-        weights = [Decimal(part) for part in parts]
+        weights = [parse_decimal(part) for part in parts]
     except (ValueError, ArithmeticError):
         return {"status": "fail", "rule": "weighted", "line": table["line"], "error": "invalid weights"}
     headers = table["headers"]
@@ -125,8 +147,8 @@ def weighted_check(table: dict[str, Any], marker: str) -> dict[str, Any]:
     if first_rating < 0:
         return {"status": "fail", "rule": "weighted", "line": table["line"], "error": "not enough rating columns"}
     try:
-        divisor = Decimal(marker_option(marker, "divisor") or marker_option(marker, "scale") or "5")
-    except ArithmeticError:
+        divisor = parse_decimal(marker_option(marker, "divisor") or marker_option(marker, "scale") or "5")
+    except (ValueError, ArithmeticError):
         return {"status": "fail", "rule": "weighted", "line": table["line"], "error": "invalid divisor/scale"}
     if divisor <= 0:
         return {"status": "fail", "rule": "weighted", "line": table["line"], "error": "divisor/scale must be positive"}
@@ -172,7 +194,10 @@ def weighted_check(table: dict[str, Any], marker: str) -> dict[str, Any]:
 
 def sum_check(table: dict[str, Any], marker: str) -> dict[str, Any]:
     expected_text = marker_option(marker, "target") or marker_option(marker, "expected") or marker_option(marker, "total")
-    expected = Decimal(expected_text.replace(",", ".")) if expected_text else Decimal("100")
+    try:
+        expected = parse_decimal(expected_text.replace(",", ".")) if expected_text else Decimal("100")
+    except (ValueError, ArithmeticError):
+        return {"status": "fail", "rule": "sum", "line": table["line"], "error": "invalid target/expected/total"}
     headers = table["headers"]
     chosen = marker_option(marker, "column") or marker_option(marker, "coluna")
     if chosen:
@@ -277,6 +302,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("documents", nargs="+", type=Path, help="Markdown files or directories")
     parser.add_argument("--output", type=Path, help="aggregate JSON report path")
     args = parser.parse_args(argv)
+    try:
+        return run(args)
+    except Exception as exc:  # a crash must not share the exit status of a finding
+        print(f"ERROR: unexpected failure while checking tables: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 3
+
+
+def run(args: argparse.Namespace) -> int:
     paths = paths_from_inputs(args.documents)
     if not paths:
         print("ERROR: no Markdown documents found", file=sys.stderr)

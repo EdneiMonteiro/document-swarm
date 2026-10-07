@@ -2,6 +2,10 @@
 
 Successful, redirect and warning responses are reused for seven days by
 default.  ``--force`` always makes a network request.
+
+Exit status: 0 when no URL failed, 1 when at least one did, 2 when the index
+cannot be read, 3 when the check itself crashed.  A crash must never share the
+status of a finding, because Python gives an uncaught exception 1.
 """
 
 from __future__ import annotations
@@ -27,6 +31,8 @@ from scripts.checks.common import write_json
 
 URL_RE = re.compile(r"https?://[^\s<>)\]\"']+")
 GOOD_CACHE = {"ok", "redirect", "warn"}
+URI_SAFE_PATH = "/%:@!$&'()*+,;=-._~"
+URI_SAFE_QUERY = "/?%:@!$&'()*+,;=-._~[]"
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -60,13 +66,53 @@ def cache_fresh(entry: dict[str, Any], days: int, now: dt.datetime) -> bool:
     return checked.tzinfo is not None and now - checked <= dt.timedelta(days=days)
 
 
+def host_of(url: str) -> str:
+    """The host an address names, or "" when it cannot be read: one malformed address must not stop the others."""
+    try:
+        return urllib.parse.urlsplit(url).hostname or ""
+    except ValueError:
+        return ""
+
+
+def to_uri(url: str) -> str:
+    """The ASCII form of an address that carries accents: an IDNA host and a percent-encoded path and query.
+
+    Writers paste addresses the way a browser shows them (``/wiki/Computação``), but ``urllib`` refuses to send
+    them, and the page would be reported as dead.  An ASCII address is returned untouched and anything already
+    percent-encoded stays as it is.
+    """
+    if url.isascii():
+        return url
+    parts = urllib.parse.urlsplit(url)
+    netloc = parts.netloc
+    if not netloc.isascii():
+        userinfo = netloc.rpartition("@")[0]
+        port = f":{parts.port}" if parts.port else ""
+        netloc = (userinfo + "@" if userinfo else "") + (parts.hostname or "").encode("idna").decode("ascii") + port
+    return urllib.parse.urlunsplit((parts.scheme, netloc, urllib.parse.quote(parts.path, safe=URI_SAFE_PATH),
+                                    urllib.parse.quote(parts.query, safe=URI_SAFE_QUERY), ""))
+
+
 def request_url(url: str, timeout: float, user_agent: str) -> dict[str, Any]:
+    """Check one URL.  Whatever goes wrong with it is a failed source, never a failed run.
+
+    The addresses come from the document, so a hostile or merely odd one (a server that does not speak HTTP, a
+    malformed port, a control character) must be reported as a dead source and leave the others checked.
+    """
+    try:
+        return fetch(url, timeout, user_agent)
+    except Exception as exc:
+        return {"status": "fail", "method": "HEAD", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def fetch(url: str, timeout: float, user_agent: str) -> dict[str, Any]:
     """HEAD a URL, using GET when HEAD is unsupported or inconclusive."""
     opener = urllib.request.build_opener(NoRedirect())
     headers = {"User-Agent": user_agent}
     method = "HEAD"
+    target = to_uri(url)
     try:
-        response = opener.open(urllib.request.Request(url, headers=headers, method=method), timeout=timeout)
+        response = opener.open(urllib.request.Request(target, headers=headers, method=method), timeout=timeout)
         code = response.getcode()
         response.close()
     except urllib.error.HTTPError as exc:
@@ -76,7 +122,7 @@ def request_url(url: str, timeout: float, user_agent: str) -> dict[str, Any]:
             method = "GET"
             try:
                 response = opener.open(
-                    urllib.request.Request(url, headers=headers, method=method), timeout=timeout
+                    urllib.request.Request(target, headers=headers, method=method), timeout=timeout
                 )
                 code = response.getcode()
                 response.close()
@@ -136,12 +182,11 @@ def verify(index: Path, output: Path, *, force: bool = False, cache_days: int = 
         else:
             results.append({})
             pending.append(position)
-    gates = {urllib.parse.urlsplit(urls[position]).hostname or "": threading.BoundedSemaphore(per_host)
-             for position in pending}
+    gates = {host_of(urls[position]): threading.BoundedSemaphore(per_host) for position in pending}
 
     def check(position: int) -> dict[str, Any]:
         url = urls[position]
-        with gates[urllib.parse.urlsplit(url).hostname or ""]:
+        with gates[host_of(url)]:
             return {"url": url, **request_url(url, timeout, user_agent), "checked_at": checked_now(), "cached": False}
 
     if pending:
@@ -186,6 +231,9 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as exc:
         print(f"ERROR: cannot read/check {args.index}: {exc}", file=sys.stderr)
         return 2
+    except Exception as exc:  # a crash must not share the exit status of a finding
+        print(f"ERROR: unexpected failure while checking {args.index}: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 3
     for item in report["results"]:
         detail = item.get("http_status", item.get("error", ""))
         cached = " (cache)" if item.get("cached") else ""

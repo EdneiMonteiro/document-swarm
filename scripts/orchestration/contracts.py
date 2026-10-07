@@ -34,6 +34,9 @@ MAX_DOCUMENT_BYTES = 5 * 1024 * 1024
 MAX_NARRATIVE_CHARS = 20000
 MAX_RESULT_BYTES = 16 * 1024 * 1024
 MAX_PATH_CHARS = 120
+# A file name limit counts bytes on most file systems (255), and the executor writes a temporary name beside it.
+MAX_COMPONENT_BYTES = 100
+SHORT_NAME = re.compile(r"~\d")
 FORBIDDEN_NAME_CHARACTERS = set('<>:"|?*')
 # No pipe or backtick: a URL lands in a Markdown table row that the checkers split on "|".
 URL = re.compile(r"^https?://[^\s<>\"'|`\\]+$")
@@ -148,7 +151,9 @@ def parse_agent_json(text: str) -> tuple[dict[str, Any] | None, str | None]:
     for candidate in candidates:
         try:
             value = json.loads(candidate)
-        except ValueError:
+        except (ValueError, RecursionError):
+            # Deeply nested text raises RecursionError, which is not a ValueError: an answer made of
+            # thousands of brackets must be refused like any other malformed answer, not end the run.
             continue
         if isinstance(value, dict):
             return value, None
@@ -192,8 +197,10 @@ def delivery_path(raw: Any, errors: list[str], *, primary: str) -> str | None:
 
     The path becomes a file the executor writes, so every way a name can reach outside its
     folder or collide with another name is refused here: traversal, absolute and drive forms,
-    stream and wildcard characters, reserved device names and a trailing dot or space
-    (Windows drops both).  Names are compared by their NFC form for the same reason.
+    stream and wildcard characters, reserved device names, a trailing dot or space (Windows drops
+    both) and a Windows short name such as ``INTROD~1.MD``, which names another file by an
+    alias that no comparison of spellings can relate to it.  Names are compared by their NFC form
+    for the same reason.
     """
     if not isinstance(raw, str) or not raw.strip():
         errors.append("a file path must be a non-empty string")
@@ -205,6 +212,7 @@ def delivery_path(raw: Any, errors: list[str], *, primary: str) -> str | None:
               or len(name) > MAX_PATH_CHARS
               or any(character in FORBIDDEN_NAME_CHARACTERS for character in name)
               or any(part != part.rstrip(". ") or part.split(".")[0].lower() in RESERVED_NAMES
+                     or SHORT_NAME.search(part) or len(part.encode("utf-8")) > MAX_COMPONENT_BYTES
                      for part in logical.parts))
     if unsafe:
         errors.append(f"unsafe file path {raw!r}")
@@ -281,6 +289,26 @@ def reviewer_schema(*, editorial: bool, fact: bool) -> dict[str, Any]:
 
 # -- validators --------------------------------------------------------------
 
+def file_collisions(paths: list[str], existing: dict[str, str]) -> list[str]:
+    """A name cannot be both a file and a folder: ``x.md`` and ``x.md/b.md`` cannot coexist.
+
+    The second write would fail half way through a result, after the first file was already written.
+    Names are compared case-insensitively, like the file systems that matter here.
+    """
+    folded = {path.casefold(): path for path in [*existing, *paths]}
+    problems = []
+    for path in paths:
+        parts = path.casefold().split("/")
+        for end in range(1, len(parts)):
+            parent = "/".join(parts[:end])
+            if parent in folded:
+                problems.append(f"{path} needs {folded[parent]} to be a folder, but that name is a file")
+        prefix = path.casefold() + "/"
+        problems += [f"{path} is a file, but {other} is inside a folder of that name"
+                     for other_folded, other in folded.items() if other_folded.startswith(prefix)]
+    return problems
+
+
 def check_author(result: Any, *, spec: AgentSpec, code: str, primary: str,
                  owners: dict[str, str]) -> tuple[list[str], dict[str, Any] | None]:
     errors: list[str] = []
@@ -317,6 +345,7 @@ def check_author(result: Any, *, spec: AgentSpec, code: str, primary: str,
             continue
         seen.add(path.casefold())
         files.append({"path": path, "content": content.replace("\r\n", "\n")})
+    errors.extend(file_collisions([item["path"] for item in files], owners))
     sources, identifiers, urls = [], set(), set()
     for row in objects(result.get("sources"), "sources", errors):
         entry = {key: text_field(row.get(key), f"sources[].{key}", errors) for key in ("id", "title", "type", "url")}
@@ -387,6 +416,12 @@ def editorial_block(result: Any, *, reviewer: str, cycle: int, text_path: str, t
             for key in ("grade", "location", "quote", "justification"):
                 entry[key] = row.get(key)
             entry["action"] = row.get("action", "")
+            try:
+                # The gate accepts "a" and " B+", so the stored grade must be the canonical one: everything
+                # downstream indexes the scale with it.
+                entry["grade"] = normalize_grade(entry["grade"])
+            except InputError:
+                pass  # editorial_blockers below reports a missing or invalid grade, naming the surface
         surfaces.append(entry)
     findings = [{key: row.get(key) for key in ("severity", "location", "quote", "reason", "action")}
                 for row in objects(result.get("findings"), "editorial.findings", errors)]

@@ -47,6 +47,7 @@ class Monitor:
         self.out = out
         self.clock = clock
         self.guard = threading.Lock()
+        self.write_guard = threading.Lock()
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
         self.started = clock()
@@ -57,10 +58,13 @@ class Monitor:
         self.last: str = ""
         self.last_at = clock()
         self.detail = ""
+        self.closed = False
 
     # -- events from the engine ---------------------------------------------
     def event(self, name: str, data: dict[str, Any]) -> None:
         with self.guard:
+            if self.closed:
+                return  # a worker that began after the run ended must not write over its final state
             now = self.clock()
             if name == "directive":
                 directive = data["directive"]
@@ -83,6 +87,10 @@ class Monitor:
                 self.running.pop(task["label"], None)
                 verdict = "aceito" if outcome.get("accepted") else ("recusado, nova tentativa" if outcome.get("retry") else "recusado")
                 self.last, self.last_at = f"{task['agent']} {verdict}", now
+            elif name == "failed":
+                task = data["task"]
+                self.running.pop(task["label"], None)
+                self.last, self.last_at = f"{task['agent']}: o resultado não pôde ser registrado ({data.get('error', '')})", now
         self.write_heartbeat()
 
     # -- heartbeat and table -------------------------------------------------
@@ -99,10 +107,13 @@ class Monitor:
             }
 
     def write_heartbeat(self) -> None:
-        try:
-            atomic_json(self.swarm / HEARTBEAT, self.snapshot())
-        except OSError:
-            pass  # a locked or missing file must not stop a paid run; the next beat tries again
+        # The snapshot is taken inside the write lock: otherwise a thread that took its snapshot earlier could write
+        # it after a later state (the final one) had been written, and the file would end up saying "running".
+        with self.write_guard:
+            try:
+                atomic_json(self.swarm / HEARTBEAT, self.snapshot())
+            except OSError:
+                pass  # a locked or missing file must not stop a paid run; the next beat tries again
 
     def table(self) -> str:
         counts = {"accepted": 0, "rejected": 0, "null_results": 0, "repairs": 0}
@@ -149,6 +160,7 @@ class Monitor:
 
     def finish(self, state: str | None = None, detail: str = "") -> None:
         with self.guard:
+            self.closed = True
             if state:
                 self.state = state
             if detail:
@@ -169,18 +181,19 @@ def execute(swarm: Path, backend: Callable[[dict[str, Any]], Any], *, options: O
             out: Callable[[str], None] = print, backend_name: str = "backend") -> dict[str, Any]:
     """Run ``swarm`` until the engine reports an outcome or needs a person."""
     engine = Engine(swarm, options or Options())
-    monitor = Monitor(engine.root, backend=backend_name, parallel=parallel, tick=tick, beat=beat, out=out)
-    monitor.start()
-    try:
-        directive = engine.run(backend, parallel=parallel, models=models, on_event=monitor.event)
-    except KeyboardInterrupt:
-        cancel = getattr(backend, "cancel", None)
-        if cancel:
-            cancel()
-        monitor.finish("interrupted", "interrompido pelo usuário; execute o mesmo comando para retomar de onde parou")
-        raise
-    except BaseException as exc:
-        monitor.finish("failed", f"{type(exc).__name__}: {exc}")
-        raise
-    monitor.finish()
-    return directive
+    # The run lock comes first.  A second run that is refused must not have written its own heartbeat over the one
+    # the first run keeps, which is what ``health`` reads to tell a live run from a dead one.
+    with engine.hold_run():
+        monitor = Monitor(engine.root, backend=backend_name, parallel=parallel, tick=tick, beat=beat, out=out)
+        monitor.start()
+        try:
+            directive = engine.drive(backend, parallel=parallel, models=models, on_event=monitor.event)
+        except KeyboardInterrupt:
+            # The engine has already stopped the agents that were running: that is where they are known.
+            monitor.finish("interrupted", "interrompido pelo usuário; execute o mesmo comando para retomar de onde parou")
+            raise
+        except BaseException as exc:
+            monitor.finish("failed", f"{type(exc).__name__}: {exc}")
+            raise
+        monitor.finish()
+        return directive

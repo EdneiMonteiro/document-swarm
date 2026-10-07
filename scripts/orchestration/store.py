@@ -113,7 +113,7 @@ class FileLock:
         return True
 
     @contextmanager
-    def held(self, timeout: float = LOCK_TIMEOUT_SECONDS) -> Iterator[None]:
+    def held(self, timeout: float = LOCK_TIMEOUT_SECONDS, busy: str | None = None) -> Iterator[None]:
         with self.guard:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.handle = open(self.path, "a+b")
@@ -121,7 +121,7 @@ class FileLock:
             try:
                 while not self._try():
                     if time.monotonic() >= deadline:
-                        raise InputError("another executor operation holds this swarm; try again shortly")
+                        raise InputError(busy or "another executor operation holds this swarm; try again shortly")
                     time.sleep(0.05)
                 yield
             finally:

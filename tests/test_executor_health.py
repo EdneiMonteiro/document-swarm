@@ -59,7 +59,63 @@ class ExecutorHealthTests(EngineCase):
         beat_age = re.search(r"driver running, batimento há (\d+) s", table)
         self.assertIsNotNone(beat_age, table)
         self.assertTrue(5 <= int(beat_age.group(1)) <= 15, f"the table states the age of the beat: {beat_age.group(0)}")
-        self.assertIn(f'run "{self.root.resolve()}"', table, "the table says how to resume")
+        self.assertNotIn("Retomar", table, "a live run is not invited to be resumed: that would start a second one")
+        self.assertIn("nenhuma: o executor está em andamento", table)
+
+    def test_a_stalled_driver_is_told_how_to_resume_and_a_live_one_is_not(self):
+        self.start()
+        self.beat(age=300, state="running")
+        table = health.render(health.compose(self.root))
+        self.assertIn(f'Retomar           python "{health.ORCHESTRATION}" run "{self.root.resolve()}"', table)
+        self.beat(age=2, state="running")
+        self.assertNotIn("Retomar", health.render(health.compose(self.root)))
+
+    def test_a_heartbeat_dated_in_the_future_is_not_trusted_but_a_little_skew_is(self):
+        self.start()
+        self.beat(age=-1800, state="running")
+        record = health.compose(self.root)
+        self.assertEqual(record["state"], "stalled", "age zero would make a dead driver look alive")
+        self.assertIn("não é confiável", record["reason"])
+        self.assertIsNone(record["executor"]["driver"]["age_seconds"])
+        self.beat(age=-2, state="running")
+        self.assertEqual(health.compose(self.root)["state"], "active", "a couple of seconds ahead is clock skew")
+
+    def test_a_run_continued_after_its_verdict_is_not_closed(self):
+        # The ceiling was raised after an escalation and the swarm was run again: the journal goes on past
+        # run_finished, and the artifacts of the escalated cycle still say "escalated".
+        from tests.test_orchestration_engine import Scripted, build_swarm
+        root = build_swarm(Path(self.temporary.name) / "again", max_cycles=1)
+        Engine(root).run(Scripted(root, self.base, grades={(1, "reviewer-01-facts", "T02"): "B+"}))
+        self.assertEqual(health.compose(root)["state"], "closed")
+        engine = Engine(root)
+        engine.journal.append("task_issued", task_id="c02.r0.authors.author-01-platform", stage="authors", kind="author",
+                              agent="author-01-platform", cycle=2, round=0, attempt=1)
+        beat = root / "reports" / "execution" / driver.HEARTBEAT.rsplit("/", 1)[1]
+        beat.write_text(json.dumps({"schema_version": 1, "pid": 1, "backend": "x", "state": "running", "stage": "authors",
+                                    "cycle": 2, "detail": "", "updated_at": stamp(3), "running": []}), encoding="utf-8")
+        record = health.compose(root)
+        self.assertEqual(record["state"], "active", record["reason"])
+        self.assertFalse(record["executor"]["finished"])
+
+    def test_the_executor_decides_before_the_artifacts_of_a_cycle_that_was_already_judged(self):
+        executor = {"finished": False, "outcome": None, "last_event": "task_issued", "last_event_age_seconds": 3.0,
+                    "pending_agents": [], "driver": {"state": "running", "age_seconds": 3.0, "running": []}}
+        for resume in ({"complete": True, "blocked": []}, {"complete": False, "blocked": [{"kind": "escalation", "detail": "x"}]}):
+            with self.subTest(resume=resume):
+                self.assertEqual(health.classify(resume, None, None, 180, "", executor)[0], "active")
+
+    def test_an_event_with_a_unicode_line_separator_does_not_hide_the_events_around_it(self):
+        # str.splitlines() breaks on U+2028 as well as on newlines, and the journal writes such text unescaped.
+        engine = self.start()
+        task = engine.next()["tasks"][0]
+        engine.journal.append("task_recorded", task_id=task["task_id"], attempt=task["attempt"], agent=task["agent"],
+                              outcome="rejected", errors=["topic T09\u2028x is not in the brief"])
+        raw = (self.root / "reports" / "execution" / "journal.jsonl").read_text(encoding="utf-8")
+        self.assertIn("\u2028", raw, "the journal really holds the separator unescaped")
+        self.assertNotIn(task["agent"], health.compose(self.root)["executor"]["pending_agents"],
+                         "the recorded attempt is still seen, so the agent is not reported as pending")
+        from scripts.orchestration import metrics
+        self.assertTrue(metrics.read_journal(self.root / "reports" / "execution" / "journal.jsonl"))
 
     def test_without_a_driver_the_table_says_there_is_no_coordinator_session_to_observe(self):
         self.start()

@@ -118,6 +118,12 @@ class SpecTests(unittest.TestCase):
         errors = self.compile().errors
         self.assertTrue(any("duplicate agent name 'Reviewer-01-Facts'" in item and "without regard to case" in item
                             for item in errors), errors)
+        # The spelling that comes first in the folder is the one on record: the order must not matter.
+        (self.root / "agents" / "reviewers" / "reviewer-03-case.md").unlink()
+        self.swarm.put("reviewers/reviewer-00-case.md", declaration("REVIEWER-01-FACTS", "reviewer",
+                                                                    extra="evidence_class: fact\n", sources=5))
+        errors = self.compile().errors
+        self.assertTrue(any("duplicate agent name 'reviewer-01-facts'" in item for item in errors), errors)
 
     def test_a_name_that_windows_reads_as_a_device_or_trims_is_refused(self):
         for name in ("con", "NUL", "aux.backup", "com1", "lpt9.x", "author-01.", "author-02-end."):
