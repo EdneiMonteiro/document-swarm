@@ -167,17 +167,38 @@ See [execution health and resume](./docs/monitor.md#saúde-da-execução-e-retom
 - Agents return JSON and never write. Every path, count and string that reaches the
   disk from an agent result is validated first. When a defect is found in one member
   of a family (a path form, a limit, a type), enumerate and fix the whole family.
+  What no validator foresaw is still a refusal of that attempt, never an exception.
+- A checker exits 3 when it crashes. Python gives an uncaught exception 1, which is the
+  status of "findings" (and of "rejected" for the gate), so a crash must never leave
+  through the default; the engine also requires a fresh, readable report from each one.
+- A selection or a decision that a repair changes must be stored when it is made.
+  Recomputed on every call, it changes under the round it governs (the authors a
+  failing check goes back to are decided once, from the sources that named them).
 - Every rule needs a test that fails when the rule is disabled. Disable the rule by
   hand, or with a script that applies one textual mutation to a copy of `scripts/`
   and `tests/`, run the test, and expect it to fail. A rule no test notices is a rule
-  without a test. Mutate on a copy, never in place.
+  without a test. Mutate on a copy, never in place. A test can also stop pinning its
+  rule when a later rule answers first, so re-run the mutations after a change that
+  adds a second line of defence.
+- To stub a checker in an engine test, use `EngineCase.patched()`. It leaves the fresh
+  report a real run would leave, because the engine treats a checker that wrote none as
+  crashed before it reads the exit status. A test that replaces `run_script` without a
+  report passes whatever the table of accepted exit codes says. Pass
+  `leaves_report=False` to test exactly that crash.
+- A test that runs a swarm in a background thread releases and joins it in
+  `addCleanup`, and reads `driver.json` with retries: the heartbeat is replaced every
+  beat, and on Windows a read that meets the replace is refused.
 - Tests never call a model. They use `tests/fake_copilot.py`, and
   `DOCSWARM_NO_REAL_CLI=1` (set by `tests/test_orchestration_backend.py`) makes any
   path to the real `copilot` fail, including under mutation testing. Only
   `qualify --yes` makes real calls; do not run it, or `run`, without being told to.
+  The test source servers listen on 127.0.0.1, which the author contract refuses, so
+  `tests/test_orchestration_engine.py` sets `DOCSWARM_ALLOW_LOCAL_URLS=1`; the tests of
+  the guard itself switch it off again.
 - Keep the engine suites sequential with other suites that share `tests/.work`:
   `python -m unittest tests.test_orchestration_engine tests.test_orchestration_backend
-  tests.test_orchestration_cli tests.test_executor_health -v`.
+  tests.test_orchestration_cli tests.test_orchestration_hostile
+  tests.test_checker_crashes tests.test_executor_health -v`.
 - A change to the cycle contract in `SKILL.md` needs the same change in `engine.py`,
   `resume.py` and `health.py`.
 

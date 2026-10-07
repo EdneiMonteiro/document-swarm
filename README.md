@@ -198,7 +198,9 @@ python .\scripts\orchestration run <pasta-do-swarm> --parallel 4
 
 Cada agente roda como um processo `copilot` não interativo, com só as ferramentas do
 seu papel, sem escrita e sem comandos, e o resultado volta como JSON validado. O mesmo
-comando retoma uma execução parada. Esta versão cobre documentos Markdown novos; o
+comando retoma uma execução parada. Só um `run` opera um swarm por vez, e Ctrl+C
+encerra os agentes em andamento sem perder o que já terminou. Esta versão cobre
+documentos Markdown novos; o
 backend foi testado com um CLI substituto e deve ser qualificado com o comando
 `qualify`, que faz poucas chamadas reais e exige `--yes`. Veja o
 [guia do executor](./docs/executor.md).

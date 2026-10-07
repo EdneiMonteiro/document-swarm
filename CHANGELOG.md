@@ -32,6 +32,46 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
   forged record, a changed deliverable and an altered rejected cycle are refused
   instead of re-run, and source verdicts are snapshotted per round so the final
   recheck cannot reopen a review for a timestamp.
+- Accepted results are attested. The journal entry that accepts a result carries the
+  digest of the stored result, and a record that no longer matches blocks the stage
+  (`result_altered`) instead of being trusted or paid for again. Reviewers' grades and
+  the rubber duck's veto are read from these verified records; the files under
+  `reports/` are a copy, rewritten from them at the matrix stage and at delivery.
+- A result is accepted only for an attempt the engine issued; a reviewer's identity
+  covers the sources index its prompt shows; the final source recheck is bound to the
+  index it checked (`final_sources_changed`); a crash between inserting the narrative
+  and journaling it neither duplicates it nor pays the agent twice.
+- Source text and addresses are untrusted: a title or type may not carry an address, a
+  pipe, a line break or control characters (the index is a table that
+  `verify_sources.py` scans for addresses), and addresses that name this machine, a
+  private network, credentials or a number in an unusual form are refused.
+  `DOCSWARM_ALLOW_LOCAL_URLS=1` is a lab switch, set by the tests.
+- Hostile or odd answers are refusals of that attempt, never exceptions: deeply nested
+  text, a file that is also a folder, a Windows short name such as `INTROD~1.MD`, a path
+  that resolves to another name, a path too long for the swarm folder, and anything a
+  validator did not foresee. The other agents' results of the same step are recorded
+  before a failure is raised.
+- One `run` per swarm (`reports/execution/.run.lock`): a second run is refused at once,
+  without paying any agent or touching the first run's heartbeat. Ctrl+C stops the agents
+  that are running before anything waits for them, starts nothing new, and keeps what had
+  already finished.
+- A checker that crashes no longer reads as one that found something. `verify_sources.py`,
+  `verify_tables.py` and `gate.py` exit 3 on an internal failure (Python's default, 1, is
+  the status of "findings" and of "rejected"), and the engine requires a fresh, readable
+  report from each checker whatever its exit status says.
+- Agent names are unique by case-folded identity and may not be Windows device names or
+  end in a dot, because they become file names. `init` refuses a brief the gate cannot
+  approve (not `editorial-v1`, an editorial reviewer not named `reviewer-*`) and, on
+  Windows, a swarm folder too deep for the executor's own files, before any agent is paid.
+- `gate.py` refuses a matrix that says `critico: false` beside a finding marked critical.
+- Prompts tell every agent that what it receives to analyse is data, never instruction.
+- A failing source goes back only to the authors that cited it, and a failing table to the
+  author whose section holds it; what cannot be attributed goes to everyone. The attribution
+  is stored with the feedback when the repair starts.
+- `run` stops the heartbeat race that could leave `driver.json` saying "running" after the
+  run was interrupted, lists an agent as running only when its process began, and journals
+  `task_started` so that `metrics` measures an agent from its real start, not from the
+  moment it was issued before a stop and a resume.
 - `run` executes each agent as one non-interactive `copilot` process, in parallel,
   with only the tools of its role, shell and writes denied, an empty scratch folder,
   no custom instructions and the prompt on stdin. Results are recorded as they
@@ -45,7 +85,10 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
   credits. `run --plan-only` shows the first agents and their exact commands without
   running anything.
 - `health.py` understands executor runs: it reads the heartbeat and the journal,
-  classifies them as active, stalled or closed and prints the command that resumes.
+  classifies them as active, stalled or closed and prints the command that resumes, but
+  only when the run is stalled. The executor's own journal decides before the artifacts of
+  a cycle that may have been escalated before a person raised the ceiling, only a last
+  event of `run_finished` closes a run, and a heartbeat dated in the future is not trusted.
 - `metrics` decomposes an execution into agent time, code time and idle time, for
   executor journals and for monitor journals.
 - `DOCSWARM_NO_REAL_CLI=1` makes any path to the real `copilot` fail. The tests set
@@ -56,7 +99,16 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
 - `verify_sources.py` checks URLs concurrently: 8 at a time and at most 3 per host
   by default (`--workers`, `--per-host`). The report keeps the index order and
-  `--workers 1` is the sequential behaviour.
+  `--workers 1` is the sequential behaviour. Each address is isolated: a server that
+  does not speak HTTP, a malformed port or a control character is one dead source, not an
+  aborted run, and an address with accents is requested in its ASCII form (IDNA host,
+  percent-encoded path and query) instead of being reported dead. It exits 3 when the
+  check itself crashes.
+- `verify_tables.py` treats a marker parameter the arithmetic cannot carry (`NaN`,
+  infinity, a huge exponent, a target that is not a number) as a failed table the author
+  can fix, and exits 3 when the check itself crashes.
+- `gate.py` exits 3 on an internal error instead of leaving through Python's default exit
+  status 1, which means "rejected".
 - The prompt of an executor task embeds the JSON schema its answer must obey, so a
   backend without native schema enforcement still sees the contract.
 - At most 9 authors are supported by the executor: each owns a range of one hundred
@@ -68,12 +120,22 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
   swarm that already has cycles keep the coordinator flow; the executor refuses them
   before spending anything.
 - The `copilot` backend rests on the CLI's documented options and was tested with a
-  stand-in CLI. It has not been qualified with real calls: run `qualify`. No paid
+  stand-in CLI. Every option it passes exists in the installed CLI's help, but it has
+  not been qualified with real calls: run `qualify`. No paid
   benchmark was run, so there is no promised percentage gain.
 - The visual monitor panel is not driven by the executor, and a dead source found by
   the final recheck blocks the delivery until someone replaces it.
 - Only run on Windows. The `fcntl` lock and the process-group kill are the Linux and
   macOS paths and have never run; run the test suite there before relying on them.
+  Files the executor writes on POSIX are owner-only (0600), a `mkstemp` default.
+- The executor defends against what an agent returns, stale or interrupted state and
+  accidental or by-hand edits. It does not defend against someone who controls the whole
+  swarm folder: the journal and the records can be rewritten together, with no signature
+  or hash chain, and `final_report.py` and `update_memory.py` trust `gate.py` and the
+  matrix as they always did.
+- Source addresses are screened without the network: a public name that resolves to an
+  internal address, or that redirects to one, is not seen. This is deliberate, since
+  refusing by resolution would also refuse legitimate internal sources.
 - Agents with web tools run with `--allow-all-urls` (research cannot work otherwise) and
   receive the brief and the document in the prompt, so a page carrying malicious
   instructions could try to make them put that text in a URL. Path confinement stops

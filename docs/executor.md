@@ -170,9 +170,13 @@ flowchart TD
 ```
 
 A decisão de reparo também é código: uma fonte morta ou uma conta de tabela marcada que
-não fecha manda a rodada de volta aos autores antes de qualquer revisor ser pago.
+não fecha manda a rodada de volta aos autores antes de qualquer revisor ser pago. Uma
+fonte morta volta só ao autor que a citou; uma conta de tabela, ao autor cuja seção a
+contém, achada pela linha de cabeçalho da tabela no documento consolidado; o que não se
+pode atribuir a ninguém volta a todos. A atribuição é gravada com o feedback quando o
+reparo começa, porque depois de o autor reparar a fonte que o denunciava já não existe.
 O feedback do ciclo seguinte vai só ao autor dos tópicos bloqueados; um item que abrange
-o documento inteiro (redação, auditoria, checagem) vai a todos.
+o documento inteiro (redação, auditoria) vai a todos.
 
 ```mermaid
 sequenceDiagram
@@ -197,23 +201,57 @@ sequenceDiagram
 |---|---|
 | Agente devolve JSON inválido ou incompleto | Recusado na hora com o motivo exato; a tentativa seguinte recebe o erro no prompt |
 | Resposta cercada por texto ou crases | O JSON é recuperado do texto; o que sobra ainda precisa cumprir o contrato |
-| Citação do revisor editorial que não está no texto | Recusada no registro, com a citação e o motivo |
+| Resposta aninhada demais, ou algo que o validador não previu | Recusada como qualquer resposta inválida: nunca uma exceção que encerra o `run` e descarta o que os outros agentes do passo já entregaram |
+| Citação do revisor editorial que não está no texto | Recusada no registro, com a citação e o motivo; a comparação ignora diferenças de espaço em branco, não de letras |
 | Revisor deixa tópico sem nota ou nota abaixo de A sem ação | Recusado: a matriz sai exatamente das notas dos revisores |
-| Revisor de fatos com menos fontes do que declarou | Recusado |
-| Autor escreve fora de `output/sections`, `figures` ou `assets`, no deliverable ou no arquivo de outro autor | Recusado; caminhos são comparados sem diferença de caixa e sem `..`, drive, `:`, nomes reservados do Windows ou ponto final |
+| Nota de revisor com forma não canônica (`a`, ` B+`) | Gravada na forma canônica, a única que o resto do executor sabe indexar |
+| Revisor de fatos com menos fontes do que declarou | Recusado; só conta o endereço público |
+| Autor escreve fora de `output/sections`, `figures` ou `assets`, no deliverable ou no arquivo de outro autor | Recusado; caminhos são comparados sem diferença de caixa e sem `..`, drive, `:`, nomes reservados do Windows, ponto final, nome curto do Windows (`INTROD~1.MD`, que nomeia outro arquivo por um apelido) ou componente maior que 100 bytes |
+| Arquivo que também seria pasta (`x.md` e `x.md/b.md`), ou caminho que a pasta do swarm não comporta no Windows | Recusado antes de gravar qualquer coisa, em vez de falhar no meio do resultado |
+| Caminho que se resolve para outro nome (junção, link, nome curto) | Recusado na validação, com o nome real |
 | Pasta do swarm substituída por um link para fora | Recusado na validação e de novo na escrita |
-| Veredito gravado, editado ou forjado | `gate.py` é avaliado de novo sobre os arquivos de agora; só o que reproduz o resultado gravado vale |
-| Nota alterada no disco depois da aprovação | A matriz é refeita a partir dos revisores e o portão roda de novo |
+| Texto de uma fonte com endereço, barra vertical, quebra de linha ou caractere de controle | Recusado: o índice é uma tabela, e `verify_sources.py` lê todo endereço que houver nela |
+| Fonte que aponta para a própria máquina, uma rede privada, credenciais na URL ou um número em forma incomum (`127.1`, `0x7f000001`) | Recusada na contratação, sem rede (`DOCSWARM_ALLOW_LOCAL_URLS=1` é uma chave de laboratório, usada pelos testes). Nomes públicos que resolvem para um endereço interno e redirecionamentos não são vistos: veja os limites |
+| Endereço que faz o verificador quebrar (servidor que não fala HTTP, porta malformada, caractere de controle) | É uma fonte morta, só ela; endereços com acento são pedidos na forma ASCII em vez de reprovados por isso |
+| Marcador de tabela que a aritmética não suporta (`target=NaN`, `1e999999999`) | É uma tabela reprovada, que o autor corrige; nunca uma exceção |
+| Verificador que quebra | Sai com 3, nunca com o 1 de "achados", e o executor exige de cada verificador um relatório novo e legível: sem ele, `script_error`, seja qual for o status |
+| Veredito gravado, editado ou forjado | `gate.py` é avaliado de novo sobre os arquivos de agora; só o que reproduz o resultado gravado vale; um gate que quebra ou cujo registro não se reproduz falha uma vez, sem repetir até o limite de passos |
+| Matriz que diz `critico: false` ao lado de um achado crítico | `gate.py` recusa (exit 3): o veto não se descarta por uma bandeira |
+| Resultado aceito editado depois de registrado | O resumo (SHA-256) do resultado entra no journal na mesma chamada que o aceita; se o arquivo deixar de bater, a etapa bloqueia (`result_altered`): nem confia no arquivo, nem paga o agente de novo sem uma pessoa decidir |
+| Nota de revisor ou veto do rubber duck alterados | As notas e o veto vêm dos resultados verificados. Os arquivos de revisor em `reports/` são uma cópia, reescrita a partir deles na etapa da matriz e na entrega; um veto apagado do registro bloqueia a etapa, e a matriz fica reprovada enquanto isso |
+| Nota alterada no disco depois da aprovação | A matriz é refeita a partir dos resultados verificados dos revisores e o portão roda de novo |
+| Resultado para uma tentativa que o executor nunca emitiu | Recusado (`stale`): a identidade de uma tarefa é pública, então quem a calcula não semeia resultados |
 | Entrega editada à mão depois da aprovação | Bloqueia (`deliverable_changed`) até a restauração; não paga agentes |
+| Entrega e o registro da consolidação editados juntos | Bloqueia (`result_altered`) |
 | Ciclo rejeitado cujo registro foi alterado | Bloqueia (`history_altered`); não refaz o ciclo em silêncio |
 | A rechecagem final encontra uma fonte morta | Bloqueia a entrega; a rechecagem roda de novo a cada chamada |
+| Índice de fontes editado depois da rechecagem final | Bloqueia (`final_sources_changed`): a rechecagem e o relatório descreveriam outro índice |
 | Rechecagem final mexe nos carimbos das fontes | Cada rodada guarda um retrato das fontes; a aprovação não reabre a revisão por causa de um timestamp |
-| Dois processos operando o mesmo swarm | Trava do sistema operacional, liberada sozinha se o dono morrer |
-| Queda no meio de um passo | Escritas atômicas e journal anexado; a próxima chamada recomputa o mesmo estado |
+| Dois `run` no mesmo swarm | O `run` toma `reports/execution/.run.lock` antes de tudo: o segundo recusa na hora, sem pagar agente e sem tocar o batimento do primeiro |
+| Duas operações (`next`, `record`) ao mesmo tempo | Trava do sistema operacional por operação, liberada sozinha se o dono morrer |
+| Ctrl+C no meio de um passo | Os agentes em execução são encerrados antes de qualquer espera, nada novo é iniciado, e o que já terminou é registrado |
+| Queda no meio de um passo | Escritas atômicas e journal anexado; a próxima chamada recomputa o mesmo estado. Uma queda entre os arquivos de um resultado e o seu registro refaz uma chamada de agente; uma queda entre inserir a narrativa e registrar o passo não a duplica nem paga de novo |
+| Agentes com nomes que só diferem na caixa, nome de dispositivo do Windows ou ponto final | Recusados na compilação: o nome vira nome de arquivo |
+| Brief que o portão não pode aprovar (sem `quality_contract: editorial-v1`, revisor editorial fora do padrão `reviewer-*`) ou pasta do swarm longa demais para o Windows | `init` recusa antes de pagar qualquer agente |
 
 Cada regra acima tem um teste que foi confirmado como vermelho quando a regra é
 desligada (teste de mutação). Os testes nunca chamam um modelo: `DOCSWARM_NO_REAL_CLI=1`
 faz qualquer caminho até o `copilot` real falhar, inclusive nas rodadas de mutação.
+
+### Fronteira de confiança
+
+O que o executor defende é **o que um agente devolve** (texto não confiável, possivelmente
+induzido por uma página da web), **estados velhos ou interrompidos** (resultado atrasado,
+queda no meio de um passo, dois processos) e **edições acidentais ou à mão** nos arquivos
+derivados. Para o veredito, o encadeamento é: resultados aceitos, atestados no journal, que
+geram os arquivos de revisão, a matriz e o portão.
+
+O que ele **não** defende é quem controla a pasta inteira do swarm. Quem consegue editar o
+journal e os registros juntos forja qualquer estado consistente, porque não há assinatura
+nem encadeamento de hashes. O mesmo vale para a memória do swarm e para
+`final_report.py` e `update_memory.py`, que confiam em `gate.py` e na matriz como o fluxo do
+coordenador sempre fez. Para garantias mais fortes, mantenha a pasta do swarm sob controle
+de versão ou em um local protegido e revise o journal.
 
 ## Estado em disco
 
@@ -228,7 +266,8 @@ reports/execution/
 ├─ usage/<rótulo>.json     registro de uso de cada processo, cru
 ├─ ownership.json          quem é dono de cada arquivo de seção
 ├─ driver.json             batimento do `run`: estado, agentes em execução, pid
-└─ .lock                   trava de uso exclusivo
+├─ .run.lock               trava do `run` inteiro: só um `run` por swarm
+└─ .lock                   trava de cada operação (`next`, `record`)
 ```
 
 Identificadores de tarefa seguem `c{ciclo}.r{rodada}.{etapa}.{agente}`, e o rótulo de
@@ -238,12 +277,18 @@ de modo que nenhuma memoização do runtime devolve a falha já obtida.
 ## Observação
 
 - A tabela de `run`, impressa a cada minuto, mostra etapa, agentes em execução e há
-  quanto tempo, contagens de resultados e o último registro.
+  quanto tempo, contagens de resultados e o último registro. Um agente só aparece como em
+  execução quando o processo dele realmente começou, não enquanto espera uma vaga.
 - `health.py` entende o executor: lê o batimento e o journal, classifica como ativo,
-  parado (sem batimento, interrompido ou bloqueado) ou encerrado, e imprime o comando
-  que retoma.
+  parado (sem batimento, com carimbo não confiável, interrompido ou bloqueado) ou
+  encerrado, e imprime o comando que retoma só quando a execução está parada: uma
+  execução ativa recusaria um segundo `run`. O que decide é o journal do executor, não
+  os artefatos de um ciclo que talvez já tenha sido escalado antes de a pessoa elevar o
+  teto e rodar de novo; só o último evento ser `run_finished` conta como encerrado.
 - `python "<DOCSWARM>/scripts/orchestration" metrics "<swarm>"` decompõe o relógio em
-  agente rodando, código rodando e ocioso.
+  agente rodando, código rodando e ocioso. Cada agente é medido a partir do momento em que
+  começou (`task_started`), não de quando foi emitido: se o processo caiu e o mesmo comando
+  rodou horas depois, a pausa é tempo ocioso, não tempo de agente.
 - O painel visual do monitor ainda não é alimentado pelo executor. Ele depende dos
   despachos que o coordenador registra, e esta versão não os emite.
 
@@ -278,11 +323,12 @@ esquema também está no prompt para quem não sabe.
 ## Limites conhecidos
 
 - O backend do `copilot` foi construído sobre opções documentadas e testado com um CLI
-  substituto, mas ainda não foi qualificado com chamadas reais. Os nomes de ferramenta
-  que ele passa (`view`, `glob`, `grep`, `rg`, `web_search`, `web_fetch`) existem na
-  tabela do CLI 1.0.93, mas o efeito do filtro só se prova com chamadas reais. Rode
-  `qualify` antes de confiar nele; o formato do registro de uso não está documentado e
-  é lido de forma frouxa, com o arquivo cru guardado.
+  substituto, mas ainda não foi qualificado com chamadas reais. Todas as opções que ele
+  passa existem na ajuda do CLI instalado (1.0.93-2, conferido com `copilot --help`) e os
+  nomes de ferramenta (`view`, `glob`, `grep`, `rg`, `web_search`, `web_fetch`) existem na
+  tabela dele, mas a presença de uma opção não prova o seu efeito: isso só se prova com
+  chamadas reais. Rode `qualify` antes de confiar nele; o formato do registro de uso não
+  está documentado e é lido de forma frouxa, com o arquivo cru guardado.
 - Nenhum benchmark pago foi executado, então não há promessa de ganho percentual. As
   medições acima descrevem onde o tempo foi gasto, não quanto o executor economiza.
 - O executor remove os intervalos entre turnos, mas não a latência dos modelos, os
@@ -292,12 +338,22 @@ esquema também está no prompt para quem não sabe.
 - Só foi executado no Windows. O bloqueio exclusivo por `fcntl` e o encerramento por
   grupo de processos (`killpg`) são os caminhos de Linux e macOS, e nunca rodaram. Rode
   `python3 -m unittest discover -s tests` nesses sistemas antes de depender do executor
-  neles.
+  neles. Por usar `mkstemp`, todo arquivo que o executor grava em POSIX nasce com
+  permissão 0600 (só o dono lê), inclusive o documento entregue.
 - Autores, revisores de fatos e rubber duck têm ferramentas web com `--allow-all-urls`,
   porque a pesquisa não funciona sem abrir URLs que ninguém pode listar de antemão. Eles
   recebem o brief e o documento no prompt, e uma página com instruções maliciosas pode
   tentar induzi-los a pôr esse texto numa URL. O confinamento de caminhos impede a leitura
   de outros arquivos, não esse vazamento. O fluxo do coordenador tem exposição
   equivalente; para conteúdo que não pode chegar a pesquisas na web, nenhum dos dois serve.
+  O prompt diz a cada agente que o que recebe para analisar é dado, nunca instrução, mas
+  isso depende do modelo e é um reforço, não uma garantia.
+- `verify_sources.py` (o mesmo do fluxo do coordenador) pede de cada endereço de fonte, a
+  partir desta máquina. O executor recusa endereços que nomeiam a própria máquina ou uma
+  rede privada, mas não vê um nome público que resolve para um endereço interno, nem um
+  redirecionamento para um. Isso fica de fora de propósito: bloquear por resolução de nome
+  recusaria fontes internas legítimas de quem trabalha atrás de uma rede corporativa.
+- O tempo de relógio de um agente que caiu e foi refeito aparece na medição como um
+  despacho "sem desfecho" (o que ele foi), sem inflar o tempo de agente.
 - Se uma fonte continuar morta na rechecagem final, a entrega fica bloqueada até que
   alguém a substitua e refaça a revisão; o executor ainda não abre esse reparo sozinho.

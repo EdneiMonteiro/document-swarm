@@ -625,8 +625,10 @@ python3 "<DOCSWARM>/scripts/orchestration" run "<OUTPUT_ROOT>/<swarm_id>" --para
 
 `--plan-only` valida tudo e mostra os primeiros agentes e seus comandos sem gastar
 nada. A saída de `run` é `0` aprovado, `1` escalado ao usuário, `2` entrada
-inválida, `3` bloqueado ou falhou (leia a mensagem; não contorne) e `130`
-interrompido. Escalação e bloqueio são decisões da pessoa, nunca uma aprovação.
+inválida (ou outro `run` já operando o swarm), `3` bloqueado ou falhou (leia a
+mensagem; não contorne) e `130` interrompido. Escalação e bloqueio são decisões da
+pessoa, nunca uma aprovação. Só um `run` opera um swarm por vez, e Ctrl+C encerra os
+agentes em andamento e guarda o que já terminou.
 
 `run` e `qualify` fazem chamadas reais a modelos e **gastam créditos**. Só os execute
 com a autorização do usuário. Antes do primeiro uso real, `qualify --model <o mais
@@ -1601,6 +1603,11 @@ Todos usam somente Python stdlib. Consulte `--help` para opções exatas.
 O motor opcional `python -m scripts.pdf render|inspect` é separado desses checks.
 Ele usa as dependências de PDF, enquanto `pdf_contract.py` verifica seus registros
 no gate usando apenas a biblioteca padrão.
+
+Os verificadores `verify_sources.py`, `verify_tables.py` e `gate.py` saem com `3`
+quando eles próprios quebram. O `1` é de "achados" (e, no gate, de "reprovado"), que é
+também o status que o Python dá a uma exceção não tratada: um verificador que quebra
+nunca pode ser lido como um que rodou e encontrou algo.
 
 ## 15. Checklist — documento
 
