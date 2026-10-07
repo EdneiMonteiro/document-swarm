@@ -42,9 +42,10 @@ python "<DOCSWARM>/scripts/orchestration" metrics "<swarm>" --host-power
 | Entrega: rechecagem forçada de fontes, relatório, proposta de memória | |
 
 O executor nunca atribui uma nota e nunca aprova uma entrega. As notas vêm dos
-revisores, e a aprovação vem do resultado de `gate.py`. A qualidade exigida não muda:
-todo tópico precisa de `A` ou `A+`, achado crítico do rubber duck veta, e não existe
-modo rápido.
+revisores, e a aprovação vem do resultado de `gate.py`. A qualidade exigida não muda
+por causa do executor: todo tópico precisa atingir a `approval_grade` da revisão,
+achado crítico do rubber duck veta, e não existe modo rápido. Essa nota é `A` na régua
+original e `A-` na régua provisória adotada em 07/10/2026 (veja "A nota de aprovação").
 
 ## Escopo desta versão
 
@@ -119,6 +120,30 @@ de novo. Foi medido em uma cópia do swarm da primeira execução real: o motor 
 veredito do ciclo 4 e voltou a emitir os três autores. Os ciclos já rejeitados não são
 refeitos, porque o veredito deles vem do portão, não da identidade das tarefas.
 
+### A nota de aprovação
+
+O portão compara cada tópico e cada superfície editorial com a `approval_grade` que a
+própria revisão declara: `A` ou `A-`. Sem o campo, vale `A`, a régua original, de modo que
+tudo o que foi gravado antes continua significando o que sempre significou. Por decisão do
+dono do skill em 07/10/2026, enquanto o swarm não atinge o nível de excelência e desempenho
+que se busca, **um swarm novo aprova em `A-`**. Nada abaixo de `A-` aprova e o achado
+crítico do rubber duck continua vetando.
+
+A nota vem de `--approval-grade`, do `approval_grade` do brief ou da política atual,
+nessa ordem; um swarm que já tem plano mantém a nota sob a qual roda. Ela fica no plano,
+vale para as chamadas seguintes, e uma mudança é registrada no journal
+(`approval_grade_changed`, com a nota anterior e a nova). O resultado do portão e o
+relatório final dizem `A-` quando é o caso, para que uma aprovação nunca seja lida como `A`.
+Só o feedback muda de sentido: com `A-`, uma nota `A-` não é mais pendência obrigatória
+para os autores. Os revisores continuam julgando na escala inteira e, abaixo de `A`, dizem
+o que a faria `A`.
+
+Julgar de novo um ciclo que já existe, com outra nota, não chama autor nem revisor: o
+motor refaz a matriz e o veredito e só paga a auditoria da matriz nova (a identidade dela
+inclui a nota) e a narrativa do novo desfecho. Para exigir `A` em um swarm novo, passe
+`--approval-grade A` ou declare `approval_grade: A` no brief. Para voltar à régua original
+em todos, troque `PROVISIONAL_APPROVAL_GRADE` em `scripts/orchestration/contracts.py`.
+
 | Opção de `run` | Padrão | Efeito |
 |---|---:|---|
 | `--parallel` | 4 | Agentes rodando ao mesmo tempo |
@@ -126,6 +151,7 @@ refeitos, porque o veredito deles vem do portão, não da identidade das tarefas
 | `--tick` | 60 | Segundos entre as tabelas de status |
 | `--models` | | Modelos disponíveis na sessão; um modelo declarado fora da lista é recusado antes de qualquer gasto |
 | `--max-cycles` | brief | Substitui o teto de ciclos do brief; fica gravado no plano |
+| `--approval-grade` | `A-` (swarm novo) | Nota que cada tópico e superfície editorial precisa atingir: `A-` ou `A`; fica gravada no plano |
 | `--keep-mcp-servers` | | Não desliga os servidores MCP de que a tarefa não precisa (também em `qualify`) |
 | `--json` | | Resposta final em JSON no stdout, com as tabelas no stderr |
 | `--copilot`, `--copilot-arg` | | Executável do `copilot` e argumentos colocados logo após ele, para um wrapper; use `--copilot-arg=-S` quando o valor começar com `-` |
@@ -331,7 +357,7 @@ de modo que nenhuma memoização do runtime devolve a falha já obtida.
 de outro lugar (um fluxo próprio, um outro CLI), são quatro comandos:
 
 ```text
-python "<DOCSWARM>/scripts/orchestration" init   "<swarm>" [--models a,b] [--max-attempts N] [--max-repairs N] [--max-cycles N]
+python "<DOCSWARM>/scripts/orchestration" init   "<swarm>" [--models a,b] [--max-attempts N] [--max-repairs N] [--max-cycles N] [--approval-grade A-|A]
 python "<DOCSWARM>/scripts/orchestration" next   "<swarm>"
 python "<DOCSWARM>/scripts/orchestration" record "<swarm>"   # JSON no stdin
 python "<DOCSWARM>/scripts/orchestration" status "<swarm>"
@@ -360,12 +386,12 @@ Em 07/10/2026 o executor produziu um artigo de verdade, sobre o modelo Laya, com
 
 | | |
 |---|---|
-| Resultado | **Escalado no ciclo 4.** Os 6 tópicos terminaram em A- (A- não aprova) e a revisão editorial deu A- em corpo e conclusões. O rubber duck não vetou. Nada foi aprovado, e o executor não entregou como aprovado |
+| Resultado | **Escalado no ciclo 4 sob a régua original:** os 6 tópicos terminaram em A- e a revisão editorial deu A- em corpo e conclusões; o rubber duck não vetou. Depois que o dono do skill decidiu aceitar `A-` (veja "A nota de aprovação"), o mesmo ciclo foi julgado de novo com `--approval-grade A-` e **aprovado**, e a entrega rodou ao vivo pela primeira vez: rechecagem de fontes (27 ok, 4 redirecionamentos, 0 falhas), relatório final, narrativa e proposta de memória. Isso custou a auditoria da matriz nova e a narrativa, cerca de 2 minutos, e nenhum autor nem revisor foi chamado de novo. O texto entregue mantém em aberto os achados importantes do rubber duck, que a narrativa lista |
 | Notas por ciclo | Ciclo 1: B e B+ em todos os tópicos. Ciclo 2: A- e B+. Ciclo 3: o revisor de fatos voltou a B+ em três tópicos, com achados reais (versão desatualizada, fonte inacessível, afirmação sem fonte). Ciclo 4: A- em todos |
 | Relógio | 66,9 min no journal: 54,1 min com algum agente rodando (soma de 85 min, paralelismo de 1,57x), 8 s de código do executor e 12,7 min ociosos. Quase todo o ocioso foi a pausa de 6,7 min para corrigir o defeito 1 e os 5 min entre o `--plan-only` e a primeira chamada. Duas retomadas pelo mesmo comando; nenhum resultado aceito foi refeito. É uma medição, não uma comparação: não há execução pareada com o fluxo do coordenador |
 | Por papel | Autor: mediana de 3,5 min por chamada. Consolidação: 2,5 min. Revisor: 74 s. Rubber duck: 66 s. Narrativa: 44 s |
-| Chamadas | 37, das quais 33 aceitas e 4 recusadas e refeitas (2 do coordenador, 1 de um autor e 1 de um revisor) |
-| Custo | 1.361 AIU e 121,5 requisições premium. Autores 512 AIU, revisores 571, consolidação 178, auditoria 95, narrativa 5. Uma chamada de `gpt-5.5` conta 7,5 requisições premium; as dos outros modelos, 1 |
+| Chamadas | 40, das quais 35 aceitas e 5 recusadas e refeitas (2 do coordenador, 1 de um autor, 1 de um revisor e 1 da narrativa) |
+| Custo | cerca de 1.398 AIU e 131 requisições premium. Autores 512 AIU, revisores 571, consolidação 178, auditoria cerca de 119 (5 chamadas), narrativa cerca de 17 (3 chamadas). Os registros de uso somam 1.371 AIU, porque a chamada refeita sob uma identidade nova reaproveita o rótulo e sobrescreve o registro anterior (duas vezes, na entrega). Uma chamada de `gpt-5.5` conta 7,5 requisições premium; as dos outros modelos, 1 |
 | Texto | 5.525 palavras, 2 diagramas, 1 travessão. O brief pedia de 2.500 a 3.500 palavras |
 
 O que a execução mostrou, tudo corrigido com teste e mutante:

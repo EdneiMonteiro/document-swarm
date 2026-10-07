@@ -20,6 +20,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.checks.common import InputError
+from scripts.checks.gate import APPROVAL_GRADES
 from scripts.orchestration import metrics
 from scripts.orchestration.engine import Engine, Options
 
@@ -56,7 +57,7 @@ def declared_models(args: argparse.Namespace) -> list[str] | None:
 def command_init(args: argparse.Namespace) -> int:
     models = declared_models(args)
     engine = Engine(args.swarm, Options(max_attempts=args.max_attempts, max_repairs=args.max_repairs,
-                                        max_cycles=args.max_cycles))
+                                        max_cycles=args.max_cycles, approval_grade=args.approval_grade))
     emit(engine.init(models=models), pretty=args.pretty)
     return 0
 
@@ -102,7 +103,8 @@ def command_run(args: argparse.Namespace) -> int:
     from scripts.orchestration import driver
 
     models = declared_models(args)
-    options = Options(max_attempts=args.max_attempts, max_repairs=args.max_repairs, max_cycles=args.max_cycles)
+    options = Options(max_attempts=args.max_attempts, max_repairs=args.max_repairs, max_cycles=args.max_cycles,
+                      approval_grade=args.approval_grade)
     swarm = args.swarm.resolve(strict=True)
     backend = backend_for(args, swarm / "reports" / "execution" / "usage")
     if args.plan_only:
@@ -174,6 +176,10 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--max-cycles", type=int, default=None,
                       help="replace the brief's cycle ceiling; kept in the plan until another is given (raise it here, "
                            "not in the brief: editing the brief makes the current cycle be paid for again)")
+    init.add_argument("--approval-grade", choices=APPROVAL_GRADES, default=None,
+                      help="the grade every topic and editorial surface must reach; kept in the plan until another is "
+                           "given. Without it a swarm keeps the grade it runs under, or takes the skill's current policy "
+                           "(A-) when it is new")
     swarm_command("next", "advance as far as code can and print what is needed next, or the outcome", command_next)
     swarm_command("record", "validate and persist one agent result read as JSON from stdin", command_record)
     swarm_command("status", "summarise the run from its journal", command_status)
@@ -197,6 +203,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-cycles", type=int, default=None,
                      help="replace the brief's cycle ceiling; kept in the plan until another is given (raise it here, "
                           "not in the brief: editing the brief makes the current cycle be paid for again)")
+    run.add_argument("--approval-grade", choices=APPROVAL_GRADES, default=None,
+                     help="the grade every topic and editorial surface must reach; kept in the plan until another is "
+                          "given. Without it a swarm keeps the grade it runs under, or takes the skill's current policy "
+                          "(A-) when it is new")
     run.add_argument("--tick", type=float, default=60.0, help="seconds between the status tables")
     run.add_argument("--json", action="store_true", help="print the final answer as JSON on stdout, tables on stderr")
     run.add_argument("--plan-only", action="store_true",

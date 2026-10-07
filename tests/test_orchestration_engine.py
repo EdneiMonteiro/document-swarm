@@ -516,13 +516,15 @@ class FeedbackTests(EngineCase):
 
     def test_the_lowest_grade_decides_a_topic_and_the_gate_still_rules(self):
         agent = self.agent(grades={(1, "reviewer-02-clarity", "T01"): "A-"}, mutate=None)
-        engine = self.engine()
+        engine = self.engine(approval_grade="A")
         engine.run(agent)
         first = parse_data((self.root / "reports" / "cycle-01-review.yaml").read_text(encoding="utf-8"))
         row = next(item for item in first["topics"] if item["topico"] == "T01")
         self.assertEqual((row["nota_minima"], row["revisor_da_minima"], row["bloqueia"]), ("A-", "reviewer-02-clarity", True))
+        self.assertNotIn("approval_grade", first, "a matrix under the original bar says nothing new")
         record = json.loads((self.root / "reports" / "cycle-01-gate.json").read_text(encoding="utf-8"))
-        self.assertEqual(record["exit_code"], 1, "A- does not approve")
+        self.assertEqual(record["exit_code"], 1, "A- does not approve under the original bar")
+        self.assertNotIn("approval_grade", record["result"])
 
 
 class ValidationTests(EngineCase):
@@ -1954,6 +1956,133 @@ class RobustnessTests(EngineCase):
 
         outcome = self.engine().run(self.agent(mutate=explode))
         self.assertEqual((outcome["status"], outcome["kind"]), ("blocked", "task_failed"))
+
+
+class ApprovalGradeTests(EngineCase):
+    """The bar a review has to reach is declared by the review, and a relaxed one is never silent."""
+
+    A_MINUS = {(1, "reviewer-02-clarity", "T01"): "A-"}
+
+    def text(self, relative: str, root: Path | None = None) -> str:
+        return ((root or self.root) / relative).read_text(encoding="utf-8")
+
+    def test_under_the_current_policy_a_minus_approves_and_everything_says_so(self):
+        agent = self.agent(grades=self.A_MINUS, surface_grades={1: "A-"})
+        done = self.finish(agent)
+        self.assertEqual((done["outcome"], done["cycle"]), ("approved", 1), "no second cycle for an A-")
+        review = parse_data(self.text("reports/cycle-01-review.yaml"))
+        self.assertEqual(review["approval_grade"], "A-")
+        row = next(item for item in review["topics"] if item["topico"] == "T01")
+        self.assertEqual((row["nota_minima"], row["bloqueia"]), ("A-", False))
+        record = json.loads(self.text("reports/cycle-01-gate.json"))
+        self.assertEqual((record["exit_code"], record["result"]["approval_grade"]), (0, "A-"))
+        self.assertIn("**approval grade:** A-", self.text("reports/final-report.md"))
+        plan = json.loads(self.text("reports/execution/plan.json"))
+        self.assertEqual((plan["approval_grade"], plan["options"]["approval_grade"]), ("A-", None))
+        self.assertEqual(self.engine().status()["approval_grade"], "A-")
+
+    def test_the_grade_below_the_bar_still_blocks_and_comes_back_as_feedback_only_when_it_blocks(self):
+        grades = {**self.A_MINUS, (1, "reviewer-01-facts", "T02"): "B+"}
+        relaxed = self.agent(grades=grades, surface_grades={1: "A-"})
+        done = self.finish(relaxed)
+        self.assertEqual((done["outcome"], done["cycle"]), ("approved", 2), "B+ is below A-")
+        engine = self.engine()
+        engine.load(adopt=True)
+        items = engine.cycle_feedback(1)["items"]
+        self.assertEqual([(item["topic"], item["grade"]) for item in items], [("T02", "B+")],
+                         "the A- topic and the A- surfaces are not pending under a bar of A-")
+        strict_root = build_swarm(Path(self.temporary.name) / "strict")
+        strict = Engine(strict_root, Options(approval_grade="A")).run(
+            Scripted(strict_root, self.base, grades=grades, surface_grades={1: "A-"}))
+        self.assertEqual((strict["outcome"], strict["cycle"]), ("approved", 2))
+        original = Engine(strict_root)
+        original.load(adopt=True)
+        pending = original.cycle_feedback(1)["items"]
+        self.assertEqual(sorted((item["topic"], item["grade"]) for item in pending if item["kind"] == "topic"),
+                         [("T01", "A-"), ("T02", "B+")], "under the original bar the A- is pending too")
+        self.assertEqual(sum(1 for item in pending if item["kind"] == "editorial"), 5, "and so are the A- surfaces")
+
+    def test_the_option_wins_over_the_brief_and_the_brief_over_the_policy(self):
+        declared = build_swarm(Path(self.temporary.name) / "declared", extra_brief="approval_grade: A\n")
+        kept = Engine(declared).run(Scripted(declared, self.base, grades=self.A_MINUS))
+        self.assertEqual((kept["outcome"], kept["cycle"]), ("approved", 2), "the brief's A is kept: an A- needs a second cycle")
+        overridden = build_swarm(Path(self.temporary.name) / "overridden", extra_brief="approval_grade: A\n")
+        relaxed = Engine(overridden, Options(approval_grade="A-")).run(Scripted(overridden, self.base, grades=self.A_MINUS))
+        self.assertEqual((relaxed["outcome"], relaxed["cycle"]), ("approved", 1), "the option replaces the brief")
+        asked = build_swarm(Path(self.temporary.name) / "asked", extra_brief="approval_grade: A-\n")
+        under_brief = Engine(asked).run(Scripted(asked, self.base, grades=self.A_MINUS))
+        self.assertEqual((under_brief["outcome"], under_brief["cycle"]), ("approved", 1))
+        self.assertEqual(self.finish(self.agent(grades=self.A_MINUS))["cycle"], 1, "no option, no brief: the skill's policy")
+
+    def test_what_a_person_set_stays_over_a_later_declaration_in_the_brief(self):
+        Engine(self.root, Options(approval_grade="A")).init()
+        Engine(self.root).init()
+        brief = self.root / "brief.md"
+        brief.write_text(brief.read_text(encoding="utf-8").replace("quality_contract:", "approval_grade: A-\nquality_contract:", 1),
+                         encoding="utf-8")
+        engine = self.engine()
+        engine.load(adopt=True)
+        self.assertEqual(engine.approval_grade, "A", "the option kept in the plan outranks the brief, even after a plain init")
+        self.assertEqual(json.loads(self.text("reports/execution/plan.json"))["options"]["approval_grade"], "A")
+
+    def test_a_grade_that_is_neither_a_minus_nor_a_is_refused_before_anything_is_written(self):
+        for value in ("B+", "A+", "a", "", 3, True):
+            with self.subTest(option=value):
+                with self.assertRaisesRegex(InputError, "approval_grade must be one of A-, A"):
+                    Engine(self.root, Options(approval_grade=value)).init()
+        bad = build_swarm(Path(self.temporary.name) / "bad", extra_brief="approval_grade: B+\n")
+        with self.assertRaisesRegex(InputError, "the brief's approval_grade must be one of A-, A"):
+            Engine(bad).init()
+        self.assertFalse((self.root / "reports" / "execution" / "plan.json").exists())
+        self.assertFalse((bad / "reports" / "execution" / "plan.json").exists())
+
+    def test_a_swarm_that_already_runs_keeps_its_grade_until_a_person_changes_it(self):
+        # What the first real run needed: a swarm escalated with every topic at A- under the original bar, then
+        # accepted under A-.  Nothing already paid for is asked again; only the audit of the new matrix and the
+        # narrative of the new outcome are.
+        root = build_swarm(Path(self.temporary.name) / "keeps", max_cycles=1)
+        first = Engine(root, Options(approval_grade="A")).run(Scripted(root, self.base, grades=self.A_MINUS))
+        self.assertEqual((first["outcome"], first["cycle"]), ("escalated", 1))
+
+        plain = Scripted(root, self.base, grades=self.A_MINUS)
+        again = Engine(root).run(plain)
+        self.assertEqual((again["outcome"], again["cycle"]), ("escalated", 1), "no option: the grade it runs under stands")
+        self.assertEqual(plain.calls, [])
+
+        relaxed = Scripted(root, self.base, grades=self.A_MINUS)
+        done = Engine(root, Options(approval_grade="A-")).run(relaxed)
+        self.assertEqual((done["outcome"], done["cycle"]), ("approved", 1))
+        self.assertEqual(sorted(call["kind"] for call in relaxed.calls), ["narrative", "rubber-duck"])
+        [change] = Journal(root / "reports" / "execution" / "journal.jsonl").find("approval_grade_changed")
+        self.assertEqual((change["previous"], change["current"]), ("A", "A-"))
+        self.assertIn("**approval grade:** A-", self.text("reports/final-report.md", root))
+        later = Scripted(root, self.base, grades=self.A_MINUS)
+        self.assertEqual(Engine(root).run(later)["outcome"], "approved", "a later call keeps the relaxed grade")
+        self.assertEqual(later.calls, [])
+
+    def test_a_plan_from_before_the_field_existed_ran_under_the_original_bar(self):
+        self.finish(self.agent(), approval_grade="A")
+        path = self.root / "reports" / "execution" / "plan.json"
+        plan = json.loads(path.read_text(encoding="utf-8"))
+        plan.pop("approval_grade")
+        plan["options"].pop("approval_grade")
+        path.write_text(json.dumps(plan), encoding="utf-8")
+        engine = self.engine()
+        engine.load(adopt=True)
+        self.assertEqual(engine.approval_grade, "A", "a swarm that was already running does not take the new policy")
+        self.assertEqual(engine.recorded_approval_grade(), "A")
+
+    def test_the_audit_of_a_matrix_judged_under_another_grade_is_a_new_task(self):
+        self.finish(self.agent(), approval_grade="A")
+        strict = self.engine()
+        strict.load(adopt=True)
+        before = strict.build_duck(1, 0).inputs_sha256
+        relaxed = Engine(self.root, Options(approval_grade="A-"))
+        relaxed.init()
+        relaxed.load(adopt=True)
+        self.assertEqual(relaxed.approval_grade, "A-")
+        self.assertNotEqual(relaxed.build_duck(1, 0).inputs_sha256, before,
+                            "what the auditor looked at changed, so its audit is asked again")
 
 
 class StoreTests(unittest.TestCase):

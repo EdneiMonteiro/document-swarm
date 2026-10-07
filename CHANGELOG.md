@@ -114,6 +114,21 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
 ### Changed
 
+- The grade a review has to reach is now declared by the review: `approval_grade: A-` or
+  `A`, and `A` when the field is absent. By decision of the skill's owner on 2026-10-07,
+  while the swarm's own excellence and performance are being worked on, a new executor
+  swarm approves at `A-`. `gate.py` reads the value from the review, applies it to the
+  topics and to the editorial surfaces, and records it in its result only when it differs
+  from `A`, so everything written before the field existed still reproduces. Nothing below
+  `A-` approves and a critical finding of the rubber duck still vetoes. The final report
+  states the grade, so an approval at `A-` is never read as `A`. The executor takes it from
+  `--approval-grade`, the brief's `approval_grade` or the current policy
+  (`PROVISIONAL_APPROVAL_GRADE`, one line to revert), keeps it in the plan, journals a
+  change as `approval_grade_changed`, and leaves a swarm that already has a plan under the
+  grade it runs under. Judging a cycle that already exists under another grade pays only
+  the audit of the new matrix and the narrative of the new outcome. The feedback to authors
+  lists only what is below the grade. Presentations keep `A`. `SKILL.md` section 6, the
+  README and `docs/executor.md` describe it.
 - `verify_sources.py` checks URLs concurrently: 8 at a time and at most 3 per host
   by default (`--workers`, `--per-host`). The report keeps the index order and
   `--workers 1` is the sequential behaviour. Each address is isolated: a server that

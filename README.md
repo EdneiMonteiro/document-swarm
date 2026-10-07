@@ -39,8 +39,11 @@ de notas e relatório final.
 - **Memória curada:** fontes e perfis aprovados podem ser reutilizados por swarms
   futuros sem aceitar avisos ou falhas.
 
-O portão usa a escala `D- ... A+`: **A- não passa**. Um achado crítico do rubber
-duck também bloqueia.
+O portão usa a escala `D- ... A+`. A nota que aprova é a `approval_grade` da revisão:
+`A` na régua original e, por decisão do dono do skill em 07/10/2026, `A-` nas execuções
+novas enquanto o swarm não atinge o nível de excelência e desempenho que se busca
+(`SKILL.md`, seção 6). Abaixo de `A-` nada passa, e um achado crítico do rubber duck
+também bloqueia.
 
 O padrão é documento. Apresentações são um tipo de entrega opcional, ativado por
 pedido explícito, e não acrescentam dependência ao caminho documental.

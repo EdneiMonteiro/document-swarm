@@ -116,6 +116,7 @@ def render(swarm: Path) -> str:
     if outcome == "approved" and latest_table_failures:
         raise InputError(f"latest table check still has {latest_table_failures} failure(s)")
     duck = latest.get("rubberduck", latest.get("rubber_duck", {}))
+    approval = gate_results[-1].get("approval_grade")
     lines = [
         "# Final report",
         "",
@@ -123,9 +124,12 @@ def render(swarm: Path) -> str:
         f"- **skill_version:** {version}",
         f"- **cycles with structured reviews:** {len(reviews)}",
         f"- **deterministic outcome:** {outcome}",
-        "",
-        "### Final topic grades",
     ]
+    if approval:
+        # A review under a relaxed bar says so, so that nobody reads its approval as the original A.
+        lines.append(f"- **approval grade:** {approval} (the original bar is A: a topic or surface graded {approval} "
+                     "counts as passing)")
+    lines += ["", "### Final topic grades"]
     topics = latest.get("topics", latest.get("topicos", [])) if isinstance(latest, dict) else []
     if isinstance(topics, list) and topics:
         lines += ["| Topic | Minimum grade | Minimum reviewer | Blocks |", "| --- | --- | --- | --- |"]

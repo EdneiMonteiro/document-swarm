@@ -94,7 +94,7 @@ class CommandLineTests(EngineCase):
         self.assertEqual((blocked["status"], blocked["kind"]), ("blocked", "checks_failed"))
         self.assertIn("after 1 repair round", blocked["detail"], "next was called without the flag and still honoured it")
         plan = json.loads((self.root / "reports" / "execution" / "plan.json").read_text(encoding="utf-8"))
-        self.assertEqual(plan["options"], {"max_attempts": 2, "max_repairs": 1, "max_cycles": None})
+        self.assertEqual(plan["options"], {"max_attempts": 2, "max_repairs": 1, "max_cycles": None, "approval_grade": None})
 
     def test_the_cycle_ceiling_given_at_init_replaces_the_briefs_and_is_kept_for_every_later_call(self):
         code, _, err = cli("init", str(self.root), "--max-cycles", "9")
@@ -119,6 +119,41 @@ class CommandLineTests(EngineCase):
                 code, _, err = cli("init", str(self.root), "--max-cycles", value)
                 self.assertEqual(code, 2)
                 self.assertIn("max_cycles must be a positive integer", err)
+        self.assertFalse((self.root / "reports" / "execution" / "plan.json").exists())
+
+    def test_the_approval_grade_given_at_init_is_kept_for_every_later_call_and_a_change_is_journaled(self):
+        def grade() -> str:
+            code, out, err = cli("status", str(self.root))
+            self.assertEqual(code, 0, err)
+            return json.loads(out)["approval_grade"]
+
+        code, _, err = cli("init", str(self.root))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(grade(), "A-", "a new swarm takes the skill's current policy")
+        code, _, err = cli("init", str(self.root), "--approval-grade", "A")
+        self.assertEqual(code, 0, err)
+        plan = json.loads((self.root / "reports" / "execution" / "plan.json").read_text(encoding="utf-8"))
+        self.assertEqual((plan["approval_grade"], plan["options"]["approval_grade"]), ("A", "A"))
+        self.assertEqual(grade(), "A", "status was called without the flag and still honours it")
+        code, _, err = cli("init", str(self.root))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(grade(), "A", "an init without the flag keeps the grade that was set")
+        plan = json.loads((self.root / "reports" / "execution" / "plan.json").read_text(encoding="utf-8"))
+        self.assertEqual(plan["options"]["approval_grade"], "A", "and the plan still says it was set by a person")
+        code, _, err = cli("init", str(self.root), "--approval-grade", "A-")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(grade(), "A-")
+        events = [json.loads(line) for line in (self.root / "reports" / "execution" / "journal.jsonl")
+                  .read_text(encoding="utf-8").splitlines()]
+        changes = [(item["previous"], item["current"]) for item in events if item["event"] == "approval_grade_changed"]
+        self.assertEqual(changes, [("A-", "A"), ("A", "A-")])
+
+    def test_a_grade_other_than_a_minus_or_a_is_refused_at_the_command_line(self):
+        for value in ("B+", "A+", "a"):
+            with self.subTest(value=value):
+                code, _, err = cli("init", str(self.root), "--approval-grade", value)
+                self.assertEqual(code, 2)
+                self.assertIn("invalid choice", err)
         self.assertFalse((self.root / "reports" / "execution" / "plan.json").exists())
 
     def test_invalid_limits_are_refused(self):

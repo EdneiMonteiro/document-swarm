@@ -29,7 +29,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from scripts.checks.common import GRADE_INDEX, InputError, parse_data
-from scripts.checks.gate import artifact_descriptor, evaluate_current, requires_editorial
+from scripts.checks.gate import (APPROVAL_GRADES, ORIGINAL_APPROVAL_GRADE, artifact_descriptor, evaluate_current,
+                                 requires_editorial)
 from scripts.checks.lint_agents import frontmatter_text
 from scripts.orchestration import contracts, prompts, spec as specs
 from scripts.orchestration.spec import AgentSpec
@@ -40,7 +41,6 @@ SKILL_ROOT = Path(__file__).resolve().parents[2]
 CHECKS = SKILL_ROOT / "scripts" / "checks"
 FRONTMATTER = re.compile(r"\A---[ \t]*\r?\n.*?\r?\n---[ \t]*(?:\r?\n|$)", re.S)
 NARRATIVE_MARKER = "<!-- COORDINATOR: Explain decisions, residual risks, and evidence not represented above. -->"
-APPROVING = GRADE_INDEX["A"]
 UNSUPPORTED = (".pdf", ".pptx", ".html", ".htm")
 MAX_ADVANCE_STEPS = 64
 # What each script's exit code means.  1 is a finding for the verifiers and the gate, but a plain
@@ -65,6 +65,9 @@ class Options:
     # Replaces the brief's ceiling and is kept in the plan.  Editing the brief to raise it would change what every
     # task depends on and make the current cycle be paid for again.
     max_cycles: int | None = None
+    # The grade every topic and editorial surface must reach.  Like the ceiling it is kept in the plan, and for the same
+    # reason it is not set by editing the brief of a swarm that already has paid work.
+    approval_grade: str | None = None
 
 
 @dataclass
@@ -104,10 +107,12 @@ class Engine:
             return
         stored = read_json(path).get("options", {})
         attempts, repairs, cycles = stored.get("max_attempts"), stored.get("max_repairs"), stored.get("max_cycles")
+        grade = stored.get("approval_grade")
         self.options = Options(max_attempts=attempts if type(attempts) is int and attempts >= 1 else self.options.max_attempts,
                                max_repairs=repairs if type(repairs) is int and repairs >= 0 else self.options.max_repairs,
                                script_timeout=self.options.script_timeout,
-                               max_cycles=cycles if type(cycles) is int and cycles >= 1 else self.options.max_cycles)
+                               max_cycles=cycles if type(cycles) is int and cycles >= 1 else self.options.max_cycles,
+                               approval_grade=grade if grade in APPROVAL_GRADES else self.options.approval_grade)
 
     def stored_ceiling(self) -> int | None:
         """The ceiling a person set with ``--max-cycles`` on an earlier call, which stays until another is given."""
@@ -123,6 +128,23 @@ class Engine:
         plan = read_json(path) if path.is_file() else None
         value = plan.get("max_cycles") if isinstance(plan, dict) else None
         return value if type(value) is int and value >= 1 else None
+
+    def stored_approval_grade(self) -> str | None:
+        """The grade a person set with ``--approval-grade`` on an earlier call, which stays until another is given."""
+        path = self.exec / "plan.json"
+        plan = read_json(path) if path.is_file() else None
+        options = plan.get("options") if isinstance(plan, dict) else None
+        value = options.get("approval_grade") if isinstance(options, dict) else None
+        return value if value in APPROVAL_GRADES else None
+
+    def recorded_approval_grade(self) -> str | None:
+        """The grade the plan on disk was written under; a plan from before the field existed was written under A."""
+        path = self.exec / "plan.json"
+        if not path.is_file():
+            return None
+        plan = read_json(path)
+        value = plan.get("approval_grade") if isinstance(plan, dict) else None
+        return value if value in APPROVAL_GRADES else ORIGINAL_APPROVAL_GRADE
 
     def load(self, *, models: list[str] | None = None, strict: bool = True, adopt: bool = False) -> specs.Compiled:
         if adopt:
@@ -159,6 +181,15 @@ class Engine:
             maximum = 1
         self.brief_max_cycles = maximum
         self.max_cycles = self.options.max_cycles if self.options.max_cycles is not None else maximum
+        declared = self.brief.get("approval_grade")
+        if declared is not None and declared not in APPROVAL_GRADES:
+            problems.append(f"the brief's approval_grade must be one of {', '.join(APPROVAL_GRADES)}")
+            declared = None
+        # What a person set with the option wins, then the brief, then the grade the swarm already runs under (a plan
+        # from before the field existed ran under A), and only a swarm with no plan yet takes the provisional policy.
+        self.approval_grade = (self.options.approval_grade or declared or self.recorded_approval_grade()
+                               or contracts.PROVISIONAL_APPROVAL_GRADE)
+        self.approval_index = GRADE_INDEX[self.approval_grade]
         try:
             self.topics = specs.parse_topics(self.brief)
         except InputError as exc:
@@ -297,6 +328,10 @@ class Engine:
             raise InputError("max_cycles must be a positive integer")
         if self.options.max_cycles is None:
             self.options = replace(self.options, max_cycles=self.stored_ceiling())
+        if self.options.approval_grade is not None and self.options.approval_grade not in APPROVAL_GRADES:
+            raise InputError(f"approval_grade must be one of {', '.join(APPROVAL_GRADES)}")
+        if self.options.approval_grade is None:
+            self.options = replace(self.options, approval_grade=self.stored_approval_grade())
         # Everything that can refuse the swarm runs before the first file is created in it.
         compiled = self.load(models=models)
         if not self.journal.events() and any((self.root / "reports").glob("cycle-*")):
@@ -304,12 +339,14 @@ class Engine:
                              "the executor starts new swarms only")
         with self.lock.held():
             previous = self.recorded_ceiling()
+            previous_grade = self.recorded_approval_grade()
             plan = {
                 "schema_version": 1, "swarm_id": self.swarm_id, "skill_version": self.skill_version,
-                "max_cycles": self.max_cycles, "topics": self.topics, "deliverable": self.primary,
+                "max_cycles": self.max_cycles, "approval_grade": self.approval_grade, "topics": self.topics,
+                "deliverable": self.primary,
                 "editorial_reviewer": self.editorial_name, "brief_sha256": self.brief_sha,
                 "options": {"max_attempts": self.options.max_attempts, "max_repairs": self.options.max_repairs,
-                            "max_cycles": self.options.max_cycles},
+                            "max_cycles": self.options.max_cycles, "approval_grade": self.options.approval_grade},
                 "agents": [item.public() for item in sorted(compiled.specs, key=lambda item: item.name)],
                 "warnings": compiled.warnings,
             }
@@ -319,6 +356,9 @@ class Engine:
                 # Raising the ceiling is a person's decision to keep going below the bar: it stays on the record.
                 self.journal.append("max_cycles_changed", previous=previous, current=self.max_cycles,
                                     brief=self.brief_max_cycles)
+            if previous_grade is not None and previous_grade != self.approval_grade:
+                # So is a lower approval grade: the journal says from which grade to which, and when.
+                self.journal.append("approval_grade_changed", previous=previous_grade, current=self.approval_grade)
             event = "run_started" if not self.journal.find("run_started") else "plan_refreshed"
             self.journal.append(event, plan_sha256=plan["plan_sha256"], agents=len(compiled.specs))
             return {"ok": True, "plan_sha256": plan["plan_sha256"], "agents": len(compiled.specs),
@@ -343,13 +383,13 @@ class Engine:
         for report in self.reviewer_reports(previous):
             reviewer_name = report["reviewer"]
             for row in report.get("topics", []):
-                if GRADE_INDEX[row["grade"]] < APPROVING:
+                if GRADE_INDEX[row["grade"]] < self.approval_index:
                     items.append({"kind": "topic", "topic": row["topic"], "reviewer": reviewer_name, "grade": row["grade"],
                                   "justification": row["justification"], "action": row["action"]})
             editorial = report.get("editorial")
             if editorial:
                 for surface in editorial["surfaces"]:
-                    if "grade" in surface and GRADE_INDEX[surface["grade"]] < APPROVING:
+                    if "grade" in surface and GRADE_INDEX[surface["grade"]] < self.approval_index:
                         items.append({"kind": "editorial", "surface": surface["surface"], "grade": surface["grade"],
                                       "location": surface["location"], "quote": surface["quote"],
                                       "justification": surface["justification"], "action": surface["action"]})
@@ -628,7 +668,7 @@ class Engine:
         reports = self.reviewer_reports(cycle)
         return contracts.render_review(cycle=cycle, max_cycles=self.max_cycles, skill_version=self.skill_version,
                                        topics=self.topics, reports=reports, duck=duck or contracts.pending_duck(),
-                                       editorial=self.editorial_of(reports))
+                                       editorial=self.editorial_of(reports), approval_grade=self.approval_grade)
 
     def build_duck(self, cycle: int, round_number: int) -> Task:
         agent = self.spec_of("rubber-duck")[0]
@@ -1245,7 +1285,7 @@ class Engine:
         issued = {(item["task_id"], item["attempt"]) for item in events if item["event"] == "task_issued"}
         recorded = [item for item in events if item["event"] == "task_recorded"]
         return {"swarm": self.swarm_id, "problems": self.problems, "cycle": self.current_cycle(),
-                "max_cycles": self.max_cycles,
+                "max_cycles": self.max_cycles, "approval_grade": self.approval_grade,
                 "tasks_issued": len(issued), "tasks_recorded": len(recorded),
                 "accepted": sum(1 for item in recorded if item["outcome"] == "accepted"),
                 "rejected": sum(1 for item in recorded if item["outcome"] == "rejected"),

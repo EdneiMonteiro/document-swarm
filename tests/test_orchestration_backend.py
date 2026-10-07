@@ -657,6 +657,16 @@ class RunCommandTests(BackendCase):
         self.assertEqual(first["command"][:3], [sys.executable, "-S", str(FAKE)])
         self.assertEqual(self.calls(), [], "no agent was started")
 
+    def test_run_passes_the_approval_grade_to_the_engine_and_the_plan_keeps_it(self):
+        code, out, err = self.run_cli(*self.fake_args, "--plan-only", "--approval-grade", "A")
+        self.assertEqual(code, 0, err)
+        plan = json.loads((self.root / "reports" / "execution" / "plan.json").read_text(encoding="utf-8"))
+        self.assertEqual((plan["approval_grade"], plan["options"]["approval_grade"]), ("A", "A"))
+        code, out, err = self.run_cli(*self.fake_args, "--plan-only")
+        self.assertEqual(code, 0, err)
+        plan = json.loads((self.root / "reports" / "execution" / "plan.json").read_text(encoding="utf-8"))
+        self.assertEqual(plan["approval_grade"], "A", "a later run without the option keeps what was set")
+
     def test_plan_only_shows_the_servers_that_will_be_stopped_and_keep_mcp_servers_leaves_them_running(self):
         extra = {"FAKE_COPILOT_MCP_LIST": MCP_LISTING}
         code, out, err = self.run_cli(*self.fake_args, "--plan-only", extra_env=extra)

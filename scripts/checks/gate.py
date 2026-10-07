@@ -24,6 +24,20 @@ from scripts.checks.presentation_contract import verify_presentation
 
 EDITORIAL_SURFACES = ("titles", "openings", "body", "captions", "conclusions")
 CRITICAL_SEVERITIES = {"critical", "critico", "crítico"}
+# The grade every topic and editorial surface must reach.  A review declares its own, so that a review written under a
+# relaxed bar says so and one written before the field existed keeps meaning what it always meant.
+APPROVAL_GRADES = ("A-", "A")
+ORIGINAL_APPROVAL_GRADE = "A"
+
+
+def approval_grade(data: dict[str, Any]) -> str:
+    """The grade this review had to reach to approve: its own declaration, or the original ``A`` when it has none."""
+    if "approval_grade" not in data:
+        return ORIGINAL_APPROVAL_GRADE
+    declared = normalize_grade(data["approval_grade"])
+    if declared not in APPROVAL_GRADES:
+        raise InputError(f"approval_grade must be one of {', '.join(APPROVAL_GRADES)}, not {declared}")
+    return declared
 
 
 def requires_editorial(data: dict[str, Any]) -> bool:
@@ -54,7 +68,8 @@ def artifact_descriptor(item: Any) -> tuple[str, str]:
     return logical.as_posix(), digest
 
 
-def editorial_blockers(data: dict[str, Any], cycle: int, required: bool) -> list[dict[str, str]]:
+def editorial_blockers(data: dict[str, Any], cycle: int, required: bool,
+                       bar: int = GRADE_INDEX[ORIGINAL_APPROVAL_GRADE]) -> list[dict[str, str]]:
     if not required:
         return []
     editorial = data.get("editorial")
@@ -95,8 +110,10 @@ def editorial_blockers(data: dict[str, Any], cycle: int, required: bool) -> list
             required_text(item, key)
         if not isinstance(item.get("action"), str):
             raise InputError("editorial surface requires an action string")
-        if GRADE_INDEX[grade] < GRADE_INDEX["A"]:
+        # Below A a reviewer must say what would make it A, whatever the bar; only a grade below the bar blocks.
+        if GRADE_INDEX[grade] < max(bar, GRADE_INDEX[ORIGINAL_APPROVAL_GRADE]):
             required_text(item, "action")
+        if GRADE_INDEX[grade] < bar:
             blocked.append({"kind": "editorial", "name": surface, "grade": grade, "reviewer": reviewer})
     findings = editorial.get("findings")
     if not isinstance(findings, list):
@@ -242,6 +259,8 @@ def evaluate(data: Any, *, require_editorial: bool = False) -> dict[str, Any]:
     topics = value(data, "topics", "topicos")
     if not isinstance(topics, list) or not topics:
         raise InputError("topics/topicos must be a non-empty list")
+    approval = approval_grade(data)
+    bar = GRADE_INDEX[approval]
     blocked: list[dict[str, str]] = []
     for item in topics:
         if not isinstance(item, dict):
@@ -254,7 +273,7 @@ def evaluate(data: Any, *, require_editorial: bool = False) -> dict[str, Any]:
         blocks = value(item, "bloqueia", "blocks")
         if not isinstance(blocks, bool):
             raise InputError("topic requires boolean bloqueia/blocks")
-        if GRADE_INDEX[grade] < GRADE_INDEX["A"] or blocks:
+        if GRADE_INDEX[grade] < bar or blocks:
             blocked.append({"kind": "topic", "name": str(name), "grade": grade, "reviewer": str(reviewer)})
     duck = value(data, "rubberduck", "rubber_duck")
     if not isinstance(duck, dict):
@@ -270,16 +289,21 @@ def evaluate(data: Any, *, require_editorial: bool = False) -> dict[str, Any]:
         raise InputError("rubberduck.critico is false but a finding is marked critical; the veto cannot be dropped")
     if critical:
         blocked.append({"kind": "rubberduck", "name": "critical finding", "grade": ""})
-    blocked.extend(editorial_blockers(data, cycle, require_editorial or requires_editorial(data)))
+    blocked.extend(editorial_blockers(data, cycle, require_editorial or requires_editorial(data), bar))
     # Historical deck reviews must retain their original blocking criteria.
     blocked.extend(items_below(value(data, "slides", "slide_reviews"), ("slide", "name", "titulo", "title")))
     blocked.extend(items_below(value(data, "deck_dimensions", "deckDimensions"), ("dimension", "dimensao", "name")))
     outcome = "approved" if not blocked else "escalate" if cycle >= maximum else "rejected"
-    return {"schema_version": 1, "cycle": cycle, "max_cycles": maximum, "outcome": outcome, "blocked": blocked}
+    result = {"schema_version": 1, "cycle": cycle, "max_cycles": maximum, "outcome": outcome, "blocked": blocked}
+    if approval != ORIGINAL_APPROVAL_GRADE:
+        # Only a relaxed bar is recorded, so that every result written before the field existed still reproduces.
+        result["approval_grade"] = approval
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Evaluate structured swarm review grades (A or higher is required).")
+    parser = argparse.ArgumentParser(description="Evaluate structured swarm review grades (A or higher is required, "
+                                                 "unless the review declares approval_grade: A-).")
     parser.add_argument("review", type=Path, help="cycle review .yaml, .yml, or JSON")
     parser.add_argument("--output", type=Path, help="optional recorded gate result, bound to the exact review bytes")
     args = parser.parse_args(argv)

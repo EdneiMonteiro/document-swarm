@@ -8,7 +8,10 @@ description: "Use when the user asks for a substantial document (playbook, white
 
 > Swarm de documentação para produzir documentos substanciais com
 > agentes declarativos, evidência rastreável, revisão iterativa e portões
-> determinísticos. A régua é `D- ... A+`; **A- não aprova**.
+> determinísticos. A régua é `D- ... A+`. A nota que aprova é a `approval_grade`
+> declarada na revisão: `A` na régua original e, por decisão do dono do skill em
+> 07/10/2026, `A-` nas execuções novas enquanto o swarm não atinge o nível de
+> excelência e desempenho que se busca (seção 6).
 
 ## 1. Quando usar
 
@@ -57,7 +60,8 @@ No modo evolução, trabalhe sobre a pasta existente. Não crie um swarm novo.
 6. **Julgamento onde é semântico.** Autores, revisores e rubber duck continuam
    responsáveis por correção, relevância, clareza, coerência e sustentação das
    afirmações.
-7. **Portão duro.** Todo tópico precisa de `A` ou `A+`. Achado crítico do rubber
+7. **Portão duro.** Todo tópico precisa atingir a `approval_grade` da revisão (`A`,
+   ou `A-` na régua provisória da seção 6). Achado crítico do rubber
    duck veta a entrega.
 8. **Sem regressão.** Evoluções reavaliam tópicos antigos e novos.
 9. **Rastreabilidade.** Cada ciclo preserva relatórios humanos e artefatos
@@ -582,9 +586,10 @@ código o que o contrato já determina (ordem das etapas, paralelismo, checagens
 matriz de notas, portão, feedback e entrega) e deixa com agentes a autoria, a
 consolidação semântica, a revisão independente e o rubber duck.
 
-Ele não muda nenhuma exigência de qualidade. As notas continuam vindo dos
-revisores, `gate.py` continua sendo o único que aprova, todo tópico precisa de
-`A` ou `A+` e não existe modo rápido. Guia completo, com as proteções, o resultado da
+Ele não muda nenhuma exigência de qualidade por si. As notas continuam vindo dos
+revisores, `gate.py` continua sendo o único que aprova, todo tópico precisa atingir a
+`approval_grade` da revisão (`A`, ou `A-` na régua provisória da seção 6) e não existe
+modo rápido. Guia completo, com as proteções, o resultado da
 primeira execução real e os limites conhecidos: [docs/executor.md](docs/executor.md).
 
 **Quando oferecer:** documento novo em Markdown, com uma única entrega em `output/`
@@ -622,6 +627,12 @@ Conduta quando o usuário escolhe o executor:
    O teto fica gravado no plano, o veredito do ciclo escalado é refeito sem chamar
    agente e só o ciclo novo é pago. Editar o brief muda aquilo de que toda tarefa
    depende, e o ciclo corrente é pago de novo.
+6. A nota de aprovação do executor é `A-` por padrão em um swarm novo (régua
+   provisória da seção 6) e vem de `--approval-grade`, do `approval_grade` do brief
+   ou da política atual, nessa ordem. Um swarm que já roda mantém a nota que tem; para
+   mudá-la use `run ... --approval-grade <A-|A>`, que fica gravado no plano e no
+   journal. Julgue de novo, sem chamar os autores nem os revisores, um ciclo que já
+   existe: só a auditoria da matriz nova e a narrativa do novo desfecho são pagas.
 
 ```bash
 python3 "<DOCSWARM>/scripts/orchestration" run "<OUTPUT_ROOT>/<swarm_id>" --plan-only
@@ -775,8 +786,7 @@ Escala canônica:
 D-  D  D+  C-  C  C+  B-  B  B+  A-  A  A+
 ```
 
-- `A` e `A+`: aprovam;
-- `A-` ou menos: bloqueiam;
+- a `approval_grade` da revisão e as notas acima dela aprovam; as abaixo bloqueiam;
 - toda nota exige justificativa e correção acionável;
 - a nota mínima entre revisores é a nota efetiva do tópico.
 
@@ -790,6 +800,7 @@ quality_contract: editorial-v1
 mode: document
 cycle: 2
 max_cycles: 5
+approval_grade: A-
 topics:
   - topico: "T01"
     title: "Enquadramento"
@@ -800,6 +811,29 @@ rubberduck:
   critico: false
   achados: []
 ```
+
+### Nota de aprovação (`approval_grade`)
+
+Cada matriz declara, em `approval_grade`, a nota que precisava atingir: `A` (a régua
+original, que vale quando o campo falta) ou `A-`. Nada abaixo de `A-` aprova e o
+achado crítico do rubber duck continua vetando.
+
+**Régua provisória.** Por decisão do dono do skill em 07/10/2026, enquanto o swarm
+não atingir o nível de excelência e desempenho que se busca, as execuções novas
+aprovam em `A-`. O executor usa `A-` por padrão em um swarm novo; no fluxo do
+coordenador, declare `approval_grade: A-` no brief e copie o valor para a matriz,
+salvo orientação contrária do usuário. Quem aprova continua sendo `gate.py`, que
+lê o valor da própria revisão.
+
+O valor aparece no resultado do portão (somente quando difere de `A`, para que o
+que foi gravado antes do campo continue reproduzível) e no relatório final, de modo
+que uma aprovação em `A-` nunca seja lida como `A`. Um swarm que já tem plano
+mantém a nota sob a qual roda até que uma pessoa a mude (`--approval-grade`,
+registrado no journal como `approval_grade_changed`), e uma revisão escrita sem o
+campo vale `A`. Para exigir `A` em um swarm novo, declare `approval_grade: A` no
+brief ou use `--approval-grade A`; para voltar à régua original em todos, troque
+`PROVISIONAL_APPROVAL_GRADE` em `scripts/orchestration/contracts.py` e esta seção.
+As revisões já escritas dizem sob qual nota foram julgadas e não mudam de sentido.
 
 O rubber duck deve conferir a consistência entre `.md` e `.yaml`. O portão usa o
 arquivo estruturado, não uma interpretação livre da prosa.
@@ -851,8 +885,9 @@ O JSON do revisor indicado em `brief.editorial_reviewer` também contém um bloc
   `location`, `quote`, `reason` e `action`, ou lista vazia.
 
 O exemplo completo está em [docs/editorial-review.md](docs/editorial-review.md).
-Cada superfície aplicável precisa de A ou A+ e nenhum achado `blocking` pode
-permanecer, mesmo que as notas por tópico ou de diagramação sejam A.
+Cada superfície aplicável precisa atingir a `approval_grade` da revisão (`A` ou `A-`)
+e nenhum achado `blocking` pode permanecer, mesmo que as notas por tópico ou de
+diagramação estejam na nota de aprovação.
 
 O gate verifica presença, escopo, ciclo, correspondência com o JSON individual,
 trechos e hashes. Não calcula qualidade da escrita por palavras-chave.
@@ -998,6 +1033,7 @@ swarm_id: <swarm_id>
 skill_version: "3.6.0"
 mode: document
 max_cycles: 5
+approval_grade: A-
 editorial_profile: <perfil definido no enquadramento>
 monitor: true
 quality_contract: editorial-v1
@@ -1123,7 +1159,8 @@ Você é o coordenador. Para cada ciclo `N`:
    ser lidos isoladamente. Registre achados no bloco editorial existente;
    o relatório lexical é apoio, não prova de que os termos foram explicados.
 6. **Matriz estruturada inicial.** Grave `reports/cycle-0N-review.yaml` com as
-   notas mínimas.
+   notas mínimas e com `approval_grade` copiado do brief (omita o campo apenas se o
+   brief declarar `A`).
    Inclua `pdf_inspections` com os hashes reais de fonte, PDF, manifesto e
    inspeção para cada entrega PDF. Não use relatório de um bundle anterior.
 7. **Rubber duck.** Audite autores, revisores, coordenador, resultados dos
@@ -1626,7 +1663,7 @@ nunca pode ser lido como um que rodou e encontrou algo.
 - [ ] Cada ciclo tem relatórios humanos, check de fontes, check de tabelas e YAML.
 - [ ] JSONs individuais dos revisores correspondem ao Markdown e ao consolidado.
 - [ ] Revisão editorial integral atual, com trechos e notas próprias, separada
-      da avaliação visual; todas as superfícies aplicáveis em A ou A+.
+      da avaliação visual; todas as superfícies aplicáveis na `approval_grade` ou acima.
 - [ ] Texto revisado e todas as entregas correspondem aos hashes da avaliação;
       nenhum texto autoral foi acrescentado pelo gerador depois dela.
 - [ ] Se houver PDF, composição e inspeção passaram antes dos revisores;

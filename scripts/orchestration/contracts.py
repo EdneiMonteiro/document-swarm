@@ -23,7 +23,7 @@ from typing import Any, Iterable
 from urllib.parse import urlsplit
 
 from scripts.checks.common import GRADE_INDEX, InputError, SCALE, normalize_grade
-from scripts.checks.gate import EDITORIAL_SURFACES, editorial_blockers
+from scripts.checks.gate import EDITORIAL_SURFACES, ORIGINAL_APPROVAL_GRADE, editorial_blockers
 from scripts.orchestration.spec import RESERVED_NAMES, AgentSpec
 
 SECTION_ROOTS = ("output/sections/", "output/figures/", "output/assets/")
@@ -49,7 +49,11 @@ LOCAL_NAME_SUFFIXES = (".localhost", ".local", ".localdomain", ".internal", ".ho
 # Lab and test switch: the test servers listen on 127.0.0.1.  A real run never sets it.
 ALLOW_LOCAL_URLS = "DOCSWARM_ALLOW_LOCAL_URLS"
 SEVERITIES = ("critical", "important", "minor")
-APPROVING = GRADE_INDEX["A"]
+APPROVING = GRADE_INDEX[ORIGINAL_APPROVAL_GRADE]
+# Decision of the skill's owner on 2026-10-07: while the swarm's own excellence and performance are being worked on, a
+# new executor swarm approves at A-.  Set this to "A" to restore the original bar for new swarms.  Every review states the
+# grade it was judged under, so the reviews already written keep their meaning either way.
+PROVISIONAL_APPROVAL_GRADE = "A-"
 
 
 def source_text_problem(label: str, value: str) -> str | None:
@@ -550,19 +554,23 @@ def pending_duck() -> dict[str, Any]:
 
 
 def render_review(*, cycle: int, max_cycles: int, skill_version: str, topics: dict[str, str],
-                  reports: list[dict[str, Any]], duck: dict[str, Any], editorial: dict[str, Any] | None) -> dict[str, Any]:
-    """The consolidated matrix.  The minimum of the reviewers' grades decides each topic."""
+                  reports: list[dict[str, Any]], duck: dict[str, Any], editorial: dict[str, Any] | None,
+                  approval_grade: str = ORIGINAL_APPROVAL_GRADE) -> dict[str, Any]:
+    """The consolidated matrix.  The minimum of the reviewers' grades decides each topic against the approval grade."""
+    bar = GRADE_INDEX[approval_grade]
     rows = []
     for topic, title in topics.items():
         graded = [(GRADE_INDEX[row["grade"]], report["reviewer"], row["grade"])
                   for report in reports for row in report["topics"] if row["topic"] == topic]
         lowest = min(graded, key=lambda item: item[0])
         rows.append({"topico": topic, "title": title, "nota_minima": lowest[2], "revisor_da_minima": lowest[1],
-                     "bloqueia": lowest[0] < APPROVING})
+                     "bloqueia": lowest[0] < bar})
     review: dict[str, Any] = {
         "schema_version": 1, "skill_version": skill_version, "quality_contract": "editorial-v1", "mode": "document",
         "cycle": cycle, "max_cycles": max_cycles, "topics": rows,
         "rubberduck": {"critico": duck["critical"], "achados": duck["findings"]}}
+    if approval_grade != ORIGINAL_APPROVAL_GRADE:
+        review["approval_grade"] = approval_grade
     if editorial is not None:
         review["editorial"] = editorial
     return review

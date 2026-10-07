@@ -192,12 +192,14 @@ class VerifyTablesTests(WorkTest):
         self.assertIn("not numeric", report["checks"][0]["mismatches"][0]["error"])
 
 
-def review(grade="A", *, cycle=1, maximum=3, critical=False, slides=None, dimensions=None):
+def review(grade="A", *, cycle=1, maximum=3, critical=False, slides=None, dimensions=None, approval=None):
     result = {
         "cycle": cycle, "max_cycles": maximum,
         "topics": [{"topico": "Evidence", "nota_minima": grade, "revisor_da_minima": "R", "bloqueia": False}],
         "rubberduck": {"critico": critical, "achados": []},
     }
+    if approval is not None:
+        result["approval_grade"] = approval
     if slides is not None:
         result["slides"] = slides
     if dimensions is not None:
@@ -213,6 +215,61 @@ class GateTests(unittest.TestCase):
         result = gate.evaluate(review("A-"))
         self.assertEqual(result["outcome"], "rejected")
         self.assertEqual(result["blocked"][0]["name"], "Evidence")
+
+    def test_a_review_may_declare_that_a_minus_approves_and_the_result_says_so(self):
+        for grade in ("A-", "A", "A+"):
+            with self.subTest(grade=grade):
+                result = gate.evaluate(review(grade, approval="A-"))
+                self.assertEqual((result["outcome"], result["approval_grade"]), ("approved", "A-"))
+        below = gate.evaluate(review("B+", approval="A-"))
+        self.assertEqual((below["outcome"], below["approval_grade"], below["blocked"][0]["grade"]),
+                         ("rejected", "A-", "B+"), "a relaxed bar is A-, not anything lower")
+        self.assertEqual(gate.evaluate(review("B+", cycle=3, maximum=3, approval="A-"))["outcome"], "escalate")
+
+    def test_without_a_declaration_or_with_a_the_bar_is_a_and_the_result_keeps_its_old_shape(self):
+        for approval in (None, "A", " a "):
+            with self.subTest(approval=approval):
+                result = gate.evaluate(review("A-", approval=approval))
+                self.assertEqual(result["outcome"], "rejected")
+                self.assertNotIn("approval_grade", result, "a result recorded before the field existed must still reproduce")
+
+    def test_a_topic_flagged_as_blocking_blocks_whatever_the_bar(self):
+        data = review("A", approval="A-")
+        data["topics"][0]["bloqueia"] = True
+        self.assertEqual(gate.evaluate(data)["outcome"], "rejected")
+
+    def test_a_bar_that_is_not_a_minus_or_a_is_refused(self):
+        for bad in ("B+", "A+", "Z", "", None, 3, True):
+            with self.subTest(bad=bad):
+                data = review("A")
+                data["approval_grade"] = bad
+                with self.assertRaisesRegex(gate.InputError, "invalid grade|approval_grade must be one of"):
+                    gate.evaluate(data)
+
+    def editorial(self, grade, action="Reescrever."):
+        return {"editorial": {
+            "schema_version": 1, "scope": "full_document", "cycle": 1, "reviewer": "reviewer-02-clarity",
+            "text": {"path": "reports/texto.txt", "sha256": "0" * 64},
+            "artifacts": [{"path": "output/documento.md", "sha256": "1" * 64}],
+            "surfaces": [{"surface": surface, "grade": grade, "location": "seção 1", "quote": "trecho",
+                          "justification": "porque sim", "action": action} for surface in gate.EDITORIAL_SURFACES],
+            "findings": []}}
+
+    def test_the_editorial_surfaces_are_judged_against_the_declared_bar_too(self):
+        a_minus = {**review("A", approval="A-"), **self.editorial("A-")}
+        self.assertEqual(gate.evaluate(a_minus, require_editorial=True)["outcome"], "approved")
+        original = {**review("A"), **self.editorial("A-")}
+        result = gate.evaluate(original, require_editorial=True)
+        self.assertEqual((result["outcome"], len(result["blocked"])), ("rejected", 5))
+        too_low = {**review("A", approval="A-"), **self.editorial("B+")}
+        self.assertEqual(len(gate.evaluate(too_low, require_editorial=True)["blocked"]), 5)
+
+    def test_a_reviewer_must_say_what_would_make_an_a_minus_an_a_whatever_the_bar(self):
+        silent = {**review("A", approval="A-"), **self.editorial("A-", action="")}
+        with self.assertRaisesRegex(gate.InputError, "non-empty action"):
+            gate.evaluate(silent, require_editorial=True)
+        self.assertEqual(gate.evaluate({**review("A", approval="A-"), **self.editorial("A", action="")},
+                                       require_editorial=True)["outcome"], "approved")
 
     def test_critical_rejected_and_max_escalates(self):
         self.assertEqual(gate.evaluate(review(critical=True))["outcome"], "rejected")

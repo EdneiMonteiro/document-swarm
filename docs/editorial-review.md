@@ -241,7 +241,8 @@ registros reais. Os trechos abaixo são ilustrativos, não notas de uma entrega:
 }
 ```
 
-Todas as superfícies aplicáveis precisam de A ou A+. Apenas `captions` ausente
+Todas as superfícies aplicáveis precisam atingir a `approval_grade` da revisão (`A` ou
+`A-`; veja a seção 6 do `SKILL.md`). Apenas `captions` ausente
 pode ser justificada sem nota. Cada trecho deve existir no texto examinado;
 espaços e quebras de linha são normalizados para a conferência.
 
