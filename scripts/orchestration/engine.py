@@ -43,6 +43,8 @@ FRONTMATTER = re.compile(r"\A---[ \t]*\r?\n.*?\r?\n---[ \t]*(?:\r?\n|$)", re.S)
 NARRATIVE_MARKER = "<!-- COORDINATOR: Explain decisions, residual risks, and evidence not represented above. -->"
 UNSUPPORTED = (".pdf", ".pptx", ".html", ".htm")
 MAX_ADVANCE_STEPS = 64
+# How much of an answer that could not be read is kept, at each end, to tell a reply that was cut off from a chatty one.
+ANSWER_EXCERPT = 300
 # What each script's exit code means.  1 is a finding for the verifiers and the gate, but a plain
 # failure for the report and the memory proposal; treating it alike reported "done" over a failure.
 OK_EXIT = {"sources": (0, 1), "tables": (0, 1), "nomenclature": (0,), "gate": (0, 1, 2),
@@ -750,7 +752,9 @@ class Engine:
         issued = []
         for task, attempt, errors in pending:
             prompt = task.build(attempt, errors)
-            if not any(item.get("task_id") == task.task_id and item.get("attempt") == attempt
+            # Keyed by the identity as well: a task asked again after its inputs changed is a new issue, and the time
+            # its record is measured from is the time of that one, not of an earlier one that someone else paid for.
+            if not any(item.get("attempt") == attempt and item.get("inputs_sha256") == task.inputs_sha256
                        for item in self.journal.find("task_issued", task_id=task.task_id)):
                 self.journal.append("task_issued", task_id=task.task_id, stage=stage, kind=task.kind, agent=task.spec.name,
                                     cycle=cycle, round=round_number, attempt=attempt, inputs_sha256=task.inputs_sha256,
@@ -1145,11 +1149,13 @@ class Engine:
                         "errors": [f"expected attempt {expected}, received {attempt}"]}
             # A result is accepted only for an attempt this engine issued: the identity of a task is public,
             # so a caller that merely computes it must not be able to seed results for work nobody asked for.
-            issued = next((item for item in self.journal.find("task_issued", task_id=task_id, attempt=attempt)), None)
+            issued = next((item for item in self.journal.find("task_issued", task_id=task_id, attempt=attempt,
+                                                             inputs_sha256=inputs_sha256)), None)
             if issued is None:
                 return {"accepted": False, "stale": True, "retry": False,
                         "errors": ["this attempt was never issued; ask for the next directive"]}
             parse_problem = None
+            answer = result if isinstance(result, str) else None
             if isinstance(result, str):
                 result, parse_problem = contracts.parse_agent_json(result)
             storable = result is not None and contracts.storable(result)
@@ -1179,9 +1185,15 @@ class Engine:
                           "inputs_sha256": task.inputs_sha256, "attempts": [], "accepted": None, "result": None}
             seconds = round(self.clock() - datetime.fromisoformat(issued["at"].replace("Z", "+00:00")).timestamp(), 3)
             missing = result is None and not parse_problem
+            attempt_runtime = dict(runtime or {})
+            if parse_problem and answer:
+                # Without the answer itself there is no telling a reply that was cut off from one that was chatty.
+                # It stays in the record of the attempt, not in the journal, which holds only what the run did.
+                attempt_runtime.update(answer_head=answer[:ANSWER_EXCERPT], answer_tail=answer[-ANSWER_EXCERPT:]
+                                       if len(answer) > ANSWER_EXCERPT else "")
             entry = {"attempt": attempt, "outcome": "accepted" if not errors else ("null" if missing else "rejected"),
                      "errors": errors, "result_sha256": digest_json(result) if storable else None,
-                     "runtime": runtime or {}}
+                     "runtime": attempt_runtime}
             record["attempts"].append(entry)
             if not errors:
                 record["accepted"], record["result"] = attempt, normal

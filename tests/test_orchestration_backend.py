@@ -251,6 +251,18 @@ class ProcessTests(BackendCase):
         self.assertEqual((runtime["backend"], runtime["exit_code"], runtime["models_seen"]), ("copilot-cli", 0, "auto"))
         self.assertNotIn("model_mismatch", runtime)
 
+    def test_a_task_run_again_keeps_the_usage_record_of_every_run(self):
+        # The first real run lost two usage records: a task asked again after its identity changed has the same label,
+        # and the second call wrote over the first, the only account of what it cost.
+        backend = self.fake()
+        task = self.first_task()
+        first, second = backend(task), backend(task)
+        self.assertEqual(first.runtime["usage_file"], f"{task['label']}.json")
+        self.assertEqual(second.runtime["usage_file"], f"{task['label']}.2.json")
+        usage = self.root / "reports" / "execution" / "usage"
+        self.assertEqual(sorted(path.name for path in usage.glob("*.json")),
+                         sorted([first.runtime["usage_file"], second.runtime["usage_file"]]))
+
     def test_the_agents_of_one_step_start_together(self):
         backend = self.fake(FAKE_COPILOT_SLEEP=3)
         engine = self.engine()

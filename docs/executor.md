@@ -416,6 +416,19 @@ O que a execução mostrou, tudo corrigido com teste e mutante:
    servidores de que a tarefa não tem ferramenta (tabela acima). Os tempos desta execução
    foram medidos antes da mudança, e o ganho ainda não foi medido numa execução completa:
    numa chamada de 66 a 74 s, como as do revisor e do rubber duck, 33 s é quase metade.
+5. **Uma resposta ilegível era recusada sem deixar rastro.** Duas recusas por "não é um
+   objeto JSON" (um autor, depois de 218 s e com 1.088 caracteres, e uma narrativa de
+   4.540) não deixaram a resposta para diagnosticar. Agora o leitor aceita as quebras de
+   linha e tabulações que um modelo deixa sem escape dentro de uma string longa, a recusa
+   diz onde o JSON quebra (inclusive numa resposta cortada antes da última chave) e o
+   registro da tentativa guarda o começo e o fim da resposta, 300 caracteres de cada, só
+   no registro e não no journal. A causa dessas duas recusas não foi confirmada.
+6. **Uma tarefa pedida de novo com identidade nova reaproveitava a emissão antiga.** A
+   auditoria e a narrativa da entrega tinham o mesmo id e a mesma tentativa de antes de a
+   nota mudar, então o journal não registrou a emissão nova, o registro foi medido a
+   partir da antiga (4.850 s para um minuto de trabalho) e o `metrics` viu despachos sem
+   fim. A emissão agora é registrada por identidade, e o registro de uso de uma chamada
+   repetida fica ao lado do anterior (`<rótulo>.2.json`) em vez de sobrescrevê-lo.
 
 Achados em aberto:
 

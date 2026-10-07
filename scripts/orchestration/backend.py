@@ -240,6 +240,12 @@ class CopilotCli:
         if self.usage_dir is not None:
             self.usage_dir.mkdir(parents=True, exist_ok=True)
             usage_file = self.usage_dir / f"{task['label']}.json"
+            # A task asked again, after a stop or under another identity, has the same label.  The earlier record is
+            # the only account of what that call cost, so a later one goes beside it and never over it.
+            number = 1
+            while usage_file.exists():
+                number += 1
+                usage_file = self.usage_dir / f"{task['label']}.{number}.json"
         argv = self.command(task, usage_file, self.mcp_servers())
         work = tempfile.mkdtemp(prefix="docswarm-agent-")
         try:

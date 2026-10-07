@@ -198,6 +198,16 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
     is part of every task's identity (measured on a copy: the engine withdrew the cycle 4
     verdict and re-issued its three authors, even for a change of `monitor: false` to
     `true`). `--max-cycles` is the supported way (see Added).
+  - A reply that could not be read was refused and left nothing to diagnose (an author after
+    218 s with 1,088 characters, a narrative of 4,540). The parser now accepts the line breaks
+    and tabs a model leaves unescaped inside a long string, the refusal says where the JSON
+    breaks (including a reply cut off before its last brace), and the record of the attempt
+    keeps the head and tail of the reply (300 characters each; not the journal).
+  - A task asked again under a new identity (same id and attempt, other inputs) reused the
+    earlier issue in the journal, so its record was measured from it (4,850 s for a one-minute
+    audit) and `metrics` saw dispatches that never ended. The issue is now journaled per
+    identity. The usage record of that second call no longer overwrites the first: a later
+    call with the same label is written beside it (`<label>.2.json`).
 - `resume.py` no longer asks a presentation swarm to "compose" forever. It looked for
   `output/*.md`, which a presentation never has, so every watchdog tick projected a
   recomposition: one recorded run took five R5 recoveries and rebuilt the deck three

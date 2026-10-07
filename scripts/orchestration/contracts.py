@@ -146,21 +146,36 @@ def parse_agent_json(text: str) -> tuple[dict[str, Any] | None, str | None]:
     A model asked for bare JSON still often adds a sentence or a code fence.  Rejecting that would cost
     a retry of a long agent run for a formatting habit, so the object is taken from the whole text, from
     a fenced block, or from the outermost braces.  Whatever is recovered still has to satisfy the contract.
+
+    A long Markdown string is also often written with its line breaks and tabs unescaped, which strict JSON
+    refuses, so they are accepted inside strings.  When nothing parses, the refusal says where the object
+    breaks, so that the retry corrects that and not a guess.
     """
     candidates = [text.strip()]
     candidates += [item.strip() for item in re.findall(r"```(?:json)?[ \t]*\r?\n(.*?)\r?\n```", text, re.S | re.I)]
     start, end = text.find("{"), text.rfind("}")
-    if 0 <= start < end:
-        candidates.append(text[start:end + 1])
-    for candidate in candidates:
+    if start >= 0:
+        # An answer cut off before its last brace still shows where it broke.
+        candidates.append(text[start:end + 1] if end > start else text[start:])
+    reason = ""
+    for index, candidate in enumerate(candidates):
         try:
-            value = json.loads(candidate)
-        except (ValueError, RecursionError):
+            value = json.loads(candidate, strict=False)
+        except RecursionError:
             # Deeply nested text raises RecursionError, which is not a ValueError: an answer made of
             # thousands of brackets must be refused like any other malformed answer, not end the run.
             continue
+        except ValueError as exc:
+            if index == len(candidates) - 1 and start >= 0:
+                reason = (f"{exc.msg} at line {exc.lineno} column {exc.colno}"
+                          if isinstance(exc, json.JSONDecodeError) else str(exc))
+            continue
         if isinstance(value, dict):
             return value, None
+    if reason:
+        return None, ("the answer is not a JSON object: the text from its first { is not valid JSON "
+                      f"({reason}); reply with only the JSON object that obeys the schema, writing quotes and line "
+                      'breaks inside strings as \\" and \\n')
     return None, "the answer is not a JSON object; reply with only the JSON object that obeys the schema"
 
 

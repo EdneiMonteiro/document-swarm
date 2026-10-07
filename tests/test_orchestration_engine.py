@@ -20,7 +20,7 @@ from urllib.parse import SplitResult
 from scripts.checks import gate, health, progress, resume
 from scripts.checks.common import InputError, parse_data
 from scripts.orchestration import contracts, prompts, spec
-from scripts.orchestration.engine import Engine, Options
+from scripts.orchestration.engine import ANSWER_EXCERPT, Engine, Options
 from scripts.orchestration.store import FileLock, Journal, atomic_text, digest_json
 from tests.test_checks import SourceHandler
 
@@ -1301,6 +1301,65 @@ class RecordTests(EngineCase):
                 self.assertIn("not a JSON object", problem)
         self.assertEqual(contracts.parse_agent_json(' {"a": 1} ')[0], {"a": 1})
 
+    def test_a_line_break_or_tab_inside_a_string_is_not_a_reason_to_lose_a_paid_answer(self):
+        text = '{"narrative_markdown": "primeira linha\nsegunda\tcom tab"}'
+        value, problem = contracts.parse_agent_json(text)
+        self.assertIsNone(problem)
+        self.assertEqual(value, {"narrative_markdown": "primeira linha\nsegunda\tcom tab"})
+        self.assertEqual(contracts.parse_agent_json(f"Aqui está:\n```json\n{text}\n```\n")[0], value)
+
+    def test_an_answer_that_cannot_be_read_is_told_where_the_object_breaks(self):
+        cases = {
+            "cut off inside a string": ('{"files": [{"path": "output/sections/a.md", "content": "texto sem fim',
+                                        "Unterminated string"),
+            "cut off after a comma": ('{"a": 1,', "Expecting"),
+            "single quotes": ("{'a': 1}", "Expecting property name"),
+        }
+        for label, (text, fragment) in cases.items():
+            with self.subTest(case=label):
+                value, problem = contracts.parse_agent_json(text)
+                self.assertIsNone(value)
+                self.assertIn("not a JSON object", problem)
+                self.assertIn("not valid JSON", problem)
+                self.assertIn(fragment, problem)
+                self.assertRegex(problem, r"line \d+ column \d+")
+        self.assertEqual(contracts.parse_agent_json("Não consegui concluir a tarefa.")[1],
+                         "the answer is not a JSON object; reply with only the JSON object that obeys the schema")
+        value, problem = contracts.parse_agent_json('Segue a entrega: {"a": [1, 2')
+        self.assertIsNone(value)
+        self.assertNotIn("at line 1 column 1)", problem, "the position is inside the object, not at the prose before it")
+        self.assertRegex(problem, r"line 1 column \d{2}")
+
+    def test_an_answer_that_cannot_be_read_leaves_its_head_and_tail_in_the_record_and_not_in_the_journal(self):
+        # The first real run refused an author after 218 s for a 1,088 character answer, and the answer was gone: there
+        # was no telling a reply that was cut off from one that was chatty.
+        broken = '{"files": [{"path": "output/sections/a.md", "content": "' + "palavra " * 200 + "FIM_DO_TEXTO"
+
+        def cut_off_once(task, result):
+            if task["agent"] == "author-01-platform" and task["attempt"] == 1:
+                return broken
+            return result
+
+        done = self.finish(self.agent(mutate=cut_off_once))
+        self.assertEqual(done["outcome"], "approved")
+        path = self.root / "reports" / "execution" / "results" / "c01.r0.authors.author-01-platform.json"
+        first, second = json.loads(path.read_text(encoding="utf-8"))["attempts"]
+        self.assertEqual(first["outcome"], "rejected")
+        self.assertEqual(first["runtime"]["answer_head"], broken[:ANSWER_EXCERPT])
+        self.assertEqual(first["runtime"]["answer_tail"], broken[-ANSWER_EXCERPT:])
+        self.assertIn("Unterminated string", first["errors"][0])
+        self.assertNotIn("answer_head", second["runtime"], "an answer that was read leaves no excerpt")
+        for event in Journal(self.root / "reports" / "execution" / "journal.jsonl").find(
+                "task_recorded", task_id="c01.r0.authors.author-01-platform"):
+            self.assertNotIn("answer_head", event["runtime"], "the journal holds what the run did, not what was said")
+
+    def test_a_short_answer_that_cannot_be_read_is_kept_whole_and_has_no_tail(self):
+        engine = self.engine()
+        task = self.first_task(engine)
+        engine.record(task["task_id"], 1, task["inputs_sha256"], "{ isto não é json }")
+        attempt = engine.load_record(task["task_id"])["attempts"][0]
+        self.assertEqual((attempt["runtime"]["answer_head"], attempt["runtime"]["answer_tail"]), ("{ isto não é json }", ""))
+
     def test_a_changed_brief_reopens_the_work_and_the_record_starts_afresh(self):
         engine = self.engine()
         task = self.first_task(engine)
@@ -2071,6 +2130,25 @@ class ApprovalGradeTests(EngineCase):
         engine.load(adopt=True)
         self.assertEqual(engine.approval_grade, "A", "a swarm that was already running does not take the new policy")
         self.assertEqual(engine.recorded_approval_grade(), "A")
+
+    def test_a_task_asked_again_under_a_new_identity_is_issued_again_and_measured_from_that_issue(self):
+        # The first real run recorded 4,850 s for a one minute audit: the task had the same id and attempt as one issued
+        # before the grade changed, so the journal reused the old issue and the record was measured from it.
+        root = build_swarm(Path(self.temporary.name) / "again", max_cycles=1)
+        Engine(root, Options(approval_grade="A")).run(Scripted(root, self.base, grades=self.A_MINUS))
+        path = root / "reports" / "execution" / "journal.jsonl"
+        lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        for item in lines:
+            if item["event"] == "task_issued":
+                item["at"] = "2000-01-01T00:00:00.000Z"
+        path.write_text("".join(json.dumps(item, ensure_ascii=False) + "\n" for item in lines), encoding="utf-8")
+        Engine(root, Options(approval_grade="A-")).run(Scripted(root, self.base, grades=self.A_MINUS))
+        events = Journal(path).events()
+        issued = [item for item in events if item["event"] == "task_issued" and item["task_id"].endswith("narrative.coordinator")]
+        self.assertEqual(len(issued), 2, "once for the escalation and once for the approval")
+        self.assertEqual(len({item["inputs_sha256"] for item in issued}), 2)
+        recorded = [item for item in events if item["event"] == "task_recorded" and item["task_id"].endswith("narrative.coordinator")]
+        self.assertLess(recorded[-1]["seconds"], 600, "measured from the issue of this identity, not from an older one")
 
     def test_the_audit_of_a_matrix_judged_under_another_grade_is_a_new_task(self):
         self.finish(self.agent(), approval_grade="A")
