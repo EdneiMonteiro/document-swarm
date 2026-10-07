@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -33,6 +34,53 @@ from scripts.orchestration.contracts import Answer
 WEB_TOOLS = {"web_fetch", "web_search"}
 DENIED = ("shell", "write")
 STDERR_TAIL = 400
+MCP_LIST_TIMEOUT = 60
+MCP_SECTION = re.compile(r"^([A-Za-z][A-Za-z ]*) servers:\s*$")
+MCP_ENTRY = re.compile(r"^\s+([A-Za-z0-9][A-Za-z0-9._-]{0,99}) \([^)]*\)\s*$")
+BUILTIN_ORIGIN = "builtin"
+
+
+def parse_mcp_list(text: str) -> dict[str, list[str]]:
+    """The MCP servers ``copilot mcp list`` names, by origin; empty if the text is not that listing.
+
+    The listing is a few headings ("User servers:", "Plugin servers:", "Builtin servers:") with one
+    ``name (type)`` line under each.  Anything else is not trusted: an empty result means "do not prune".
+    """
+    found: dict[str, list[str]] = {}
+    origin = ""
+    for line in text.splitlines():
+        heading = MCP_SECTION.match(line)
+        if heading:
+            origin = heading.group(1).strip().lower()
+            continue
+        entry = MCP_ENTRY.match(line)
+        if entry and origin:
+            found.setdefault(origin, []).append(entry.group(1))
+    return found
+
+
+def mcp_flags(tools: Sequence[str], servers: dict[str, list[str]]) -> list[str]:
+    """The flags that stop every configured MCP server the task has no tool of from starting.
+
+    A server is started for each agent process and costs seconds before the model is asked anything (measured:
+    a trivial call took a median of 44 s with six user, five plugin and two builtin servers, and 11.5 s without).
+    ``--available-tools`` already hides the tools of the others, so stopping them takes nothing from the agent.
+    An MCP tool is named ``<server>-<tool>``, so a task that lists one keeps its server.
+    """
+    def needed(name: str) -> bool:
+        return any(tool == name or tool.startswith(f"{name}-") for tool in tools)
+
+    flags: list[str] = []
+    builtin = servers.get(BUILTIN_ORIGIN, [])
+    if builtin and not any(needed(name) for name in builtin):
+        flags.append("--disable-builtin-mcps")
+    seen: set[str] = set()
+    for origin, names in servers.items():
+        for name in names:
+            if origin != BUILTIN_ORIGIN and name not in seen and not needed(name):
+                seen.add(name)
+                flags += ["--disable-mcp-server", name]
+    return flags
 
 
 def models_from_usage(data: Any) -> list[str]:
@@ -68,12 +116,15 @@ class CopilotCli:
 
     def __init__(self, *, executable: Sequence[str] | None = None, timeout: float = 3600.0,
                  usage_dir: Path | None = None, environment: dict[str, str] | None = None,
-                 drain_timeout: float = 15.0) -> None:
+                 drain_timeout: float = 15.0, prune_mcp: bool = True) -> None:
         self.executable = list(executable) if executable else self.discover()
         self.timeout = timeout
         self.drain_timeout = drain_timeout
         self.usage_dir = usage_dir
         self.environment = environment or {}
+        self.prune_mcp = prune_mcp
+        self.mcp_guard = threading.Lock()
+        self.mcp_found: dict[str, list[str]] | None = None
         self.running: dict[int, subprocess.Popen[bytes]] = {}
         self.guard = threading.Lock()
         self.cancelled = threading.Event()
@@ -90,8 +141,35 @@ class CopilotCli:
         return [path]
 
     # -- the command ---------------------------------------------------------
-    def command(self, task: dict[str, Any], usage_file: Path | None = None) -> list[str]:
-        """The command line for one task, without the prompt (which goes on stdin)."""
+    def mcp_servers(self) -> dict[str, list[str]]:
+        """The MCP servers this CLI would start for an agent, asked once; empty when pruning is off or unknown."""
+        if not self.prune_mcp:
+            return {}
+        with self.mcp_guard:
+            if self.mcp_found is None:
+                self.mcp_found = self.list_mcp()
+            return self.mcp_found
+
+    def list_mcp(self) -> dict[str, list[str]]:
+        # Listed from an empty folder, like the agents run, so that a workspace file cannot change the answer.
+        work = tempfile.mkdtemp(prefix="docswarm-mcp-")
+        try:
+            done = subprocess.run([*self.executable, "mcp", "list"], stdin=subprocess.DEVNULL, capture_output=True,
+                                  cwd=work, env={**os.environ, "NO_COLOR": "1", **self.environment},
+                                  timeout=MCP_LIST_TIMEOUT)
+        except (OSError, subprocess.SubprocessError):
+            return {}
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        return parse_mcp_list(done.stdout.decode("utf-8", errors="replace")) if done.returncode == 0 else {}
+
+    def command(self, task: dict[str, Any], usage_file: Path | None = None,
+                mcp_servers: dict[str, list[str]] | None = None) -> list[str]:
+        """The command line for one task, without the prompt (which goes on stdin).
+
+        Building it starts nothing: the MCP servers to stop are given by whoever is about to run or show the task
+        (``mcp_servers()``), so that describing a command can never run the CLI.
+        """
         tools = [str(item) for item in task.get("tools") or []]
         if not tools:
             raise InputError(f"task {task.get('task_id')} has no tools; an empty list would mean no restriction")
@@ -110,6 +188,7 @@ class CopilotCli:
             args += ["--context", str(task["context_tier"])]
         if usage_file is not None:
             args += ["--usage-output-file", str(usage_file)]
+        args += mcp_flags(tools, mcp_servers or {})
         return args
 
     # -- running -------------------------------------------------------------
@@ -161,7 +240,7 @@ class CopilotCli:
         if self.usage_dir is not None:
             self.usage_dir.mkdir(parents=True, exist_ok=True)
             usage_file = self.usage_dir / f"{task['label']}.json"
-        argv = self.command(task, usage_file)
+        argv = self.command(task, usage_file, self.mcp_servers())
         work = tempfile.mkdtemp(prefix="docswarm-agent-")
         try:
             process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

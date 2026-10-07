@@ -19,7 +19,7 @@ from urllib.parse import SplitResult
 
 from scripts.checks import gate, health, progress, resume
 from scripts.checks.common import InputError, parse_data
-from scripts.orchestration import contracts, spec
+from scripts.orchestration import contracts, prompts, spec
 from scripts.orchestration.engine import Engine, Options
 from scripts.orchestration.store import FileLock, Journal, atomic_text, digest_json
 from tests.test_checks import SourceHandler
@@ -276,6 +276,101 @@ class PipelineTests(EngineCase):
         self.engine().run(spy)
         self.assertEqual({kind for kind, _ in seen}, {"author", "consolidation", "reviewer", "rubber-duck", "narrative"})
         self.assertTrue(all(found for _, found in seen), seen)
+
+    def test_the_consolidation_prompt_tells_the_coordinator_which_names_a_divergence_may_use(self):
+        seen: dict[str, Any] = {}
+        agent = self.agent()
+
+        def spy(task):
+            if task["kind"] == "consolidation":
+                seen.update(prompt=task["prompt"], schema=task["schema"], context=task["context"])
+            return agent(task)
+
+        self.engine().run(spy)
+        names = ["author-01-platform", "author-02-operations"]
+        self.assertIn("Nomes de autor válidos: author-01-platform, author-02-operations.", seen["prompt"])
+        self.assertIn("`topic` é exatamente um identificador da lista de tópicos", seen["prompt"])
+        self.assertIn("nunca junte vários valores em um campo", seen["prompt"])
+        item = seen["schema"]["properties"]["divergences"]["items"]["properties"]
+        self.assertEqual(item["author"]["enum"], ["", *names])
+        self.assertEqual(item["topic"]["enum"], ["", *TOPICS])
+        self.assertEqual(seen["context"]["authors"], names, "a backend that drives next and record sees them too")
+
+    def test_a_coordinator_that_writes_a_short_name_is_refused_and_told_the_exact_names_on_the_retry(self):
+        # The first real run: two paid consolidations were refused for "author-01" and "T01 / T06 (licença)".
+        def short_names_once(task, result):
+            if task["kind"] == "consolidation" and task["attempt"] == 1:
+                return {**result, "divergences": [{"topic": "T01 / T02", "author": "author-01", "issue": "conflito"}]}
+            return result
+
+        agent = self.agent(mutate=short_names_once)
+        done = self.finish(agent)
+        self.assertEqual((done["status"], done["outcome"]), ("done", "approved"))
+        retry = next(text for (task, attempt), text in agent.prompts.items()
+                     if task.startswith("c01.r0.consolidation") and attempt == 2)
+        self.assertIn("divergence names unknown author 'author-01'", retry, "the correction block quotes the refusal")
+        self.assertIn("use exactly one declared author name (author-01-platform, author-02-operations)", retry)
+        self.assertIn("use exactly one topic id (T01, T02)", retry)
+
+    def test_the_reviewer_prompt_tells_each_reviewer_to_write_only_the_topic_id(self):
+        seen: dict[str, dict[str, Any]] = {}
+        agent = self.agent()
+
+        def spy(task):
+            if task["kind"] == "reviewer":
+                seen[task["agent"]] = {"prompt": task["prompt"], "schema": task["schema"]}
+            return agent(task)
+
+        self.engine().run(spy)
+        self.assertEqual(set(seen), {"reviewer-01-facts", "reviewer-02-clarity"})
+        for name, item in seen.items():
+            with self.subTest(reviewer=name):
+                topic = item["schema"]["properties"]["topics"]["items"]["properties"]["topic"]
+                self.assertEqual(topic["enum"], list(TOPICS))
+                self.assertIn("`topic` é só o identificador (por exemplo `T01`), nunca o título", item["prompt"])
+
+    def test_a_reviewer_that_writes_the_title_with_the_id_is_refused_and_told_the_valid_ids_on_the_retry(self):
+        # The first real run, cycle 4: the fact reviewer wrote "T01: O que é o Laya e por que existe" for every topic,
+        # and a two-minute assessment was refused for it.
+        def with_titles_once(task, result):
+            if task["agent"] == "reviewer-01-facts" and task["attempt"] == 1:
+                return {**result, "topics": [{**row, "topic": f"{row['topic']}: {TOPICS[row['topic']]}"}
+                                             for row in result["topics"]]}
+            return result
+
+        agent = self.agent(mutate=with_titles_once)
+        done = self.finish(agent)
+        self.assertEqual((done["status"], done["outcome"]), ("done", "approved"))
+        retry = next(text for (task, attempt), text in agent.prompts.items()
+                     if task.startswith("c01.r0.reviewers.reviewer-01-facts") and attempt == 2)
+        self.assertIn("these topics were not graded: T01, T02", retry)
+        self.assertIn("these topics are not in the brief: T01: Enquadramento", retry)
+        self.assertIn("`topic` is exactly one id (T01, T02), without the title", retry)
+
+    def test_the_audit_is_not_shown_the_marker_of_its_own_missing_result(self):
+        # The matrix is rendered before the audit exists, with a critical "audit not recorded" marker that fails the gate
+        # closed.  Shown to the auditor it was reported as a critical inconsistency (first real run, cycle 3).
+        seen: dict[str, str] = {}
+        agent = self.agent()
+
+        def spy(task):
+            if task["kind"] == "rubber-duck":
+                seen["prompt"] = task["prompt"]
+            return agent(task)
+
+        self.engine().run(spy)
+        prompt = seen["prompt"]
+        self.assertNotIn("has not been recorded", prompt)
+        self.assertNotIn('"rubberduck"', prompt)
+        self.assertIn('"topics"', prompt, "the rest of the matrix is still shown")
+        self.assertIn("não a aponte como ausente nem como inconsistente", prompt)
+        self.assertIn("Você não decide a aprovação", prompt)
+        engine = self.engine()
+        engine.load(adopt=True)
+        whole = engine.render_review(1, None)
+        self.assertEqual(engine.build_duck(1, 0).inputs["review"],
+                         digest_json({key: value for key, value in whole.items() if key != "max_cycles"}),
+                         "hiding the marker from the auditor must not change which results count as its audit")
 
     def test_a_task_carries_everything_a_backend_needs_and_nothing_secret(self):
         engine = self.engine()
@@ -707,6 +802,82 @@ class ContractTests(EngineCase):
         self.assertTrue(run({**good, "divergences": [{"topic": "", "author": "", "issue": ""}]}), "an issue is required")
         huge = "# T\n" + "x" * (contracts.MAX_DOCUMENT_BYTES + 1)
         self.assertTrue(any("supported size" in item for item in run({**good, "document_markdown": huge})))
+
+    def test_a_divergence_that_names_a_value_the_engine_does_not_know_is_told_the_valid_ones(self):
+        # Seen in the first real run: the coordinator wrote "author-01 e author-03" and "T01 / T06 (licença)".  The
+        # refusal must say what is accepted, because the retry is a second long agent call.
+        authors = {"author-02-operations", "author-01-platform"}
+        result = {"document_markdown": "# Título\n\nTexto.\n", "divergences": [
+            {"topic": "T01 / T02 (licença dos pesos)", "author": "author-01", "issue": "x"}]}
+        errors, normal = contracts.check_consolidation(result, topics=TOPICS, authors=authors)
+        self.assertIsNone(normal)
+        topic_error = next(item for item in errors if "unknown topic" in item)
+        author_error = next(item for item in errors if "unknown author" in item)
+        self.assertIn("(T01, T02)", topic_error)
+        self.assertIn("(author-01-platform, author-02-operations)", author_error)
+        for message in (topic_error, author_error):
+            self.assertIn("or leave it empty", message)
+            self.assertIn("one divergence per", message)
+
+    def test_the_consolidation_schema_spells_out_the_values_a_divergence_may_name(self):
+        schema = contracts.consolidation_schema(TOPICS, ["author-02-operations", "author-01-platform"])
+        item = schema["properties"]["divergences"]["items"]["properties"]
+        self.assertEqual(item["topic"]["enum"], ["", "T01", "T02"])
+        self.assertEqual(item["author"]["enum"], ["", "author-01-platform", "author-02-operations"],
+                         "sorted, and an empty value for what does not apply")
+        self.assertEqual(schema["required"], ["document_markdown", "divergences"])
+
+    def test_the_reviewer_schema_spells_out_the_topic_ids(self):
+        for editorial in (False, True):
+            for fact in (False, True):
+                with self.subTest(editorial=editorial, fact=fact):
+                    schema = contracts.reviewer_schema(["T01", "T02"], editorial=editorial, fact=fact)
+                    topic = schema["properties"]["topics"]["items"]["properties"]["topic"]
+                    self.assertEqual(topic, {"type": "string", "enum": ["T01", "T02"]})
+
+    def test_a_topic_written_with_its_title_is_told_the_valid_ids(self):
+        spec = self.engine_.compiled.by_name("reviewer-02-clarity")
+        rows = [{"topic": f"{key}: {title}", "grade": "A", "justification": "ok", "action": ""}
+                for key, title in TOPICS.items()]
+        errors, normal = contracts.check_reviewer({"topics": rows}, spec=spec, topics=TOPICS, cycle=1, editorial=False,
+                                                  text="", text_path="reports/t.txt", text_sha="0" * 64, artifacts=[])
+        self.assertIsNone(normal)
+        self.assertIn("these topics were not graded: T01, T02", errors)
+        extra = next(item for item in errors if "are not in the brief" in item)
+        self.assertIn("T01: Enquadramento, T02: Alternativas e custos", extra)
+        self.assertIn("`topic` is exactly one id (T01, T02), without the title", extra)
+
+    def test_the_protocol_of_each_role_states_the_limits_the_contract_enforces(self):
+        # A limit the model is not told fails a long agent call and costs a retry.
+        engine = self.engine_
+        author = next(item for item in engine.next()["tasks"] if item["kind"] == "author")["prompt"]
+        self.assertIn(f"até {contracts.SOURCE_TEXT_LIMITS['title']} caracteres, sem `|` e sem endereço web", author)
+        self.assertIn(f"`type` tem até {contracts.SOURCE_TEXT_LIMITS['type']} caracteres", author)
+        self.assertIn("sem credenciais e sem endereço de rede interna", author)
+        self.assertIn(f"no máximo {contracts.MAX_FILES} arquivos por resposta e "
+                      f"{contracts.MAX_FILE_BYTES // 1024} KiB por arquivo", author)
+        self.assertIn(f"O `path` tem até {contracts.MAX_PATH_CHARS} caracteres", author)
+        self.assertIn(f"nome de pasta ou de arquivo tem até {contracts.MAX_COMPONENT_BYTES} bytes", author)
+        self.assertIn("o nome deve ser portável", author)
+        arguments = dict(swarm_id="demo", cycle=1, round_number=0, task_id="t", attempt=1, previous_errors=[],
+                         brief_body="b", topics=TOPICS, document="d", primary="output/document.md", sources_index="i",
+                         checks="c", editorial=False, schema={})
+        fact = prompts.reviewer(engine.compiled.by_name("reviewer-01-facts"), **arguments)
+        form = prompts.reviewer(engine.compiled.by_name("reviewer-02-clarity"), **arguments)
+        self.assertIn("Só contam páginas públicas", fact)
+        self.assertNotIn("Só contam páginas públicas", form, "a form reviewer lists no sources")
+        for kind, prompt in (("fact", fact), ("form", form)):
+            with self.subTest(reviewer=kind):
+                self.assertIn("`topic` é só o identificador (por exemplo `T01`), nunca o título", prompt)
+        coordinator = prompts.consolidation(
+            engine.compiled.by_name("coordinator"), swarm_id="demo", cycle=1, round_number=0, task_id="t", attempt=1,
+            previous_errors=[], brief_body="b", topics=TOPICS, authors=["author-01-platform"], sections=[],
+            sources_index="i", feedback="", previous_document="", schema={})
+        self.assertIn(f"Tamanho máximo: {contracts.MAX_DOCUMENT_BYTES // (1024 * 1024)} MiB", coordinator)
+        narrative = prompts.narrative(engine.compiled.by_name("coordinator"), swarm_id="demo", cycle=1, round_number=0,
+                                      task_id="t", attempt=1, previous_errors=[], brief_body="b", facts="f",
+                                      outcome="approved", schema={})
+        self.assertIn(f"No máximo {contracts.MAX_NARRATIVE_CHARS} caracteres", narrative)
 
     def test_an_editorial_block_the_gate_would_reject_is_refused_at_once(self):
         editorial = self.engine_.compiled.by_name("reviewer-02-clarity")
@@ -1292,6 +1463,47 @@ class RobustnessTests(EngineCase):
         stubborn = Scripted(root, self.base, grades={(cycle, "reviewer-01-facts", "T02"): "B+" for cycle in (1, 2, 3)})
         done = Engine(root).run(stubborn)
         self.assertEqual((done["outcome"], done["cycle"]), ("escalated", 3))
+
+    def test_raising_the_ceiling_costs_one_more_cycle_and_nothing_already_paid_for(self):
+        # The first real run escalated at its ceiling.  Editing the brief to raise it changes what every task depends
+        # on and pays the last cycle again (measured: three authors re-issued); the option leaves the brief alone.
+        root = build_swarm(Path(self.temporary.name) / "raise", max_cycles=2)
+        grades = {(cycle, "reviewer-01-facts", "T02"): "B+" for cycle in (1, 2, 3)}
+        first = Engine(root).run(Scripted(root, self.base, grades=grades))
+        self.assertEqual((first["outcome"], first["cycle"]), ("escalated", 2))
+        brief = (root / "brief.md").read_bytes()
+
+        more = Scripted(root, self.base, grades=grades)
+        second = Engine(root, Options(max_cycles=3)).run(more)
+        self.assertEqual((second["outcome"], second["cycle"]), ("escalated", 3))
+        self.assertEqual({call["cycle"] for call in more.calls}, {3},
+                         "nothing of the cycles already paid for is asked again, the audit included")
+        self.assertEqual((root / "brief.md").read_bytes(), brief, "the brief was not touched")
+        [change] = Journal(root / "reports" / "execution" / "journal.jsonl").find("max_cycles_changed")
+        self.assertEqual((change["previous"], change["current"], change["brief"]), (2, 3, 2))
+
+        later = Scripted(root, self.base, grades=grades)
+        third = Engine(root).run(later)
+        self.assertEqual((third["outcome"], third["cycle"]), ("escalated", 3), "a later call keeps the raised ceiling")
+        self.assertEqual(later.calls, [])
+
+    def test_the_audit_is_the_same_task_whatever_the_ceiling(self):
+        self.finish()
+        before = self.engine()
+        before.load(adopt=True)
+        identity = before.build_duck(1, 0).inputs_sha256
+        raised = Engine(self.root, Options(max_cycles=9))
+        raised.init()
+        raised.load(adopt=True)
+        self.assertEqual(raised.max_cycles, 9)
+        self.assertEqual(raised.build_duck(1, 0).inputs_sha256, identity)
+
+    def test_a_ceiling_that_is_not_a_positive_integer_is_refused_before_anything_is_written(self):
+        for value in (0, -1, True, 2.5, "3"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(InputError, "max_cycles must be a positive integer"):
+                    Engine(self.root, Options(max_cycles=value)).init()
+        self.assertFalse((self.root / "reports" / "execution" / "plan.json").exists())
 
     def test_a_torn_final_journal_line_is_recovered_and_corruption_elsewhere_is_not_hidden(self):
         path = Path(self.temporary.name) / "journal.jsonl"

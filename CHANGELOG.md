@@ -94,6 +94,23 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 - `DOCSWARM_NO_REAL_CLI=1` makes any path to the real `copilot` fail. The tests set
   it, so a test, or a rule deliberately disabled by mutation testing, can never
   spend credits.
+- `init` and `run` take `--max-cycles N`, which replaces the brief's cycle ceiling. It is
+  kept in the plan until another is given, and a change is journaled as
+  `max_cycles_changed` (previous, new and the brief's own). After an escalation,
+  `run --max-cycles N` continues from the last cycle: the escalated verdict is withdrawn
+  and the cycle gated again from grades that already exist, so only the new cycle is paid
+  for. The rubber duck's identity no longer includes the ceiling, which is the only part
+  of a task that changed with it. A swarm created before this change pays that one audit
+  again.
+- An agent's `copilot` process starts only the MCP servers its task has a tool of. The
+  backend asks the CLI once per run (`copilot mcp list`) which servers exist and passes
+  `--disable-mcp-server` for the others and `--disable-builtin-mcps` when no builtin one
+  is needed. `--available-tools` already hid their tools, so an agent loses nothing, and a
+  listing that fails or is not recognised stops nothing. `--keep-mcp-servers` restores the
+  CLI's default. Measured on a trivial call with the backend's own flags (three alternating
+  calls of each kind): a median of 44.1 s with the user's thirteen servers, 11.5 s without.
+  Building a command (`command()`) starts nothing; the listing is asked for by the code that
+  runs or previews a task.
 
 ### Changed
 
@@ -119,12 +136,18 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 - Markdown only, and only for new swarms. Presentations, PDF and the evolution of a
   swarm that already has cycles keep the coordinator flow; the executor refuses them
   before spending anything.
-- The `copilot` backend rests on the CLI's documented options and was tested with a
-  stand-in CLI. Every option it passes exists in the installed CLI's help, but it has
-  not been qualified with real calls: run `qualify`. No paid
-  benchmark was run, so there is no promised percentage gain.
+- The `copilot` backend was qualified with real calls on 2026-10-07 (CLI 1.0.93-2,
+  `gpt-5-mini`, 7 of 7 probes) and produced a whole article through four cycles (see
+  `docs/executor.md`, "Primeira execução real"). It is not qualified on other CLI
+  versions: run `qualify` after upgrading. No paid benchmark against the coordinator
+  flow was run, so there is no promised percentage gain.
 - The visual monitor panel is not driven by the executor, and a dead source found by
-  the final recheck blocks the delivery until someone replaces it.
+  the final recheck blocks the delivery until someone replaces it. `health.py` and the
+  panel show the brief's cycle ceiling, not one set with `--max-cycles`.
+- The length a brief asks for is not checked by anything: the first real run delivered
+  5,525 words against a requested 2,500 to 3,500.
+- The saving from stopping the MCP servers was measured on a trivial call, not on a whole
+  run: the timings of the first real run were taken before the change.
 - Only run on Windows. The `fcntl` lock and the process-group kill are the Linux and
   macOS paths and have never run; run the test suite there before relying on them.
   Files the executor writes on POSIX are owner-only (0600), a `mkstemp` default.
@@ -143,6 +166,23 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
 ### Fixed
 
+- First real run of the executor (an article about the Laya model, four cycles):
+  - The contract was enforced but not stated. A coordinator was refused twice for
+    writing "author-01 e author-03" and "T01 / T06 (licença)" where the engine needs one
+    exact author name and one topic id, and a reviewer was refused for writing
+    "T01: título" where it needs "T01". The schemas now enumerate the valid values
+    (`divergences[].topic` and `.author`, the reviewer's `topic`), the prompts name them,
+    and each refusal lists what is accepted. The same was done for the limits no prompt
+    stated: source title and type length, the public-URL rule, the narrative length, the
+    number, size and path length of an author's files, and the document size.
+  - The rubber duck was shown the matrix with the executor's own marker for "audit not
+    recorded", which fails the gate closed by default, read it as a critical defect and
+    vetoed a cycle. It now sees the matrix without the `rubberduck` section, and its
+    prompt says it does not decide approval.
+  - "Raise the ceiling and run again" paid the last cycle again, because the brief's text
+    is part of every task's identity (measured on a copy: the engine withdrew the cycle 4
+    verdict and re-issued its three authors, even for a change of `monitor: false` to
+    `true`). `--max-cycles` is the supported way (see Added).
 - `resume.py` no longer asks a presentation swarm to "compose" forever. It looked for
   `output/*.md`, which a presentation never has, so every watchdog tick projected a
   recomposition: one recorded run took five R5 recoveries and rebuilt the deck three

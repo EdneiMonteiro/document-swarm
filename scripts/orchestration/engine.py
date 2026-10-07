@@ -23,7 +23,7 @@ import time
 import unicodedata
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterator
@@ -62,6 +62,9 @@ class Options:
     max_attempts: int = 2
     max_repairs: int = 2
     script_timeout: int = 900
+    # Replaces the brief's ceiling and is kept in the plan.  Editing the brief to raise it would change what every
+    # task depends on and make the current cycle be paid for again.
+    max_cycles: int | None = None
 
 
 @dataclass
@@ -100,10 +103,26 @@ class Engine:
         if not path.is_file():
             return
         stored = read_json(path).get("options", {})
-        attempts, repairs = stored.get("max_attempts"), stored.get("max_repairs")
+        attempts, repairs, cycles = stored.get("max_attempts"), stored.get("max_repairs"), stored.get("max_cycles")
         self.options = Options(max_attempts=attempts if type(attempts) is int and attempts >= 1 else self.options.max_attempts,
                                max_repairs=repairs if type(repairs) is int and repairs >= 0 else self.options.max_repairs,
-                               script_timeout=self.options.script_timeout)
+                               script_timeout=self.options.script_timeout,
+                               max_cycles=cycles if type(cycles) is int and cycles >= 1 else self.options.max_cycles)
+
+    def stored_ceiling(self) -> int | None:
+        """The ceiling a person set with ``--max-cycles`` on an earlier call, which stays until another is given."""
+        path = self.exec / "plan.json"
+        plan = read_json(path) if path.is_file() else None
+        options = plan.get("options") if isinstance(plan, dict) else None
+        value = options.get("max_cycles") if isinstance(options, dict) else None
+        return value if type(value) is int and value >= 1 else None
+
+    def recorded_ceiling(self) -> int | None:
+        """The ceiling the plan on disk was written with, whatever set it."""
+        path = self.exec / "plan.json"
+        plan = read_json(path) if path.is_file() else None
+        value = plan.get("max_cycles") if isinstance(plan, dict) else None
+        return value if type(value) is int and value >= 1 else None
 
     def load(self, *, models: list[str] | None = None, strict: bool = True, adopt: bool = False) -> specs.Compiled:
         if adopt:
@@ -138,7 +157,8 @@ class Engine:
         if type(maximum) is not int or maximum < 1:
             problems.append("the brief needs a positive integer max_cycles")
             maximum = 1
-        self.max_cycles = maximum
+        self.brief_max_cycles = maximum
+        self.max_cycles = self.options.max_cycles if self.options.max_cycles is not None else maximum
         try:
             self.topics = specs.parse_topics(self.brief)
         except InputError as exc:
@@ -273,22 +293,32 @@ class Engine:
         if type(self.options.max_attempts) is not int or self.options.max_attempts < 1 \
                 or type(self.options.max_repairs) is not int or self.options.max_repairs < 0:
             raise InputError("max_attempts must be a positive integer and max_repairs a non-negative integer")
+        if self.options.max_cycles is not None and (type(self.options.max_cycles) is not int or self.options.max_cycles < 1):
+            raise InputError("max_cycles must be a positive integer")
+        if self.options.max_cycles is None:
+            self.options = replace(self.options, max_cycles=self.stored_ceiling())
         # Everything that can refuse the swarm runs before the first file is created in it.
         compiled = self.load(models=models)
         if not self.journal.events() and any((self.root / "reports").glob("cycle-*")):
             raise InputError("this swarm already holds cycle artifacts from the coordinator flow; "
                              "the executor starts new swarms only")
         with self.lock.held():
+            previous = self.recorded_ceiling()
             plan = {
                 "schema_version": 1, "swarm_id": self.swarm_id, "skill_version": self.skill_version,
                 "max_cycles": self.max_cycles, "topics": self.topics, "deliverable": self.primary,
                 "editorial_reviewer": self.editorial_name, "brief_sha256": self.brief_sha,
-                "options": {"max_attempts": self.options.max_attempts, "max_repairs": self.options.max_repairs},
+                "options": {"max_attempts": self.options.max_attempts, "max_repairs": self.options.max_repairs,
+                            "max_cycles": self.options.max_cycles},
                 "agents": [item.public() for item in sorted(compiled.specs, key=lambda item: item.name)],
                 "warnings": compiled.warnings,
             }
             plan["plan_sha256"] = digest_json(plan)
             self.write_json("reports/execution/plan.json", plan)
+            if previous is not None and previous != self.max_cycles:
+                # Raising the ceiling is a person's decision to keep going below the bar: it stays on the record.
+                self.journal.append("max_cycles_changed", previous=previous, current=self.max_cycles,
+                                    brief=self.brief_max_cycles)
             event = "run_started" if not self.journal.find("run_started") else "plan_refreshed"
             self.journal.append(event, plan_sha256=plan["plan_sha256"], agents=len(compiled.specs))
             return {"ok": True, "plan_sha256": plan["plan_sha256"], "agents": len(compiled.specs),
@@ -489,17 +519,19 @@ class Engine:
                   "cycle": cycle, "round": round_number, "sections": {path: digest_text(text) for path, text in written},
                   "assets": assets, "index": digest_text(index), "previous": digest_text(previous)}
         task_id = self.task_id(cycle, round_number, "consolidation", coordinator.name)
+        authors = [item.name for item in self.spec_of("author")]
+        schema = contracts.consolidation_schema(self.topics, authors)
 
         def build(attempt: int, errors: list[str]) -> str:
             extra = f"\n\nArquivos de apoio já entregues pelos autores: {', '.join(assets)}." if assets else ""
             return prompts.consolidation(coordinator, swarm_id=self.swarm_id, cycle=cycle, round_number=round_number,
                                          task_id=task_id, attempt=attempt, previous_errors=errors,
-                                         brief_body=self.brief_body, topics=self.topics, sections=written,
-                                         sources_index=index + extra, feedback=feedback["markdown"],
-                                         previous_document=previous, schema=contracts.CONSOLIDATION_SCHEMA)
+                                         brief_body=self.brief_body, topics=self.topics, authors=authors,
+                                         sections=written, sources_index=index + extra, feedback=feedback["markdown"],
+                                         previous_document=previous, schema=schema)
 
         return Task(task_id, "consolidation", "consolidation", coordinator, cycle, round_number, inputs, build,
-                    contracts.CONSOLIDATION_SCHEMA, {"topics": self.topics, "deliverable": self.primary})
+                    schema, {"topics": self.topics, "deliverable": self.primary, "authors": authors})
 
     def snapshot_path(self, cycle: int, round_number: int) -> str:
         return f"reports/execution/checks/c{cycle:02d}.r{round_number}.sources.json"
@@ -551,7 +583,7 @@ class Engine:
                   "index": digest_text(index), "checks": self.check_hashes(cycle, round_number), "topics": self.topics,
                   "cycle": cycle, "round": round_number}
         task_id = self.task_id(cycle, round_number, "reviewers", agent.name)
-        schema = contracts.reviewer_schema(editorial=editorial, fact=agent.evidence_class == "fact")
+        schema = contracts.reviewer_schema(self.topics, editorial=editorial, fact=agent.evidence_class == "fact")
 
         def build(attempt: int, errors: list[str]) -> str:
             return prompts.reviewer(agent, swarm_id=self.swarm_id, cycle=cycle, round_number=round_number,
@@ -603,9 +635,15 @@ class Engine:
         document = self.read(self.primary)
         reports = self.reviewer_reports(cycle)
         review = self.render_review(cycle, None)
+        # The matrix is rendered before the audit exists, so its audit section is a marker that fails the gate closed.
+        # Shown to the auditor it reads as a critical defect of the matrix (the first real run vetoed a cycle for it),
+        # so the auditor sees the matrix without it.  The identity of the task still comes from the whole matrix, minus
+        # the ceiling: raising it does not change what the auditor examined, so it must not make the audit be paid again.
+        shown = {key: value for key, value in review.items() if key != "rubberduck"}
+        audited = {key: value for key, value in review.items() if key != "max_cycles"}
         checks = self.checks_text(cycle, round_number)
         inputs = {"brief": self.brief_sha, "spec": agent.sha256, "document": digest_text(document),
-                  "review": digest_json(review), "reports": digest_json(reports),
+                  "review": digest_json(audited), "reports": digest_json(reports),
                   "checks": self.check_hashes(cycle, round_number), "cycle": cycle, "round": round_number}
         task_id = self.task_id(cycle, round_number, "rubber-duck", agent.name)
 
@@ -613,7 +651,7 @@ class Engine:
             return prompts.rubber_duck(agent, swarm_id=self.swarm_id, cycle=cycle, round_number=round_number,
                                        task_id=task_id, attempt=attempt, previous_errors=errors,
                                        brief_body=self.brief_body, document=document, primary=self.primary,
-                                       review=review, reports=reports, checks=checks, schema=contracts.DUCK_SCHEMA)
+                                       review=shown, reports=reports, checks=checks, schema=contracts.DUCK_SCHEMA)
 
         return Task(task_id, "rubber-duck", "rubber-duck", agent, cycle, round_number, inputs, build,
                     contracts.DUCK_SCHEMA, {"deliverable": self.primary})

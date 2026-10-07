@@ -55,7 +55,8 @@ def declared_models(args: argparse.Namespace) -> list[str] | None:
 
 def command_init(args: argparse.Namespace) -> int:
     models = declared_models(args)
-    engine = Engine(args.swarm, Options(max_attempts=args.max_attempts, max_repairs=args.max_repairs))
+    engine = Engine(args.swarm, Options(max_attempts=args.max_attempts, max_repairs=args.max_repairs,
+                                        max_cycles=args.max_cycles))
     emit(engine.init(models=models), pretty=args.pretty)
     return 0
 
@@ -93,14 +94,15 @@ def backend_for(args: argparse.Namespace, usage_dir: Path | None) -> Any:
     if args.copilot_arg and not args.copilot:
         raise InputError("--copilot-arg only makes sense together with --copilot")
     executable = [args.copilot, *args.copilot_arg] if args.copilot else None
-    return CopilotCli(executable=executable, timeout=args.timeout, usage_dir=usage_dir)
+    return CopilotCli(executable=executable, timeout=args.timeout, usage_dir=usage_dir,
+                      prune_mcp=not args.keep_mcp_servers)
 
 
 def command_run(args: argparse.Namespace) -> int:
     from scripts.orchestration import driver
 
     models = declared_models(args)
-    options = Options(max_attempts=args.max_attempts, max_repairs=args.max_repairs)
+    options = Options(max_attempts=args.max_attempts, max_repairs=args.max_repairs, max_cycles=args.max_cycles)
     swarm = args.swarm.resolve(strict=True)
     backend = backend_for(args, swarm / "reports" / "execution" / "usage")
     if args.plan_only:
@@ -110,7 +112,8 @@ def command_run(args: argparse.Namespace) -> int:
         tasks = [{"label": item["label"], "agent": item["agent"], "kind": item["kind"], "model": item["model"],
                   "reasoning_effort": item["reasoning_effort"], "context_tier": item["context_tier"], "tools": item["tools"],
                   "prompt_bytes": len(item["prompt"].encode("utf-8")),
-                  "command": backend.command(item, swarm / "reports" / "execution" / "usage" / f"{item['label']}.json")}
+                  "command": backend.command(item, swarm / "reports" / "execution" / "usage" / f"{item['label']}.json",
+                                             backend.mcp_servers())}
                  for item in directive.get("tasks", [])]
         emit({"status": directive["status"], "stage": directive.get("stage"), "tasks": tasks, "spends_credits": False},
              pretty=args.pretty)
@@ -168,6 +171,9 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--max-attempts", type=int, default=Options.max_attempts, help="attempts per agent task")
     init.add_argument("--max-repairs", type=int, default=Options.max_repairs,
                       help="repair rounds per cycle for failing mechanical checks")
+    init.add_argument("--max-cycles", type=int, default=None,
+                      help="replace the brief's cycle ceiling; kept in the plan until another is given (raise it here, "
+                           "not in the brief: editing the brief makes the current cycle be paid for again)")
     swarm_command("next", "advance as far as code can and print what is needed next, or the outcome", command_next)
     swarm_command("record", "validate and persist one agent result read as JSON from stdin", command_record)
     swarm_command("status", "summarise the run from its journal", command_status)
@@ -177,6 +183,9 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--copilot-arg", action="append", default=[],
                              help="an argument placed right after --copilot, repeatable (for a wrapper or a test double)")
         command.add_argument("--timeout", type=float, default=3600.0, help="seconds one agent may run before it is stopped")
+        command.add_argument("--keep-mcp-servers", action="store_true",
+                             help="start every MCP server the CLI is configured with for each agent, as the CLI does "
+                                  "by default; without this only the servers whose tools the task lists are started")
 
     run = swarm_command("run", "run the whole swarm with no coordinator model; each agent is one copilot process", command_run)
     backend_options(run)
@@ -185,6 +194,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-attempts", type=int, default=Options.max_attempts, help="attempts per agent task")
     run.add_argument("--max-repairs", type=int, default=Options.max_repairs,
                      help="repair rounds per cycle for failing mechanical checks")
+    run.add_argument("--max-cycles", type=int, default=None,
+                     help="replace the brief's cycle ceiling; kept in the plan until another is given (raise it here, "
+                          "not in the brief: editing the brief makes the current cycle be paid for again)")
     run.add_argument("--tick", type=float, default=60.0, help="seconds between the status tables")
     run.add_argument("--json", action="store_true", help="print the final answer as JSON on stdout, tables on stderr")
     run.add_argument("--plan-only", action="store_true",

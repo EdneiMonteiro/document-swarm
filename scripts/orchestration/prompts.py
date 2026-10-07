@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from scripts.orchestration.contracts import (MAX_COMPONENT_BYTES, MAX_DOCUMENT_BYTES, MAX_FILE_BYTES, MAX_FILES,
+                                             MAX_NARRATIVE_CHARS, MAX_PATH_CHARS, SOURCE_TEXT_LIMITS)
 from scripts.orchestration.spec import AgentSpec
 
 CONTRACT_VERSION = "execution-contract-v1"
@@ -72,11 +74,17 @@ def author(spec: AgentSpec, *, swarm_id: str, cycle: int, round_number: int, tas
         "- `files`: cada arquivo a entregar, com `path` e `content` completo. Pastas permitidas: output/sections/, "
         "output/figures/ e output/assets/. Extensões: .md .svg .json .txt .csv. Reenvie o mesmo `path` para "
         "substituir um arquivo seu; os que você não reenviar permanecem como estão.",
+        f"- Limites de `files`: no máximo {MAX_FILES} arquivos por resposta e {MAX_FILE_BYTES // 1024} KiB por arquivo. "
+        f"O `path` tem até {MAX_PATH_CHARS} caracteres, cada nome de pasta ou de arquivo tem até {MAX_COMPONENT_BYTES} "
+        "bytes, e o nome deve ser portável: sem `< > : \" | ? *` e sem ponto ou espaço no fim.",
         f"- Não escreva em `{primary}`: é o documento consolidado, produzido pelo coordenador.",
         "- Os arquivos são seus. Não altere arquivos de outros autores.",
         f"- `sources`: fontes online distintas, que você consultou de fato. Cada `id` é `{code}` seguido de dois "
         f"dígitos (por exemplo `{code}01`, `{code}02`): a sua faixa de identificadores, para não colidir com outro "
         f"autor. Mínimo de fontes distintas declarado: {spec.sources_min}.",
+        f"- Em `sources`, `title` tem uma linha, até {SOURCE_TEXT_LIMITS['title']} caracteres, sem `|` e sem endereço "
+        f"web (o endereço vai em `url`); `type` tem até {SOURCE_TEXT_LIMITS['type']} caracteres; `url` é uma página "
+        "pública (http ou https) que você de fato abriu, sem credenciais e sem endereço de rede interna.",
         "- Cite as fontes no texto pelo `id`. Separe fatos verificados, premissas, estimativas e recomendações.",
         "- Se faltar informação que mude materialmente a recomendação, registre em `notes` em vez de inventá-la.",
     ])
@@ -93,14 +101,21 @@ def author(spec: AgentSpec, *, swarm_id: str, cycle: int, round_number: int, tas
 
 
 def consolidation(spec: AgentSpec, *, swarm_id: str, cycle: int, round_number: int, task_id: str, attempt: int,
-                  previous_errors: list[str], brief_body: str, topics: dict[str, str], sections: list[tuple[str, str]],
-                  sources_index: str, feedback: str, previous_document: str, schema: dict[str, Any]) -> str:
+                  previous_errors: list[str], brief_body: str, topics: dict[str, str], authors: list[str],
+                  sections: list[tuple[str, str]], sources_index: str, feedback: str, previous_document: str,
+                  schema: dict[str, Any]) -> str:
     protocol = "\n".join([
         "- `document_markdown`: o documento final completo, em Markdown, com índice e bibliografia que cite os `id` "
-        "do índice de fontes. Uniformize voz, terminologia e profundidade.",
+        f"do índice de fontes. Tamanho máximo: {MAX_DOCUMENT_BYTES // (1024 * 1024)} MiB. Uniformize voz, terminologia "
+        "e profundidade.",
         "- Preserve fatos, lógica, escopo e ressalvas. Não invente fatos nem remova condições dos autores.",
         "- `divergences`: conflitos de conteúdo entre autores que precisam voltar a eles. Não os resolva por edição "
         "de estilo. Use lista vazia se não houver.",
+        "- Em cada divergência, `topic` é exatamente um identificador da lista de tópicos (por exemplo "
+        f"`{next(iter(topics), 'T01')}`) e `author` é exatamente um dos nomes de autor abaixo, por extenso. Deixe vazio "
+        "o campo que não se aplicar. Se o conflito envolve vários tópicos ou autores, escreva uma entrada para cada um, "
+        "repetindo o `issue`: nunca junte vários valores em um campo.",
+        f"- Nomes de autor válidos: {', '.join(authors)}.",
     ])
     parts = [header(spec, swarm_id=swarm_id, cycle=cycle, round_number=round_number, task_id=task_id,
                     attempt=attempt, previous_errors=previous_errors),
@@ -123,11 +138,14 @@ def reviewer(spec: AgentSpec, *, swarm_id: str, cycle: int, round_number: int, t
         f"- `topics`: uma entrada para CADA tópico ({', '.join(topics)}), sem omitir nem acrescentar. Cada uma com "
         "`grade` na escala D- a A+, `justification` que cite evidência do trecho e `action` (correção acionável; "
         "obrigatória abaixo de A).",
+        f"- Em cada entrada, `topic` é só o identificador (por exemplo `{next(iter(topics), 'T01')}`), nunca o título "
+        "nem o identificador seguido do título.",
         "- Você não edita o documento: devolve achados aos autores. A nota mínima entre os revisores decide o tópico.",
     ]
     if spec.evidence_class == "fact":
         lines.append(f"- `sources_consulted`: as fontes que você consultou de fato, com o que verificou em cada uma. "
-                     f"Mínimo de fontes distintas declarado: {spec.sources_min}.")
+                     f"Mínimo de fontes distintas declarado: {spec.sources_min}. Só contam páginas públicas (http ou "
+                     "https) que você de fato abriu: endereço local ou de rede interna não conta.")
     if editorial:
         lines += [
             "- `editorial`: você é o revisor editorial designado. Leia TODO o documento. Avalie cinco superfícies: "
@@ -154,6 +172,13 @@ def rubber_duck(spec: AgentSpec, *, swarm_id: str, cycle: int, round_number: int
         "- Audite autores, revisores e resultados mecânicos: contradições, omissões, fuga de escopo, notas infladas, "
         "fonte acessível que não sustenta a afirmação, aritmética relevante não marcada, e divergência entre a matriz "
         "consolidada e as avaliações individuais.",
+        "- A matriz consolidada traz só a nota mínima de cada tópico e a avaliação editorial. As justificativas e as ações "
+        "estão nas avaliações individuais, e a seção `rubberduck` da matriz é preenchida com o seu resultado depois da sua "
+        "auditoria, por isso não aparece aqui: não a aponte como ausente nem como inconsistente.",
+        "- Você não decide a aprovação: o gate aprova ou reprova pelas notas dos revisores. Não use `critical` para dizer "
+        "que o ciclo não deve ser aprovado por causa das notas. Use `critical` só para um defeito do documento ou das "
+        "avaliações que tornaria enganosa uma aprovação, como fato central errado, nota sem sustentação no trecho ou "
+        "fonte que não sustenta a afirmação central.",
         "- `findings`: cada um com `severity` (critical, important ou minor), `target`, `evidence` e `correction`.",
         "- `critical` é verdadeiro exatamente quando há um achado de severidade critical. Um achado crítico veta a entrega.",
         "- Conteste nota sem sustentação no trecho; não reescreva a nota de ninguém.",
@@ -172,7 +197,7 @@ def narrative(spec: AgentSpec, *, swarm_id: str, cycle: int, round_number: int, 
               previous_errors: list[str], brief_body: str, facts: str, outcome: str, schema: dict[str, Any]) -> str:
     protocol = "\n".join([
         "- `narrative_markdown`: a narrativa humana do relatório final: decisões tomadas, riscos residuais e evidências "
-        "que os fatos derivados não representam.",
+        f"que os fatos derivados não representam. No máximo {MAX_NARRATIVE_CHARS} caracteres.",
         "- Não altere nem contradiga os fatos derivados abaixo. Não atribua notas.",
         f"- Desfecho desta execução: **{outcome}**. Se foi escalada, explique os bloqueios que restam.",
     ])

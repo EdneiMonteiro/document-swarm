@@ -23,6 +23,8 @@ Behaviour switches come from the environment, so one script covers success, fail
     FAKE_COPILOT_CHILD    1: start a child process that outlives its parent unless the whole tree is killed;
                           orphan: start one whose parent is already gone, holding the CLI's pipes open
     FAKE_COPILOT_FAIL_WITH_OUTPUT  1: print a valid answer and still exit 1
+    FAKE_COPILOT_MCP_LIST text that `mcp list` prints (default: no servers); "fail" exits 1, as an old CLI would
+    FAKE_COPILOT_MCP_LOG  file that receives one JSON line per `mcp list` run, which is not an agent call
 """
 
 from __future__ import annotations
@@ -40,8 +42,41 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tests.test_orchestration_engine import Scripted  # noqa: E402  (needs the path above)
 
-FLAGS_WITH_VALUE = {"--model", "--reasoning-effort", "--context", "--usage-output-file", "--deny-tool"}
+FLAGS_WITH_VALUE = {"--model", "--reasoning-effort", "--context", "--usage-output-file", "--deny-tool",
+                    "--disable-mcp-server"}
 LISTS = {"--available-tools"}
+
+
+def append_line(path: str, text: str) -> None:
+    """Append one line to a log that agents starting at the same moment all write to.
+
+    On Windows an append is a seek to the end followed by a write, so two processes appending at once can overwrite each
+    other and leave a line of zero bytes behind.  Appends are taken one at a time through a lock file created exclusively,
+    and a lock left by a process that was killed while holding it is broken after a few seconds.
+    """
+    lock = path + ".lock"
+    deadline = time.time() + 5
+    while True:
+        try:
+            handle = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            if time.time() > deadline:
+                try:
+                    os.unlink(lock)
+                except OSError:
+                    pass
+                deadline = time.time() + 5
+            time.sleep(0.005)
+    try:
+        with open(path, "a", encoding="utf-8") as stream:
+            stream.write(text + "\n")
+    finally:
+        os.close(handle)
+        try:
+            os.unlink(lock)
+        except OSError:
+            pass
 
 
 def parse(argv: list[str]) -> dict:
@@ -119,21 +154,36 @@ def answer_probe(name: str, prompt: str) -> int:
     return 0
 
 
+def list_mcp() -> int:
+    """What ``copilot mcp list`` prints.  It is not an agent call, so it never reaches the call log."""
+    log = os.environ.get("FAKE_COPILOT_MCP_LOG")
+    if log:
+        append_line(log, json.dumps({"mcp_list": sys.argv[1:], "cwd": os.getcwd()}))
+    listing = os.environ.get("FAKE_COPILOT_MCP_LIST", "No MCP servers configured.\n")
+    if listing == "fail":
+        # A listing that looks right and an exit status that says it is not: the status is what must decide.
+        sys.stdout.write("User servers:\n  playwright (local)\n")
+        print("simulated failure", file=sys.stderr)
+        return 1
+    sys.stdout.write(listing)
+    return 0
+
+
 def main() -> int:
+    if sys.argv[1:3] == ["mcp", "list"]:
+        return list_mcp()
     parsed = parse(sys.argv[1:])
     prompt = sys.stdin.buffer.read().decode("utf-8")
     log = os.environ.get("FAKE_COPILOT_LOG")
     if log:
-        with open(log, "a", encoding="utf-8") as stream:
-            stream.write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "entries": sorted(os.listdir(".")),
+        append_line(log, json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "entries": sorted(os.listdir(".")),
                                      "prompt_bytes": len(prompt.encode("utf-8")),
                                      "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-                                     "pid": os.getpid(), "at": time.time()}) + "\n")
+                                     "pid": os.getpid(), "at": time.time()}))
     delay = float(os.environ.get("FAKE_COPILOT_SLEEP", "0") or 0)
     if os.environ.get("FAKE_COPILOT_CHILD") == "1" and log:
         child = subprocess.Popen([sys.executable, "-S", "-c", "import time; time.sleep(120)"])
-        with open(log, "a", encoding="utf-8") as stream:
-            stream.write(json.dumps({"child": child.pid}) + "\n")
+        append_line(log, json.dumps({"child": child.pid}))
     if os.environ.get("FAKE_COPILOT_CHILD") == "orphan" and log:
         # The middle process exits at once, so its child has no parent left for a tree kill to follow,
         # yet it still holds the pipes of the CLI open.

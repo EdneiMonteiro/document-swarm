@@ -584,8 +584,8 @@ consolidação semântica, a revisão independente e o rubber duck.
 
 Ele não muda nenhuma exigência de qualidade. As notas continuam vindo dos
 revisores, `gate.py` continua sendo o único que aprova, todo tópico precisa de
-`A` ou `A+` e não existe modo rápido. Guia completo, com as proteções e o que ainda
-não foi qualificado: [docs/executor.md](docs/executor.md).
+`A` ou `A+` e não existe modo rápido. Guia completo, com as proteções, o resultado da
+primeira execução real e os limites conhecidos: [docs/executor.md](docs/executor.md).
 
 **Quando oferecer:** documento novo em Markdown, com uma única entrega em `output/`
 e até 9 autores. **Quando não usar:** apresentação, PDF, evolução de um swarm que já
@@ -617,6 +617,11 @@ Conduta quando o usuário escolhe o executor:
 4. A entrega, o relatório derivado, a narrativa e a proposta de memória são feitos
    pelo executor. Revise a proposta e aplique a memória só pelo fluxo explícito do
    script, como na Fase 4.
+5. Se `run` escalar (saída `1`), informe a pessoa e pare: nada foi aprovado. Se ela
+   decidir seguir, eleve o teto com `run ... --max-cycles <N>`, não editando o brief.
+   O teto fica gravado no plano, o veredito do ciclo escalado é refeito sem chamar
+   agente e só o ciclo novo é pago. Editar o brief muda aquilo de que toda tarefa
+   depende, e o ciclo corrente é pago de novo.
 
 ```bash
 python3 "<DOCSWARM>/scripts/orchestration" run "<OUTPUT_ROOT>/<swarm_id>" --plan-only

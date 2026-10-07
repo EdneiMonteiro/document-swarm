@@ -16,7 +16,7 @@ from unittest import mock
 
 from scripts.checks.common import InputError
 from scripts.orchestration import driver, qualify
-from scripts.orchestration.backend import CopilotCli, models_from_usage
+from scripts.orchestration.backend import CopilotCli, mcp_flags, models_from_usage, parse_mcp_list
 from scripts.orchestration.contracts import Answer
 from scripts.orchestration.engine import Engine
 from scripts.orchestration.store import Journal
@@ -27,6 +27,18 @@ os.environ["DOCSWARM_NO_REAL_CLI"] = "1"
 
 ROOT = Path(__file__).resolve().parents[1]
 FAKE = Path(__file__).with_name("fake_copilot.py")
+# What `copilot mcp list` printed on the machine where the startup cost was measured.
+MCP_LISTING = (
+    "User servers:\n  playwright (local)\n  azure (local)\n  microsoft-learn (http)\n  filesystem (local)\n"
+    "  sequential-thinking (local)\n  workiq (local)\n\n"
+    "Plugin servers:\n  msx (local)\n  action360 (local)\n  earnings (local)\n  finhub (local)\n  customer360 (local)\n\n"
+    "Builtin servers:\n  computer-use (local)\n  github-mcp-server (http)\n")
+MCP_NAMES = ["playwright", "azure", "microsoft-learn", "filesystem", "sequential-thinking", "workiq",
+             "msx", "action360", "earnings", "finhub", "customer360"]
+
+
+def stopped_servers(argv: list[str]) -> list[str]:
+    return [argv[index + 1] for index, item in enumerate(argv) if item == "--disable-mcp-server"]
 
 
 def task_for(**overrides: Any) -> dict[str, Any]:
@@ -96,6 +108,61 @@ class CommandTests(unittest.TestCase):
     def test_the_executable_prefix_comes_first(self):
         argv = CopilotCli(executable=["python", "wrapper.py"]).command(task_for())
         self.assertEqual(argv[:2], ["python", "wrapper.py"])
+
+    def test_describing_a_command_never_runs_the_cli(self):
+        # The executable is not even a program: building the command must not start it.
+        argv = CopilotCli(executable=["nao-existe-copilot-xyz"]).command(task_for())
+        self.assertNotIn("--disable-mcp-server", argv)
+        self.assertNotIn("--disable-builtin-mcps", argv)
+
+    def test_the_servers_to_stop_come_after_the_rest_of_the_command_and_leave_the_tools_alone(self):
+        argv = self.backend().command(task_for(), None, parse_mcp_list(MCP_LISTING))
+        start = argv.index("--available-tools") + 1
+        self.assertEqual(argv[start:start + 5], ["view", "glob", "grep", "web_search", "web_fetch"])
+        self.assertEqual(stopped_servers(argv), MCP_NAMES)
+        self.assertIn("--disable-builtin-mcps", argv)
+        self.assertGreater(argv.index("--disable-mcp-server"), argv.index("--allow-all-urls"))
+
+    def test_the_listing_of_the_cli_is_read_by_origin(self):
+        found = parse_mcp_list(MCP_LISTING)
+        self.assertEqual(found["user"], MCP_NAMES[:6])
+        self.assertEqual(found["plugin"], MCP_NAMES[6:])
+        self.assertEqual(found["builtin"], ["computer-use", "github-mcp-server"])
+
+    def test_anything_that_is_not_the_listing_is_read_as_no_servers(self):
+        for text in ("", "No MCP servers configured.\n", "error: unknown command\n", "  stray (local)\n",
+                     "User servers:\nnot an entry\n", "\x00\x00", "User servers:\n  bad name (local)\n",
+                     "User servers:\n  " + "x" * 200 + " (local)\n"):
+            with self.subTest(text=text[:30]):
+                self.assertEqual(parse_mcp_list(text), {})
+
+    def test_every_server_the_task_has_no_tool_of_is_stopped_builtin_ones_with_their_own_flag(self):
+        flags = mcp_flags(["view", "glob"], parse_mcp_list(MCP_LISTING))
+        self.assertEqual(stopped_servers(flags), MCP_NAMES)
+        self.assertEqual(flags.count("--disable-builtin-mcps"), 1)
+        self.assertEqual(mcp_flags(["view"], {}), [], "nothing is known, so nothing is stopped")
+
+    def test_a_server_whose_tool_the_task_lists_is_kept(self):
+        servers = parse_mcp_list(MCP_LISTING)
+        flags = mcp_flags(["view", "microsoft-learn-microsoft_docs_search", "workiq-ask"], servers)
+        stopped = stopped_servers(flags)
+        self.assertNotIn("microsoft-learn", stopped)
+        self.assertNotIn("workiq", stopped)
+        self.assertIn("playwright", stopped)
+        self.assertIn("--disable-builtin-mcps", flags)
+        self.assertNotIn("--disable-builtin-mcps", mcp_flags(["github-mcp-server-get_file_contents"], servers),
+                         "a task that uses a builtin server keeps the builtin ones")
+
+    def test_only_a_tool_of_that_server_keeps_it(self):
+        self.assertEqual(mcp_flags(["azurex-foo", "azur"], {"user": ["azure"]}), ["--disable-mcp-server", "azure"])
+        self.assertEqual(mcp_flags(["azure"], {"user": ["azure"]}), [], "a tool named like the server keeps it")
+        self.assertEqual(mcp_flags(["azure-acr"], {"user": ["azure"]}), [])
+
+    def test_a_name_shared_by_two_origins_is_stopped_once(self):
+        self.assertEqual(mcp_flags(["view"], {"user": ["dup"], "plugin": ["dup"]}), ["--disable-mcp-server", "dup"])
+
+    def test_a_cli_that_cannot_even_start_is_not_a_reason_to_stop(self):
+        self.assertEqual(CopilotCli(executable=["nao-existe-copilot-xyz"]).mcp_servers(), {})
 
     def test_without_copilot_on_the_path_the_error_says_what_to_do(self):
         with mock.patch.dict(os.environ, {"DOCSWARM_NO_REAL_CLI": "0"}), \
@@ -369,6 +436,44 @@ class ProcessTests(BackendCase):
         self.assertEqual(again["outcome"], "approved", "the same command resumes where it stopped")
 
 
+class McpPruningTests(BackendCase):
+    def run_all(self, backend: CopilotCli) -> None:
+        engine = self.engine()
+        engine.init()
+        for task in engine.next()["tasks"]:
+            backend(task)
+
+    def test_an_agent_starts_without_the_servers_it_has_no_tool_of_and_the_cli_is_asked_once_per_run(self):
+        log = Path(self.temporary.name) / "mcp.jsonl"
+        self.run_all(self.fake(FAKE_COPILOT_MCP_LIST=MCP_LISTING, FAKE_COPILOT_MCP_LOG=log))
+        calls = self.calls()
+        self.assertEqual(len(calls), 2, "the listing is not an agent call")
+        for call in calls:
+            self.assertEqual(stopped_servers(call["argv"]), MCP_NAMES)
+            self.assertIn("--disable-builtin-mcps", call["argv"])
+        [listing] = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(listing["mcp_list"], ["mcp", "list"])
+        self.assertTrue(Path(listing["cwd"]).name.startswith("docswarm-mcp-"), "asked from an empty folder of its own")
+        self.assertFalse(Path(listing["cwd"]).exists(), "and that folder is removed")
+
+    def test_a_cli_whose_listing_cannot_be_trusted_is_run_as_before(self):
+        for listing in ("fail", "texto que não é a listagem\n"):
+            with self.subTest(listing=listing[:12]):
+                before = len(self.calls())
+                self.fake(FAKE_COPILOT_MCP_LIST=listing)(self.first_task())
+                argv = self.calls()[before]["argv"]
+                self.assertNotIn("--disable-mcp-server", argv)
+                self.assertNotIn("--disable-builtin-mcps", argv)
+
+    def test_pruning_can_be_switched_off_and_then_the_cli_is_not_even_asked(self):
+        log = Path(self.temporary.name) / "mcp.jsonl"
+        backend = CopilotCli(executable=[sys.executable, "-S", str(FAKE)], prune_mcp=False,
+                             environment=self.environment(FAKE_COPILOT_MCP_LIST=MCP_LISTING, FAKE_COPILOT_MCP_LOG=log))
+        backend(self.first_task())
+        self.assertNotIn("--disable-mcp-server", self.calls()[0]["argv"])
+        self.assertFalse(log.exists())
+
+
 class MonitorTests(EngineCase):
     def make(self, **kwargs):
         clock = kwargs.pop("clock", None) or (lambda: 1_000_000.0)
@@ -518,6 +623,21 @@ class RunCommandTests(BackendCase):
         self.assertEqual(code, 1, err)
         self.assertEqual(json.loads(out)["outcome"], "escalated")
 
+    def test_a_run_that_escalated_goes_one_cycle_further_with_a_higher_ceiling_and_pays_only_for_it(self):
+        root = build_swarm(Path(self.temporary.name) / "further", max_cycles=1)
+        extra = {"FAKE_COPILOT_ROOT": str(root), "FAKE_COPILOT_GRADES": json.dumps({"1|reviewer-01-facts|T02": "B+"})}
+        code, out, err = self.run_cli(*self.fake_args, "--tick", "3600", "--json", root=root, extra_env=extra)
+        self.assertEqual((code, json.loads(out)["outcome"]), (1, "escalated"), err)
+        paid = len(self.calls())
+        code, out, err = self.run_cli(*self.fake_args, "--tick", "3600", "--json", "--max-cycles", "2", root=root,
+                                      extra_env=extra)
+        self.assertEqual(code, 0, err)
+        answer = json.loads(out)
+        self.assertEqual((answer["outcome"], answer["cycle"]), ("approved", 2))
+        self.assertEqual(len(self.calls()) - paid, 6,
+                         "cycle 2 only: the author of the blocked topic, the coordinator, two reviewers, the audit and "
+                         "the narrative; nothing of cycle 1 is paid for again")
+
     def test_a_run_that_cannot_proceed_exits_three_and_says_why(self):
         code, out, err = self.run_cli(*self.fake_args, "--tick", "3600", "--max-attempts", "1",
                                       extra_env={"FAKE_COPILOT_EMPTY": "1"})
@@ -536,6 +656,19 @@ class RunCommandTests(BackendCase):
         self.assertIn("--available-tools", first["command"])
         self.assertEqual(first["command"][:3], [sys.executable, "-S", str(FAKE)])
         self.assertEqual(self.calls(), [], "no agent was started")
+
+    def test_plan_only_shows_the_servers_that_will_be_stopped_and_keep_mcp_servers_leaves_them_running(self):
+        extra = {"FAKE_COPILOT_MCP_LIST": MCP_LISTING}
+        code, out, err = self.run_cli(*self.fake_args, "--plan-only", extra_env=extra)
+        self.assertEqual(code, 0, err)
+        command = json.loads(out)["tasks"][0]["command"]
+        self.assertEqual(stopped_servers(command), MCP_NAMES)
+        self.assertIn("--disable-builtin-mcps", command)
+        code, out, err = self.run_cli(*self.fake_args, "--plan-only", "--keep-mcp-servers", extra_env=extra)
+        self.assertEqual(code, 0, err)
+        command = json.loads(out)["tasks"][0]["command"]
+        self.assertEqual(stopped_servers(command), [])
+        self.assertNotIn("--disable-builtin-mcps", command)
 
     def test_a_declared_model_outside_the_session_list_is_refused_before_any_agent_is_paid_for(self):
         author = self.root / "agents" / "authors" / "author-01-platform.md"

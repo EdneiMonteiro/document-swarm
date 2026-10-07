@@ -19,7 +19,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import urlsplit
 
 from scripts.checks.common import GRADE_INDEX, InputError, SCALE, normalize_grade
@@ -243,14 +243,27 @@ AUTHOR_SCHEMA = {
         "notes": STRING,
     },
 }
-CONSOLIDATION_SCHEMA = {
-    "type": "object", "required": ["document_markdown", "divergences"],
-    "properties": {
-        "document_markdown": STRING,
-        "divergences": {"type": "array", "items": {"type": "object", "required": ["topic", "author", "issue"],
-                                                   "properties": {"topic": STRING, "author": STRING, "issue": STRING}}},
-    },
-}
+
+
+def consolidation_schema(topics: dict[str, str], authors: Iterable[str]) -> dict[str, Any]:
+    """The coordinator's result, with the only values a divergence may name spelled out.
+
+    A divergence is routed to the author and the topic it names, so each must be exactly a declared name and a topic
+    id.  A model told only that they are strings writes what reads naturally ("author-01 e author-03", "T01 / T06"),
+    and a whole consolidation, minutes of a long agent run, is refused for it.
+    """
+    return {
+        "type": "object", "required": ["document_markdown", "divergences"],
+        "properties": {
+            "document_markdown": STRING,
+            "divergences": {"type": "array", "items": {"type": "object", "required": ["topic", "author", "issue"], "properties": {
+                "topic": {"type": "string", "enum": ["", *topics]},
+                "author": {"type": "string", "enum": ["", *sorted(authors)]},
+                "issue": STRING}}},
+        },
+    }
+
+
 DUCK_SCHEMA = {
     "type": "object", "required": ["critical", "findings"],
     "properties": {
@@ -264,10 +277,16 @@ DUCK_SCHEMA = {
 NARRATIVE_SCHEMA = {"type": "object", "required": ["narrative_markdown"], "properties": {"narrative_markdown": STRING}}
 
 
-def reviewer_schema(*, editorial: bool, fact: bool) -> dict[str, Any]:
+def reviewer_schema(topics: Iterable[str], *, editorial: bool, fact: bool) -> dict[str, Any]:
+    """The reviewer's result, with the only values ``topic`` may take spelled out.
+
+    A grade is matched to the brief by topic id, so "T01: Enquadramento" (the id and the title, as the prompt lists
+    them) is a topic the brief does not have, and a whole assessment, minutes of a long agent run, is refused for it.
+    """
     properties: dict[str, Any] = {
         "topics": {"type": "array", "items": {"type": "object", "required": ["topic", "grade", "justification", "action"],
-                                              "properties": {"topic": STRING, "grade": {"type": "string", "enum": list(SCALE)},
+                                              "properties": {"topic": {"type": "string", "enum": list(topics)},
+                                                             "grade": {"type": "string", "enum": list(SCALE)},
                                                              "justification": STRING, "action": STRING}}},
     }
     required = ["topics"]
@@ -392,9 +411,11 @@ def check_consolidation(result: Any, *, topics: dict[str, str],
         author = text_field(row.get("author"), "divergences[].author", errors, empty=True)
         issue = text_field(row.get("issue"), "divergences[].issue", errors)
         if topic and topic not in topics:
-            errors.append(f"divergence names unknown topic {topic!r}")
+            errors.append(f"divergence names unknown topic {topic!r}; use exactly one topic id ({', '.join(topics)}) "
+                          "or leave it empty, and write one divergence per topic")
         if author and author not in authors:
-            errors.append(f"divergence names unknown author {author!r}")
+            errors.append(f"divergence names unknown author {author!r}; use exactly one declared author name "
+                          f"({', '.join(sorted(authors))}) or leave it empty, and write one divergence per author")
         divergences.append({"topic": topic, "author": author, "issue": issue})
     if errors:
         return errors, None
@@ -468,7 +489,8 @@ def check_reviewer(result: Any, *, spec: AgentSpec, topics: dict[str, str], cycl
     if missing:
         errors.append(f"these topics were not graded: {', '.join(missing)}")
     if extra:
-        errors.append(f"these topics are not in the brief: {', '.join(extra)}")
+        errors.append(f"these topics are not in the brief: {', '.join(extra)}; `topic` is exactly one id "
+                      f"({', '.join(topics)}), without the title")
     report: dict[str, Any] = {"schema_version": 1, "cycle": cycle, "reviewer": spec.name, "topics": rows}
     if spec.evidence_class == "fact":
         consulted = objects(result.get("sources_consulted"), "sources_consulted", errors)

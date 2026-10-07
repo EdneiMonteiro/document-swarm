@@ -94,7 +94,32 @@ class CommandLineTests(EngineCase):
         self.assertEqual((blocked["status"], blocked["kind"]), ("blocked", "checks_failed"))
         self.assertIn("after 1 repair round", blocked["detail"], "next was called without the flag and still honoured it")
         plan = json.loads((self.root / "reports" / "execution" / "plan.json").read_text(encoding="utf-8"))
-        self.assertEqual(plan["options"], {"max_attempts": 2, "max_repairs": 1})
+        self.assertEqual(plan["options"], {"max_attempts": 2, "max_repairs": 1, "max_cycles": None})
+
+    def test_the_cycle_ceiling_given_at_init_replaces_the_briefs_and_is_kept_for_every_later_call(self):
+        code, _, err = cli("init", str(self.root), "--max-cycles", "9")
+        self.assertEqual(code, 0, err)
+        plan = json.loads((self.root / "reports" / "execution" / "plan.json").read_text(encoding="utf-8"))
+        self.assertEqual((plan["max_cycles"], plan["options"]["max_cycles"]), (9, 9))
+        code, out, err = cli("status", str(self.root))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["max_cycles"], 9, "status was called without the flag and still honours it")
+        code, _, err = cli("init", str(self.root))
+        self.assertEqual(code, 0, err)
+        code, out, _ = cli("status", str(self.root))
+        self.assertEqual(json.loads(out)["max_cycles"], 9, "an init without the flag keeps the ceiling that was set")
+        code, _, err = cli("init", str(self.root), "--max-cycles", "4")
+        self.assertEqual(code, 0, err)
+        code, out, _ = cli("status", str(self.root))
+        self.assertEqual(json.loads(out)["max_cycles"], 4, "a new value replaces it")
+
+    def test_a_ceiling_that_is_not_positive_is_refused_at_the_command_line(self):
+        for value in ("0", "-2"):
+            with self.subTest(value=value):
+                code, _, err = cli("init", str(self.root), "--max-cycles", value)
+                self.assertEqual(code, 2)
+                self.assertIn("max_cycles must be a positive integer", err)
+        self.assertFalse((self.root / "reports" / "execution" / "plan.json").exists())
 
     def test_invalid_limits_are_refused(self):
         for flag, value in (("--max-attempts", "0"), ("--max-repairs", "-1")):

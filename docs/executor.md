@@ -95,8 +95,29 @@ agente já aceito nunca é pago duas vezes.
 
 Opções que controlam o gasto: `--max-attempts` (tentativas por tarefa de agente, padrão
 2), `--max-repairs` (rodadas de reparo por ciclo para checagens que falham, padrão 2) e
-o `max_cycles` do brief. Gravadas no plano, valem para as chamadas seguintes. Para dar
-mais tentativas a uma tarefa esgotada, repita o comando com um valor maior.
+`--max-cycles` (teto de ciclos, que por padrão é o `max_cycles` do brief). Gravadas no
+plano, valem para as chamadas seguintes. Para dar mais tentativas a uma tarefa esgotada,
+repita o comando com um valor maior.
+
+### Seguir adiante depois de uma escalação
+
+Uma escalação não é uma aprovação: o teto foi atingido e a decisão é sua. Se você decidir
+dar mais ciclos, **eleve o teto com a opção, não editando o brief**:
+
+```text
+python "<DOCSWARM>/scripts/orchestration" run "<swarm>" --max-cycles 5
+```
+
+O teto novo fica no plano e as chamadas seguintes o mantêm até que outro seja dado. O
+veredito do ciclo escalado é refeito a partir das notas que já existem, sem chamar agente
+(a auditoria é a mesma tarefa qualquer que seja o teto), e só o ciclo novo é pago. A
+mudança fica no journal (`max_cycles_changed`, com o teto anterior, o novo e o do brief).
+
+Editar o brief faz o oposto. A identidade de toda tarefa inclui o conteúdo do brief, então
+qualquer edição, até trocar `monitor: false` por `true`, descarta o ciclo corrente e o paga
+de novo. Foi medido em uma cópia do swarm da primeira execução real: o motor retirou o
+veredito do ciclo 4 e voltou a emitir os três autores. Os ciclos já rejeitados não são
+refeitos, porque o veredito deles vem do portão, não da identidade das tarefas.
 
 | Opção de `run` | Padrão | Efeito |
 |---|---:|---|
@@ -104,18 +125,24 @@ mais tentativas a uma tarefa esgotada, repita o comando com um valor maior.
 | `--timeout` | 3600 | Segundos que um agente pode rodar antes de ser encerrado |
 | `--tick` | 60 | Segundos entre as tabelas de status |
 | `--models` | | Modelos disponíveis na sessão; um modelo declarado fora da lista é recusado antes de qualquer gasto |
+| `--max-cycles` | brief | Substitui o teto de ciclos do brief; fica gravado no plano |
+| `--keep-mcp-servers` | | Não desliga os servidores MCP de que a tarefa não precisa (também em `qualify`) |
 | `--json` | | Resposta final em JSON no stdout, com as tabelas no stderr |
 | `--copilot`, `--copilot-arg` | | Executável do `copilot` e argumentos colocados logo após ele, para um wrapper; use `--copilot-arg=-S` quando o valor começar com `-` |
 
 ### Qualificar o CLI antes do primeiro uso
 
-O backend usa só opções documentadas do `copilot`, e foi testado com um CLI substituto.
-Antes de confiar nele com um trabalho de verdade, verifique o comportamento real. O
+O backend usa só opções documentadas do `copilot`. Antes de confiar nele com um trabalho
+de verdade, verifique o comportamento real. O
 comando faz poucas chamadas mínimas, **gasta créditos** e por isso exige `--yes`:
 
 ```text
 python "<DOCSWARM>/scripts/orchestration" qualify --model <o-modelo-mais-barato> --yes
 ```
+
+Em 07/10/2026, com o CLI 1.0.93-2 e o modelo `gpt-5-mini`, as 7 sondas passaram
+(contrato, uso, sem escrita, confinamento, web, paralelismo e prompt grande de 40 KB).
+Repita depois de atualizar o CLI.
 
 Cada sonda verifica uma propriedade de que o executor depende: o prompt chega por stdin
 e a resposta JSON é lida; um agente com ferramentas só de leitura não consegue criar um
@@ -143,6 +170,7 @@ decidido por opções que o CLI aplica, não por pedido no prompt:
 | prompt por stdin | O documento inteiro cabe; a linha de comando do Windows aceita cerca de 32 mil caracteres |
 | `--model`, `--reasoning-effort`, `--context` | Exatamente o que a declaração do agente pede |
 | `--usage-output-file` | Guarda o registro de uso do processo ao lado do resultado |
+| `--disable-mcp-server`, `--disable-builtin-mcps` | Todo servidor MCP configurado no CLI (do usuário, de plugins e embutidos) é iniciado por cada processo e custa segundos antes de o modelo ser chamado. O executor pergunta ao CLI, uma vez por execução (`copilot mcp list`), quais existem e desliga os de que a tarefa não tem nenhuma ferramenta (uma ferramenta MCP se chama `servidor-ferramenta`). `--available-tools` já esconde as ferramentas deles, então o agente não perde nada. Se a listagem falhar ou não for reconhecida, nada é desligado. `--keep-mcp-servers` volta ao comportamento padrão do CLI |
 
 Um agente devolve **um objeto JSON** que obedece ao esquema impresso no próprio prompt.
 Ele não grava nada. O executor valida o resultado contra o contrato do papel e só então
@@ -290,7 +318,12 @@ de modo que nenhuma memoização do runtime devolve a falha já obtida.
   começou (`task_started`), não de quando foi emitido: se o processo caiu e o mesmo comando
   rodou horas depois, a pausa é tempo ocioso, não tempo de agente.
 - O painel visual do monitor ainda não é alimentado pelo executor. Ele depende dos
-  despachos que o coordenador registra, e esta versão não os emite.
+  despachos que o coordenador registra, e esta versão não os emite. Com `monitor: false`
+  no brief a extensão se recusa a abrir; com `true` ela abre e lê os artefatos (ciclos,
+  notas, portão), mas não mostra agente em execução. Para ver um swarm já executado, abra
+  uma **cópia** dele com `monitor: true`: editar o brief do original faz o ciclo corrente
+  ser pago de novo (veja "Seguir adiante depois de uma escalação"). `health.py` e o painel
+  mostram o teto do brief, não o de `--max-cycles`.
 
 ## Usar outro backend
 
@@ -298,7 +331,7 @@ de modo que nenhuma memoização do runtime devolve a falha já obtida.
 de outro lugar (um fluxo próprio, um outro CLI), são quatro comandos:
 
 ```text
-python "<DOCSWARM>/scripts/orchestration" init   "<swarm>" [--models a,b] [--max-attempts N] [--max-repairs N]
+python "<DOCSWARM>/scripts/orchestration" init   "<swarm>" [--models a,b] [--max-attempts N] [--max-repairs N] [--max-cycles N]
 python "<DOCSWARM>/scripts/orchestration" next   "<swarm>"
 python "<DOCSWARM>/scripts/orchestration" record "<swarm>"   # JSON no stdin
 python "<DOCSWARM>/scripts/orchestration" status "<swarm>"
@@ -320,15 +353,58 @@ nada é gravado. A resposta de `record` diz se foi aceita e se vale tentar de no
 backend que sabe impor restrição de ferramentas e usar esquema nativo deve fazê-lo; o
 esquema também está no prompt para quem não sabe.
 
+## Primeira execução real
+
+Em 07/10/2026 o executor produziu um artigo de verdade, sobre o modelo Laya, com o CLI
+1.0.93-2: 6 tópicos, 3 autores, 3 revisores, coordenador e rubber duck, `max_cycles: 4`.
+
+| | |
+|---|---|
+| Resultado | **Escalado no ciclo 4.** Os 6 tópicos terminaram em A- (A- não aprova) e a revisão editorial deu A- em corpo e conclusões. O rubber duck não vetou. Nada foi aprovado, e o executor não entregou como aprovado |
+| Notas por ciclo | Ciclo 1: B e B+ em todos os tópicos. Ciclo 2: A- e B+. Ciclo 3: o revisor de fatos voltou a B+ em três tópicos, com achados reais (versão desatualizada, fonte inacessível, afirmação sem fonte). Ciclo 4: A- em todos |
+| Relógio | 66,9 min no journal: 54,1 min com algum agente rodando (soma de 85 min, paralelismo de 1,57x), 8 s de código do executor e 12,7 min ociosos. Quase todo o ocioso foi a pausa de 6,7 min para corrigir o defeito 1 e os 5 min entre o `--plan-only` e a primeira chamada. Duas retomadas pelo mesmo comando; nenhum resultado aceito foi refeito. É uma medição, não uma comparação: não há execução pareada com o fluxo do coordenador |
+| Por papel | Autor: mediana de 3,5 min por chamada. Consolidação: 2,5 min. Revisor: 74 s. Rubber duck: 66 s. Narrativa: 44 s |
+| Chamadas | 37, das quais 33 aceitas e 4 recusadas e refeitas (2 do coordenador, 1 de um autor e 1 de um revisor) |
+| Custo | 1.361 AIU e 121,5 requisições premium. Autores 512 AIU, revisores 571, consolidação 178, auditoria 95, narrativa 5. Uma chamada de `gpt-5.5` conta 7,5 requisições premium; as dos outros modelos, 1 |
+| Texto | 5.525 palavras, 2 diagramas, 1 travessão. O brief pedia de 2.500 a 3.500 palavras |
+
+O que a execução mostrou, tudo corrigido com teste e mutante:
+
+1. **O contrato era imposto mas não era dito.** O coordenador foi recusado duas vezes por
+   escrever "author-01 e author-03" onde o motor exige um nome de autor exato, e um
+   revisor foi recusado por escrever `T01: título` onde o motor exige `T01`. O esquema e
+   o prompt não diziam isso. Agora o esquema enumera os valores válidos, o prompt os
+   nomeia, e a recusa lista o que é aceito. O mesmo vale para os limites de texto das
+   fontes, a regra de URL pública, o tamanho da narrativa, os limites de arquivos de um
+   autor e o tamanho do documento.
+2. **O auditor via o marcador do próprio motor.** A matriz é montada antes da auditoria,
+   com uma seção `rubberduck` que reprova por padrão ("auditoria não registrada"). O
+   rubber duck a leu como defeito e vetou um ciclo. Agora ele vê a matriz sem essa
+   seção, e o prompt diz que ele não decide a aprovação.
+3. **"Elevar o teto e rodar de novo" refazia o último ciclo.** Veja a seção anterior.
+4. **Cada agente iniciava todos os servidores MCP do usuário.** Cada processo `copilot`
+   abriu cerca de 43 processos descendentes (servidores do `mcp-config.json`, de plugins
+   e embutidos). Uma chamada trivial, com exatamente os flags do backend, levou
+   mediana de 44,1 s com eles (33,0 a 57,2 s) e 11,5 s sem (10,1 a 19,6 s): cerca de 33 s
+   por chamada, em 3 chamadas alternadas de cada tipo. O backend agora desliga os
+   servidores de que a tarefa não tem ferramenta (tabela acima). Os tempos desta execução
+   foram medidos antes da mudança, e o ganho ainda não foi medido numa execução completa:
+   numa chamada de 66 a 74 s, como as do revisor e do rubber duck, 33 s é quase metade.
+
+Achados em aberto:
+
+- **A extensão pedida não é exigida por nada.** Nem um verificador nem um revisor mede
+  o tamanho. O texto saiu com 58 % a mais que o limite superior pedido.
+- **A declaração do coordenador deste swarm mandava marcar a versão mais cautelosa como
+  "pendente".** A marca vazou para o texto do leitor e o rubber duck e o revisor
+  editorial apontaram. Divergência entre autores vai em `divergences`, não no texto.
+
 ## Limites conhecidos
 
-- O backend do `copilot` foi construído sobre opções documentadas e testado com um CLI
-  substituto, mas ainda não foi qualificado com chamadas reais. Todas as opções que ele
-  passa existem na ajuda do CLI instalado (1.0.93-2, conferido com `copilot --help`) e os
-  nomes de ferramenta (`view`, `glob`, `grep`, `rg`, `web_search`, `web_fetch`) existem na
-  tabela dele, mas a presença de uma opção não prova o seu efeito: isso só se prova com
-  chamadas reais. Rode `qualify` antes de confiar nele; o formato do registro de uso não
-  está documentado e é lido de forma frouxa, com o arquivo cru guardado.
+- O backend do `copilot` foi qualificado em 07/10/2026 (7 de 7 sondas, CLI 1.0.93-2) e
+  rodou um documento inteiro, mas a presença de uma opção não prova o seu efeito em
+  outra versão: rode `qualify` depois de atualizar o CLI. O formato do registro de uso
+  não está documentado e é lido de forma frouxa, com o arquivo cru guardado.
 - Nenhum benchmark pago foi executado, então não há promessa de ganho percentual. As
   medições acima descrevem onde o tempo foi gasto, não quanto o executor economiza.
 - O executor remove os intervalos entre turnos, mas não a latência dos modelos, os
