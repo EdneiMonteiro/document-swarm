@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from scripts.checks.common import InputError
+from scripts.checks.common import InputError, scalar
 
 TERMINAL = {"completed", "failed", "cancelled"}
 IDLE_GAP_SECONDS = 300.0
@@ -47,7 +47,7 @@ def read_journal(path: Path) -> list[dict[str, Any]]:
             continue
         try:
             item = json.loads(line)
-        except json.JSONDecodeError as exc:
+        except (ValueError, RecursionError) as exc:
             raise InputError(f"{path.name}:{number}: not valid JSON") from exc
         if isinstance(item, dict):
             events.append(item)
@@ -286,14 +286,26 @@ def host_sleep(since: float, until: float) -> list[tuple[float, float]] | None:
     return found
 
 
-def legacy(swarm: Path, *, host_power: bool = False) -> list[dict[str, Any]]:
-    """Analyse every monitor journal under a swarm, newest last."""
+def legacy(swarm: Path, *, host_power: bool = False, mirrors: list[str] | None = None) -> list[dict[str, Any]]:
+    """Analyse every monitor journal under a swarm, newest last.
+
+    The monitor of an executor swarm only mirrors the executor's journal, as ``executor_batch`` events in none of the
+    vocabulary read here: measured as it stands it would report a run in which nothing was dispatched.  A journal with
+    nothing of its own dispatched is the executor's journal again, which ``executor`` already measures, so it is left
+    out and its folder name is appended to ``mirrors``.  What the monitor recorded itself is still measured.
+    """
     root = swarm.resolve(strict=True)
     results = []
     for journal in sorted((root / "reports" / "progress").glob("*/events.jsonl")):
         events = read_journal(journal)
         if not events:
             continue
+        own = [item for item in events if item.get("type") != "executor_batch"]
+        if len(own) != len(events) and not any(item.get("type") == "dispatch" for item in own):
+            if mirrors is not None:
+                mirrors.append(journal.parent.name)
+            continue
+        events = own
         sleeps = None
         if host_power:
             times = [parse_time(item.get("at")) for item in events]
@@ -332,7 +344,7 @@ def executor_events(journal: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
     # as the one before it, so a record must end the run it follows, not the latest run of that name.
     running: dict[tuple[Any, Any], str] = {}
     for item in journal:
-        key = (item.get("task_id"), item.get("attempt"))
+        key = (scalar(item.get("task_id")), scalar(item.get("attempt")))
         if item.get("event") == "task_started" and parse_time(item.get("at")) is not None:
             starts.setdefault(key, []).append(parse_time(item["at"]))  # type: ignore[arg-type]
         elif item.get("event") == "task_issued":
@@ -348,17 +360,18 @@ def executor_events(journal: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
         moment = parse_time(at)
         if moment is None:
             continue
-        key = (item.get("task_id"), item.get("attempt"))
+        key = (scalar(item.get("task_id")), scalar(item.get("attempt")))
         ident = f"{key[0]}.a{key[1]}"
         if kind in ("run_started", "plan_refreshed"):
             events.append({"at": at, "type": "phase", "data": {"phase": "setup", "cycle": 0}})
         elif kind == "task_issued":
             if key not in starts:
                 dispatch(ident, item, at)
-            phase = (item.get("cycle"), item.get("round"), item.get("stage"))
-            if phase not in opened and item.get("stage") in PHASE_OF_STAGE:
+            stage = scalar(item.get("stage"))
+            phase = (scalar(item.get("cycle")), scalar(item.get("round")), stage)
+            if phase not in opened and stage in PHASE_OF_STAGE:
                 opened.add(phase)
-                events.append({"at": at, "type": "phase", "data": {"phase": PHASE_OF_STAGE[item["stage"]], "cycle": item.get("cycle")}})
+                events.append({"at": at, "type": "phase", "data": {"phase": PHASE_OF_STAGE[stage], "cycle": item.get("cycle")}})
         elif kind == "task_started":
             if key in issued:
                 later = sum(1 for other in starts[key] if other > moment)
@@ -367,7 +380,10 @@ def executor_events(journal: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
         elif kind == "task_recorded":
             events.append({"at": at, "type": "runtime", "data": {"dispatch_id": running.get(key, ident), "status": "completed"}})
         elif kind in ("script_finished", "gate_run", "delivery_step"):
-            seconds = float(item.get("seconds") or 0.0)
+            try:
+                seconds = float(item.get("seconds") or 0.0)
+            except (TypeError, ValueError):
+                seconds = 0.0
             if seconds > 0:
                 mechanical.append((moment - seconds, moment))
             phase = PHASE_OF_SCRIPT.get(str(item.get("script")), "delivery") if kind == "script_finished" else \

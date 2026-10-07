@@ -32,13 +32,24 @@ def emit(value: Any, *, pretty: bool = False) -> None:
 
 
 def command_metrics(args: argparse.Namespace) -> int:
-    results = metrics.legacy(args.swarm, host_power=args.host_power) + metrics.executor(args.swarm, host_power=args.host_power)
+    mirrors: list[str] = []
+    results = (metrics.legacy(args.swarm, host_power=args.host_power, mirrors=mirrors)
+               + metrics.executor(args.swarm, host_power=args.host_power))
+    for name in mirrors:
+        print(f"note: reports/progress/{name} only mirrors the executor's journal; its figures come from reports/execution",
+              file=sys.stderr)
     if not results:
-        print("ERROR: no monitor journal under reports/progress and no executor journal under reports/execution",
+        print("ERROR: the monitor journal under reports/progress only mirrors an executor run, and the executor journal "
+              "under reports/execution is missing" if mirrors else
+              "ERROR: no monitor journal under reports/progress and no executor journal under reports/execution",
               file=sys.stderr)
         return 2
     if args.execution:
-        results = [item for item in results if item["execution_id"].startswith(args.execution)]
+        chosen = [item for item in results if item["execution_id"].startswith(args.execution)]
+        if not chosen and any(name.startswith(args.execution) for name in mirrors):
+            # The monitor's id names the run its mirror followed, which is the executor's.
+            chosen = [item for item in results if item["execution_id"] == "executor"]
+        results = chosen
         if not results:
             print(f"ERROR: no execution starts with {args.execution}", file=sys.stderr)
             return 2

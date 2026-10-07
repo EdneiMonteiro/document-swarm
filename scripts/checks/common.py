@@ -19,6 +19,21 @@ class InputError(ValueError):
     """Raised when a constrained review artifact cannot be decoded."""
 
 
+def scalar(value: Any) -> Any:
+    """A value fit to be part of a dictionary key or a set.
+
+    The executor's journal is read back from disk, where a field the engine wrote as text may hold anything, and a list or
+    an object is not hashable: it would end the reading of every other entry with a traceback.
+    """
+    if value is None or isinstance(value, (str, int, float)):
+        return value
+    try:
+        return json.dumps(value, sort_keys=True, default=str)[:200]
+    except (ValueError, RecursionError):
+        # Nested deeper than the encoder follows, or containing itself: still a key, and no entry may end the reading of the others.
+        return f"<{type(value).__name__} too deep or circular to show>"
+
+
 SCALE = ("D-", "D", "D+", "C-", "C", "C+", "B-", "B", "B+", "A-", "A", "A+")
 GRADE_INDEX = {grade: index for index, grade in enumerate(SCALE)}
 

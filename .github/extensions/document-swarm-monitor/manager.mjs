@@ -11,6 +11,10 @@ import { canvasWindowTitle, createCanvasWindow } from "./window.mjs";
 const execute = promisify(execFile);
 export const CANVAS_ID = "document-swarm-monitor";
 const TERMINAL = new Set(["completed", "escalated", "aborted"]);
+// What a coordinator records by hand.  An executor run records all of it itself, from its journal.
+const COORDINATOR_OPERATIONS = new Set(["phase", "dispatch", "handoff", "finish"]);
+// A reading hands over at most 1500 journal entries; this many in a row is far more than a run writes between two beats.
+const EXECUTOR_ROUNDS = 50;
 const EVENTS = new Set([
     "tool.execution_start", "tool.execution_complete", "subagent.started",
     "subagent.configured", "subagent.completed", "subagent.failed",
@@ -18,6 +22,7 @@ const EVENTS = new Set([
 ]);
 const extensionDirectory = path.dirname(await fs.realpath(fileURLToPath(import.meta.url)));
 const readerPath = path.resolve(extensionDirectory, "..", "..", "..", "scripts", "checks", "progress.py");
+const viewerPath = path.resolve(extensionDirectory, "..", "..", "..", "scripts", "checks", "executor_view.py");
 let pythonPromise;
 const pythonEnvironment = () => ({ ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" });
 
@@ -55,6 +60,23 @@ export async function readEvidence(root) {
     return data;
 }
 
+export async function readExecutor(root, { after = 0, epoch = null } = {}) {
+    if (!Number.isSafeInteger(after) || after < 0 || (epoch !== null && typeof epoch !== "string")) throw new Error("Cursor do executor inválido.");
+    const python = await interpreter();
+    const args = ["-X", "utf8", viewerPath, root, "--after", String(after)];
+    if (epoch) args.push("--epoch", epoch);
+    const { stdout } = await execute(python, args, {
+        timeout: 15000, maxBuffer: 32 * 1024 * 1024, windowsHide: true,
+        encoding: "utf8", env: pythonEnvironment(),
+    });
+    const data = JSON.parse(stdout);
+    if (data.schema_version !== 1 || typeof data.present !== "boolean"
+        || (data.present && (!Array.isArray(data.events) || !Number.isSafeInteger(data.cursor) || typeof data.epoch !== "string"))) {
+        throw new Error("Contrato do journal do executor incompatível com o monitor.");
+    }
+    return data;
+}
+
 export async function openBrowser(url) {
     const parsed = new URL(url);
     if (parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1" || !parsed.port || parsed.username || parsed.password) {
@@ -71,11 +93,12 @@ export async function openBrowser(url) {
 }
 
 export class MonitorManager {
-    constructor({ getSession, log, reader = readEvidence, browser = openBrowser, windowFactory = createCanvasWindow,
-                  threshold = INACTIVITY_THRESHOLD, heartbeat = 15000 }) {
+    constructor({ getSession, log, reader = readEvidence, executorReader = readExecutor, browser = openBrowser,
+                  windowFactory = createCanvasWindow, threshold = INACTIVITY_THRESHOLD, heartbeat = 15000 }) {
         this.getSession = getSession;
         this.log = log;
         this.reader = reader;
+        this.executorReader = executorReader;
         this.browser = browser;
         this.windowFactory = windowFactory;
         this.threshold = threshold;
@@ -102,6 +125,7 @@ export class MonitorManager {
 
     info(entry) {
         const state = entry.store.publicState;
+        const live = state.executor_live;
         return {
             enabled: true, execution_id: state.execution_id, swarm_id: state.swarm_id,
             canvas_id: CANVAS_ID, instance_id: entry.instanceId, url: entry.server.url,
@@ -110,8 +134,14 @@ export class MonitorManager {
             closure: state.closure ?? null,
             connected: entry.server.connected, surface: entry.surface, historical: entry.readOnly || TERMINAL.has(state.status),
             health: state.health ?? null,
+            executor: state.executor ? {
+                fed_by_executor: true, journal_cursor: state.executor.cursor, events_not_shown: state.executor.skipped,
+                running: (live?.running ?? []).map(({ agent, stage, cycle, state: status, since }) => ({ agent, stage, cycle, state: status, since })),
+                counts: live?.counts ?? null, driver: live?.driver ?? null, finished: live?.finished ?? false, outcome: live?.outcome ?? null,
+                last_read_at: live?.observed_at ?? null,
+            } : null,
             recoveries: (state.recoveries ?? []).map(item => ({ rule: item.rule, agent_id: item.agent_id, cycle: item.cycle, attempt: item.attempt })),
-            warnings: [...state.evidence.warnings, ...(state.reader_error ? [state.reader_error] : [])],
+            warnings: [...state.evidence.warnings, ...(state.reader_error ? [state.reader_error] : []), ...(live?.error ? [live.error] : [])],
         };
     }
 
@@ -198,8 +228,12 @@ export class MonitorManager {
 
     beat(entry) {
         if (entry.readOnly || entry.healthTimer) return;
-        const publish = () => entry.store.publishHealth({ threshold: this.threshold })
-            .catch(error => this.warn(`health:${error.message}`, `Monitor: não foi possível publicar a saúde da execução: ${error.message}`));
+        const publish = async () => {
+            // The journal is read at every beat as well: a file watcher that misses an event must not freeze the panel.
+            await this.pollExecutor(entry).catch(error => this.reportReadError(entry, error));
+            await entry.store.publishHealth({ threshold: this.threshold })
+                .catch(error => this.warn(`health:${error.message}`, `Monitor: não foi possível publicar a saúde da execução: ${error.message}`));
+        };
         entry.healthTimer = setInterval(() => {
             if (this.stopping || TERMINAL.has(entry.store.state.status)) {
                 clearInterval(entry.healthTimer);
@@ -218,6 +252,74 @@ export class MonitorManager {
         this.warn(`read:${entry.store.state.execution_id}:${error.message}`, `Monitor: dados indisponíveis ou desatualizados (${error.message}).`);
     }
 
+    /** What an execution does when it ends: stop looking at the swarm and publish the closed health once. */
+    async settle(entry) {
+        clearTimeout(entry.refreshTimer);
+        clearInterval(entry.healthTimer);
+        entry.healthTimer = null;
+        entry.watcher?.close();
+        await entry.store.publishHealth({ threshold: this.threshold }).catch(() => {});
+    }
+
+    /** Read what the executor's journal added since the last reading and apply it, as often as the reader says there is more. */
+    pollExecutor(entry) {
+        if (entry.readOnly || this.stopping || TERMINAL.has(entry.store.state.status)) return Promise.resolve();
+        if (entry.polling) {
+            entry.pollQueued = true;
+            return entry.polling;
+        }
+        const polling = (async () => {
+            try {
+                do {
+                    entry.pollQueued = false;
+                    await this.pollExecutorOnce(entry);
+                } while (entry.pollQueued && !this.stopping && !TERMINAL.has(entry.store.state.status));
+            } catch (error) {
+                entry.executorFailure = error.message;
+                throw error;
+            }
+            // A reading that works again clears the warning the failed one raised, and only that one.
+            if (entry.executorFailure && entry.store.readerError === entry.executorFailure) {
+                entry.store.readerError = null;
+                entry.store.emit("reader", null);
+                entry.store.emit("change", entry.store.publicState);
+            }
+            entry.executorFailure = null;
+        })();
+        entry.polling = polling;
+        return polling.finally(() => { entry.polling = null; });
+    }
+
+    async pollExecutorOnce(entry) {
+        const store = entry.store;
+        try { await fs.stat(path.join(store.root, "reports", "execution", "journal.jsonl")); }
+        catch (error) {
+            if (error.code === "ENOENT") return;
+            throw error;
+        }
+        store.executorDriven = true;
+        for (let round = 0; round < EXECUTOR_ROUNDS; round++) {
+            const known = store.state.executor;
+            const result = await this.executorReader(store.root, { after: known?.cursor ?? 0, epoch: known?.epoch ?? null });
+            if (this.stopping || TERMINAL.has(store.state.status)) return;
+            if (!result.present) return;
+            if (result.reset) {
+                store.setExecutorLive(result, { error: "O journal do executor não é o que esta execução vinha acompanhando. Reabra o monitor com start para acompanhar a nova execução." });
+                return;
+            }
+            store.setExecutorLive(result);
+            if (result.epoch) await store.observeExecutor({ epoch: result.epoch, cursor: result.cursor, events: result.events });
+            if (TERMINAL.has(store.state.status)) {
+                await this.settle(entry);
+                return;
+            }
+            // The health is the executor's, so it is as old as the reading and no older, not as old as the last heartbeat.
+            await store.publishHealth({ threshold: this.threshold })
+                .catch(error => this.warn(`health:${error.message}`, `Monitor: não foi possível publicar a saúde da execução: ${error.message}`));
+            if (!result.more) return;
+        }
+    }
+
     async refresh(entry) {
         if (entry.readOnly || TERMINAL.has(entry.store.state.status)) return;
         entry.refreshQueued = true;
@@ -225,9 +327,17 @@ export class MonitorManager {
         entry.refreshing = (async () => {
             for (let attempt = 0; attempt < 2; attempt++) {
                 entry.refreshQueued = false;
+                let failure = null;
+                try { await this.pollExecutor(entry); }
+                catch (error) { failure = error; }
+                if (TERMINAL.has(entry.store.state.status)) {
+                    if (failure) throw failure;
+                    return;
+                }
                 const evidence = await this.reader(entry.store.root);
                 if (this.stopping || TERMINAL.has(entry.store.state.status)) return;
                 await entry.store.updateEvidence(evidence);
+                if (failure) throw failure;
                 if (entry.store.readerError) {
                     await entry.store.repairSnapshot();
                     entry.store.readerError = null;
@@ -256,13 +366,7 @@ export class MonitorManager {
                         await this.refresh(entry);
                     }
                     await entry.store.observe(event);
-                    if (TERMINAL.has(entry.store.state.status)) {
-                        clearTimeout(entry.refreshTimer);
-                        clearInterval(entry.healthTimer);
-                        entry.healthTimer = null;
-                        entry.watcher?.close();
-                        await entry.store.publishHealth({ threshold: this.threshold }).catch(() => {});
-                    }
+                    if (TERMINAL.has(entry.store.state.status)) await this.settle(entry);
                     if (event.type === "tool.execution_complete" && event.data?.success === false) {
                         await entry.store.record("runtime", state => {
                             const dispatch = state.dispatches.find(item => item.tool_call_id === event.data.toolCallId && item.status === "queued");
@@ -370,6 +474,18 @@ export class MonitorManager {
         if (entry) entry.viewerClosed = true;
     }
 
+    /** Whether the swarm is run by the deterministic executor: its journal exists, or this execution already follows it. */
+    async drivenByExecutor(entry) {
+        if (entry.store.state.executor) return true;
+        try {
+            await fs.stat(path.join(entry.store.root, "reports", "execution", "journal.jsonl"));
+            return true;
+        } catch (error) {
+            if (error.code === "ENOENT") return false;
+            throw error;
+        }
+    }
+
     async action(args, sessionId) {
         if (args.operation === "start") {
             return this.start(args.swarm_path, { sessionId, executionId: args.execution_id, autoOpen: args.auto_open !== false });
@@ -382,12 +498,17 @@ export class MonitorManager {
         if (args.operation === "status") {
             // The watchdog asks for status; an answer up to one heartbeat old would hide a fresh stall.
             if (!entry.readOnly && !TERMINAL.has(entry.store.state.status)) {
+                await this.pollExecutor(entry).catch(error => this.reportReadError(entry, error));
                 await entry.store.publishHealth({ threshold: this.threshold })
                     .catch(error => this.warn(`health:${error.message}`, `Monitor: não foi possível medir a saúde da execução: ${error.message}`));
             }
             return this.info(entry);
         }
         if (entry.readOnly || TERMINAL.has(entry.store.state.status)) throw new Error("Execução histórica: apenas consulta e abertura são permitidas.");
+        if (COORDINATOR_OPERATIONS.has(args.operation) && await this.drivenByExecutor(entry)) {
+            throw new Error("Este swarm é conduzido pelo executor determinístico e o monitor é alimentado pelo journal dele: não registre "
+                + "despachos, fases, passagens nem encerramento. Use status para ver quem está em execução.");
+        }
         if (args.operation === "refresh") await this.refresh(entry);
         else if (args.operation === "phase") {
             await this.refresh(entry);

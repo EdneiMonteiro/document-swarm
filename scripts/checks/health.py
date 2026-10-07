@@ -20,7 +20,7 @@ from typing import Any
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.checks.common import InputError, parse_strict_json
+from scripts.checks.common import InputError, parse_strict_json, scalar
 from scripts.checks.progress import snapshot
 from scripts.checks.resume import project
 
@@ -120,6 +120,36 @@ def age_of(stamp: float | None) -> float | None:
     return None if delta < -BEAT_SKEW else max(0.0, delta)
 
 
+def read_executor_journal(journal: Path) -> tuple[list[dict[str, Any]], int]:
+    """The events of an executor journal, and how many lines could not be read.
+
+    A line that is not JSON is a torn append, which the engine repairs on its next write, so it is skipped and counted
+    rather than hiding every event around it.  Raises InputError for a journal larger than the supported size and OSError
+    or UnicodeError when it cannot be read at all.
+    """
+    if journal.stat().st_size > MAX_JOURNAL_BYTES:
+        raise InputError("the executor journal exceeds the supported size")
+    events: list[dict[str, Any]] = []
+    skipped = 0
+    # Split on "\n" only, as the journal's writer does: str.splitlines() also breaks on U+2028, U+0085 and
+    # other separators that a JSON string may legitimately carry unescaped.
+    for line in journal.read_text(encoding="utf-8").split("\n"):
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except (ValueError, RecursionError):
+            # Not only a torn line: an integer of thousands of digits or a list nested a hundred thousand deep is refused by
+            # the parser with an error that is not a JSONDecodeError, and ends the reading of every entry around it.
+            skipped += 1
+            continue
+        if isinstance(item, dict):
+            events.append(item)
+        else:
+            skipped += 1
+    return events, skipped
+
+
 def executor_state(root: Path) -> dict[str, Any] | None:
     """What the deterministic executor says about itself: its journal and its driver's heartbeat.
 
@@ -130,21 +160,10 @@ def executor_state(root: Path) -> dict[str, Any] | None:
     if not journal.is_file():
         return None
     try:
-        if journal.stat().st_size > MAX_JOURNAL_BYTES:
-            raise InputError("the executor journal exceeds the supported size")
-        events: list[dict[str, Any]] = []
-        # Split on "\n" only, as the journal's writer does: str.splitlines() also breaks on U+2028, U+0085 and
-        # other separators that a JSON string may legitimately carry unescaped.
-        for line in journal.read_text(encoding="utf-8").split("\n"):
-            try:
-                item = json.loads(line) if line.strip() else None
-            except json.JSONDecodeError:
-                continue  # a torn final append; the engine repairs it on its next write
-            if isinstance(item, dict):
-                events.append(item)
+        events, _ = read_executor_journal(journal)
     except (OSError, UnicodeError):
         return None
-    issued = {(item.get("task_id"), item.get("attempt"), item.get("inputs_sha256")): item
+    issued = {(scalar(item.get("task_id")), scalar(item.get("attempt")), scalar(item.get("inputs_sha256"))): item
               for item in events if item.get("event") == "task_issued"}
     # An answer covers an issue of the same task and attempt that asked for the same identity.  An entry from before
     # the journal carried the identity covers whatever was asked, as it always did; one identity's answer does not
@@ -152,7 +171,7 @@ def executor_state(root: Path) -> dict[str, Any] | None:
     recorded: dict[tuple[Any, Any], set[Any]] = {}
     for item in events:
         if item.get("event") == "task_recorded":
-            recorded.setdefault((item.get("task_id"), item.get("attempt")), set()).add(item.get("inputs_sha256"))
+            recorded.setdefault((scalar(item.get("task_id")), scalar(item.get("attempt"))), set()).add(scalar(item.get("inputs_sha256")))
 
     def answered(task_id: Any, attempt: Any, identity: Any) -> bool:
         identities = recorded.get((task_id, attempt), set())

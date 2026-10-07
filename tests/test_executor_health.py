@@ -230,6 +230,16 @@ class ExecutorHealthTests(EngineCase):
         self.assertEqual(record["state"], "waiting")
         self.assertEqual(record["executor"]["last_event"], "task_issued")
 
+    def test_a_journal_whose_fields_are_not_the_text_the_engine_wrote_does_not_stop_the_reading(self):
+        engine = self.start()
+        for fields in ({"task_id": ["c01"], "attempt": {"a": 1}, "inputs_sha256": ["x"]},
+                       {"task_id": {"x": 1}, "attempt": 1, "inputs_sha256": None}):
+            engine.journal.append("task_issued", stage="authors", kind="author", agent="hostile", cycle=1, round=0, **fields)
+            engine.journal.append("task_recorded", agent="hostile", outcome="accepted", **fields)
+        record = health.compose(self.root)
+        self.assertIn("author-01-platform", record["executor"]["pending_agents"], "the real pending work is still listed")
+        self.assertNotIn("hostile", record["executor"]["pending_agents"], "and what was answered is not")
+
     def test_the_heartbeat_file_is_not_mistaken_for_work_done(self):
         self.start()
         self.beat(age=1)

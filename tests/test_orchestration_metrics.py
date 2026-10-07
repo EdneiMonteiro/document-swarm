@@ -270,6 +270,18 @@ class ExecutorTests(unittest.TestCase):
         [lost] = result["dispatches_without_an_end"]
         self.assertEqual(lost["agent"], "author-01")
 
+    def test_a_journal_whose_fields_are_not_text_does_not_stop_the_measurement(self):
+        journal = sample_run()
+        journal.add(410, "task_issued", task_id=["x"], attempt={"a": 1}, stage=["authors"], agent="a", kind="author",
+                    cycle=[1], round={"r": 0})
+        journal.add(411, "task_started", task_id=["x"], attempt={"a": 1}, agent="a")
+        journal.add(412, "task_recorded", task_id=["x"], attempt={"a": 1}, outcome="accepted")
+        journal.add(413, "script_finished", script="sources", seconds="soon", cycle=1, round=0, exit_code=0)
+        journal.add(414, "gate_run", seconds=[1], cycle=1, exit_code=0)
+        result = self.measure(journal)
+        self.assertEqual(result["dispatches"], 4, "the three real tasks and the one with odd fields, each measured")
+        self.assertEqual(result["dispatches_without_an_end"], [])
+
     def test_a_journal_without_task_started_falls_back_to_the_issue(self):
         journal = ExecutorJournal().add(0, "run_started").issue(10, "t1", "author-01").record(70, "t1", "author-01")
         self.assertEqual(self.measure(journal)["agent_running_union_seconds"], 60)
@@ -285,6 +297,14 @@ class ExecutorTests(unittest.TestCase):
             read = metrics.read_journal(path)
         self.assertEqual(len(read), len(journal.events))
         self.assertEqual(read[2]["agent"], "a\u2028b\x85c")
+
+    def test_a_line_the_parser_refuses_for_a_reason_other_than_syntax_is_reported_as_invalid_json(self):
+        for name, line in (("an integer of five thousand digits", "1" * 5000), ("a list nested a hundred thousand deep", "[" * 100000)):
+            with self.subTest(name), tempfile.TemporaryDirectory() as folder:
+                path = Path(folder) / "journal.jsonl"
+                path.write_text('{"event": "run_started"}\n' + line + "\n", encoding="utf-8")
+                with self.assertRaisesRegex(InputError, r"journal\.jsonl:2: not valid JSON"):
+                    metrics.read_journal(path)
 
     def test_work_issued_and_never_recorded_is_listed_without_an_end(self):
         journal = ExecutorJournal().add(0, "run_started")
@@ -367,6 +387,83 @@ class RealRunMetricsTests(EngineCase):
             self.assertEqual(cli.main(["metrics", str(self.root), "--json", "--execution", "executor"]), 0)
         [result] = json.loads(out.getvalue())
         self.assertEqual(result["execution_id"], "executor")
+
+
+class MirrorTests(EngineCase):
+    """The monitor of an executor swarm only mirrors the executor's journal: it must not be measured as a run of its own."""
+
+    def mirror(self, name: str = "aaaa1111-mirror") -> Path:
+        folder = self.root / "reports" / "progress" / name
+        folder.mkdir(parents=True)
+        events = [
+            {"id": "e1", "sequence": 1, "at": at(0), "source": "monitor", "type": "connection", "data": {}},
+            {"id": "xb:1", "sequence": 2, "at": at(1), "source": "executor", "type": "executor_batch", "cycle": 0,
+             "data": {"epoch": "e", "cursor": 1, "dropped": 0,
+                      "events": [{"seq": 1, "n": 0, "at": at(1), "type": "phase", "cycle": 0,
+                                  "data": {"phase": "setup", "cycle": 0}}]}},
+            {"id": "e2", "sequence": 3, "at": at(2), "source": "monitor", "type": "session", "data": {"status": "idle"}},
+        ]
+        journal = folder / "events.jsonl"
+        journal.write_text("\n".join(json.dumps(item) for item in events), encoding="utf-8")
+        return journal
+
+    def invoke(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(list(args))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_a_mirror_is_not_reported_as_a_run_in_which_nothing_was_dispatched(self):
+        self.finish()
+        self.mirror()
+        code, out, err = self.invoke("metrics", str(self.root), "--json")
+        self.assertEqual(code, 0, err)
+        [result] = json.loads(out)
+        self.assertEqual((result["execution_id"], result["dispatches"]), ("executor", 7))
+        self.assertIn("aaaa1111-mirror only mirrors the executor's journal", err)
+        code, text, _ = self.invoke("metrics", str(self.root))
+        self.assertEqual(text.count("do journal do executor"), 1)
+        self.assertNotIn("do monitor", text)
+
+    def test_the_id_the_monitor_shows_selects_the_executors_figures(self):
+        self.finish()
+        self.mirror()
+        code, out, err = self.invoke("metrics", str(self.root), "--json", "--execution", "aaaa")
+        self.assertEqual(code, 0, err)
+        self.assertEqual([item["execution_id"] for item in json.loads(out)], ["executor"])
+        code, _, err = self.invoke("metrics", str(self.root), "--execution", "zzzz")
+        self.assertEqual(code, 2)
+        self.assertIn("no execution starts with zzzz", err)
+
+    def test_a_mirror_without_the_journal_it_mirrors_says_what_is_missing(self):
+        self.finish()
+        self.mirror()
+        (self.root / "reports" / "execution" / "journal.jsonl").unlink()
+        code, out, err = self.invoke("metrics", str(self.root))
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("only mirrors an executor run", err)
+        self.assertIn("is missing", err)
+
+    def test_what_the_monitor_recorded_itself_is_still_measured_beside_a_mirror(self):
+        folder = self.root / "reports" / "progress" / "bbbb2222-own"
+        folder.mkdir(parents=True)
+        journal = Journal().add(0, "phase", phase="authors", cycle=1)
+        journal.dispatch("a", 0).run("a", 10, 110).add(500, "session", status="idle")
+        batch = {"id": "xb:1", "at": at(5000), "source": "executor", "type": "executor_batch", "data": {"events": []}}
+        (folder / "events.jsonl").write_text("\n".join(json.dumps(item) for item in [*journal.events, batch]),
+                                             encoding="utf-8")
+        code, out, err = self.invoke("metrics", str(self.root), "--json")
+        self.assertEqual(code, 0, err)
+        [result] = json.loads(out)
+        self.assertEqual((result["execution_id"], result["agent_running_union_seconds"]), ("bbbb2222-own", 100))
+        self.assertEqual(result["wall_seconds"], 500, "the mirrored batch, long after the last thing the monitor saw, adds no time")
+        self.assertNotIn("only mirrors", err)
+
+    def test_the_event_type_the_monitor_records_is_the_one_the_measurement_skips(self):
+        root = Path(__file__).resolve().parents[1]
+        monitor = (root / ".github" / "extensions" / "document-swarm-monitor" / "state.mjs").read_text(encoding="utf-8")
+        self.assertIn('this.record("executor_batch"', monitor)
+        self.assertIn('"executor_batch"', (root / "scripts" / "orchestration" / "metrics.py").read_text(encoding="utf-8"))
 
 
 class CommandTests(unittest.TestCase):

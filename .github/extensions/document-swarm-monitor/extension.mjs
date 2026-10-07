@@ -44,7 +44,7 @@ session = await sdk.joinSession({
     ...(active && canvases.length ? { canvases } : {}),
     tools: active ? [{
         name: "docswarm_monitor",
-        description: "Observe document-swarm, never execute or control its agents. Start after brief creation (auto-opens canvas/browser). Register each dispatch first, then use its exact task_name on the real task tool; task_id is only for observed follow-ups. Publish real phase/cycle and artifact handoffs. Record every watchdog recovery with operation recovery, so a resumed execution never looks clean. Refresh reads artifacts; finish only records coordinator closure. No prompts, secrets or inferred grades. If unavailable, explicitly warn and continue document production in the terminal.",
+        description: "Observe document-swarm, never execute or control its agents. Start after brief creation (auto-opens canvas/browser). Register each dispatch first, then use its exact task_name on the real task tool; task_id is only for observed follow-ups. Publish real phase/cycle and artifact handoffs. Record every watchdog recovery with operation recovery, so a resumed execution never looks clean. Refresh reads artifacts; finish only records coordinator closure. A swarm run by the deterministic executor (scripts/orchestration run) needs only start before the run: the monitor then reads the executor's journal and heartbeat itself, shows who is running and for how long, closes itself when the executor finishes, and refuses dispatch, phase, handoff and finish; use status to see who is running now. No prompts, secrets or inferred grades. If unavailable, explicitly warn and continue document production in the terminal.",
         parameters,
         handler: async (args, invocation) => {
             try {

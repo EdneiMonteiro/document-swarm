@@ -63,6 +63,8 @@ export function dispatchStatus(state, dispatch, cycle, connected) {
 export function agentStatus(state, agent, cycle, connected) {
     const dispatch = state.dispatches.filter(item => item.agent_id === agent.id && item.cycle === cycle).at(-1);
     if (dispatch || agent.kind !== "coordinator") return dispatchStatus(state, dispatch, cycle, connected);
+    // Under the executor the coordinator is a task like any other, not the session the panel is open in.
+    if (state.executor) return "declared";
     if (cycle === state.cycle && state.closure?.confirmation === "session.idle" && TERMINAL.has(state.status)) {
         return state.status === "aborted" ? "cancelled" : "completed";
     }
@@ -75,6 +77,7 @@ export function agentStatus(state, agent, cycle, connected) {
 
 export function sessionLabel(state, cycle, connected) {
     if (archived(state, cycle)) return TERMINAL.has(state.status) ? "Registro encerrado" : "Rodada histórica";
+    if (state.executor) return executorLabel(state, connected);
     if (!connected || state.connection !== "connected" || !state.session_activity || state.session_activity.stale) return "Sessão não observada";
     return {
         processing: state.status === "closing" ? "Sessão finalizando" : "Sessão processando",
@@ -82,6 +85,90 @@ export function sessionLabel(state, cycle, connected) {
         idle: "Sessão sem tarefas em curso",
         completion_declared: "Fim da sessão não confirmado",
     }[state.session_activity.status] ?? "Sessão não observada";
+}
+
+const pluralAgents = count => `${count} ${count === 1 ? "agente" : "agentes"}`;
+
+/** What the executor is doing, from the last reading of its journal and heartbeat. */
+export function executorLabel(state, connected) {
+    const live = state.executor_live;
+    if (!connected || state.connection !== "connected" || !live) return "Executor não observado";
+    const rows = Array.isArray(live.running) ? live.running : [];
+    const running = rows.filter(item => item.state === "running").length;
+    const queued = rows.length - running;
+    if (running) return `Executor: ${pluralAgents(running)} em execução${queued ? ` · ${queued} na fila` : ""}`;
+    if (queued) return `Executor: ${queued} na fila`;
+    if (["blocked", "failed"].includes(live.driver?.state)) return "Executor parado: precisa de uma pessoa";
+    return live.driver ? "Executor entre etapas" : "Executor sem batimento";
+}
+
+/** Whether the label above describes work going on now, which the panel paints differently from waiting. */
+export function sessionWorking(state, cycle, connected) {
+    if (archived(state, cycle) || !connected || state.connection !== "connected") return false;
+    if (state.executor) return Array.isArray(state.executor_live?.running) && state.executor_live.running.some(item => item.state === "running");
+    return state.session_activity?.status === "processing";
+}
+
+export const OUTCOME_LABELS = { accepted: "Aceito", rejected: "Recusado", null: "Sem resultado", superseded: "Substituído" };
+const ENDED = ["completed", "failed", "cancelled"];
+
+export function formatDuration(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) return "";
+    const total = Math.round(seconds);
+    if (total < 60) return `${total} s`;
+    const minutes = Math.floor(total / 60);
+    if (minutes < 60) return `${minutes} min ${String(total % 60).padStart(2, "0")} s`;
+    return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
+}
+
+/**
+ * How long an executor's dispatch has been waiting, running or took, from the times its journal recorded and never from
+ * the seconds a record states: those run from the issue and take in every stop of the executor in between.  Only the
+ * state the panel shows decides which of the three it is, so an old record is never made to run on.
+ */
+export function dispatchClock(dispatch, status, now) {
+    if (dispatch?.source !== "executor") return null;
+    const started = Date.parse(dispatch.started_at ?? "");
+    const ended = Date.parse(dispatch.ended_at ?? "");
+    const issued = Date.parse(dispatch.registered_at ?? "");
+    if (ENDED.includes(status)) {
+        return Number.isFinite(started) && Number.isFinite(ended) && ended >= started ? { kind: "took", seconds: (ended - started) / 1000 } : null;
+    }
+    if (status === "running" && Number.isFinite(started)) return { kind: "running", seconds: Math.max(0, (now - started) / 1000) };
+    if (status === "queued" && Number.isFinite(issued)) return { kind: "waiting", seconds: Math.max(0, (now - issued) / 1000) };
+    return null;
+}
+
+export function agentStateText(dispatch, status, now) {
+    const clock = dispatchClock(dispatch, status, now);
+    return clock ? `${AGENT_STATUS[status]} · ${formatDuration(clock.seconds)}` : AGENT_STATUS[status];
+}
+
+const RUN_STATUS = {
+    observing: "Observação iniciada", active: "Execução em andamento",
+    closing: "Encerramento solicitado; aguardando confirmação do runtime",
+    completed: "Encerramento registrado", escalated: "Escalação registrada", aborted: "Interrupção registrada",
+};
+const EXECUTOR_RUN_STATUS = {
+    observing: "Aguardando o journal do executor", active: "Execução em andamento pelo executor determinístico",
+    completed: "Encerrada pelo executor: aprovada", escalated: "Encerrada pelo executor: escalada ao usuário",
+};
+
+export function runStatusText(state) {
+    return (state.executor ? EXECUTOR_RUN_STATUS[state.status] : null) ?? RUN_STATUS[state.status] ?? "Estado não registrado";
+}
+
+/** The warnings the panel owes the person looking at it: what could not be read, and what was read but cannot be shown. */
+export function executorWarnings(state) {
+    const warnings = [];
+    if (state.executor_live?.error) warnings.push(state.executor_live.error);
+    if (state.executor?.skipped > 0) {
+        warnings.push(`${state.executor.skipped} evento(s) do journal do executor não puderam ser exibidos; o journal continua íntegro.`);
+    }
+    if (state.executor_live?.skipped_lines > 0) {
+        warnings.push(`${state.executor_live.skipped_lines} linha(s) do journal do executor estão ilegíveis e foram ignoradas na leitura.`);
+    }
+    return warnings;
 }
 
 export function healthLabel(state, cycle, connected) {
@@ -169,7 +256,7 @@ async function startInterface() {
         return data;
     }
     function alertState() {
-        const warnings = [failure, windowFailure, shownState?.reader_error, ...(shownState?.evidence.warnings ?? [])].filter(Boolean);
+        const warnings = [failure, windowFailure, shownState?.reader_error, ...(shownState ? executorWarnings(shownState) : []), ...(shownState?.evidence.warnings ?? [])].filter(Boolean);
         if (shownState && !connected && selectedId === currentId) warnings.unshift("Conexão interrompida. Os dados exibidos podem estar desatualizados.");
         $("alert").hidden = !warnings.length;
         $("alert").textContent = warnings.join(" ");
@@ -265,14 +352,15 @@ async function startInterface() {
         $("agent-note").textContent = data.agents.length ? "Papéis declarados nesta execução" : "Aguardando criação dos agentes";
         $("running-count").textContent = data.agents.filter(agent => visibleAgentStatus(agent) === "running").length;
         $("cycle-count").textContent = selectedCycle ? `${selectedCycle} / ${data.evidence.max_cycles}` : "Pré-ciclo";
-        $("run-status").textContent = ({ observing: "Observação iniciada", active: "Execução em andamento", closing: "Encerramento solicitado; aguardando confirmação do runtime", completed: "Encerramento registrado", escalated: "Escalação registrada", aborted: "Interrupção registrada" })[data.status] ?? "Estado não registrado";
+        $("run-status").textContent = runStatusText(data);
         const stall = healthLabel(data, selectedCycle, connected);
         $("session-status").textContent = stall ? stall.title : sessionLabel(data, selectedCycle, connected);
-        $("session-status").className = `session-state${stall ? ` ${stall.state}`
-            : !archived(data, selectedCycle) && connected && data.session_activity?.status === "processing" ? " processing" : ""}`;
+        $("session-status").className = `session-state${stall ? ` ${stall.state}` : sessionWorking(data, selectedCycle, connected) ? " processing" : ""}`;
         $("session-status").title = stall ? stall.detail : archived(data, selectedCycle)
             ? "O registro encerrado não informa se a sessão iniciou outro trabalho."
-            : "Atividade do agente principal observada no runtime, separada da disponibilidade dos subagentes.";
+            : data.executor
+                ? "O que o executor determinístico registrou no journal e no batimento do processo; não é a atividade do agente principal."
+                : "Atividade do agente principal observada no runtime, separada da disponibilidade dos subagentes.";
         const caption = gradeCaption(cycle, data.evidence);
         $("grade-label").textContent = caption.label;
         $("grade-card").title = caption.title;
@@ -373,8 +461,8 @@ async function startInterface() {
             if (!compact) group.append(label({ x: 14, y: 68, class: "agent-role" }, dispatch?.observed_model ?? dispatch?.declared_model ?? agent.declared_model, layout.cardWidth - 28));
             group.append(svg("circle", { cx: compact ? 12 : 18, cy: compact ? 48 : 87, r: compact ? 3 : 3.5, class: "status-dot" }));
             const stateX = compact ? 20 : 28;
-            group.append(label({ x: stateX, y: compact ? 52 : 91, class: "agent-state" }, STATUS[status], layout.cardWidth - stateX - 8));
-            group.append(svg("title", {}, `${agent.id}\n${role}\n${STATUS[status]}`));
+            group.append(label({ x: stateX, y: compact ? 52 : 91, class: "agent-state" }, agentStateText(dispatch, status, Date.now()), layout.cardWidth - stateX - 8));
+            group.append(svg("title", {}, `${agent.id}\n${role}\n${agentStateText(dispatch, status, Date.now())}`));
             children.push(group);
         }
         if (!shownState.agents.length) children.push(svg("text", { x: 20, y: 100, class: "agent-role" }, "Aguardando a criação dos agentes."));
@@ -493,13 +581,20 @@ async function startInterface() {
             container.append(element("h3", agent.id), element("p", dispatch?.role ?? agent.role));
             const list = element("dl");
             for (const [label, value] of [
-                ["Estado", STATUS[visibleAgentStatus(agent)]], ["Rodada", selectedCycle || "Pré-ciclo"],
+                ["Estado", agentStateText(dispatch, visibleAgentStatus(agent), Date.now())], ["Rodada", selectedCycle || "Pré-ciclo"],
                 ["Modelo declarado", dispatch?.declared_model ?? agent.declared_model],
                 ["Modelo observado", dispatch?.observed_model ?? "Não informado pelo runtime"],
-                ["Origem do modelo", dispatch?.model_source === "first_dispatched" ? "Primeiro modelo despachado" : dispatch?.observed_model ? "Seleção do runtime" : "Não registrada"],
-                ["Tarefa", principal ? "Agente principal da sessão" : dispatch?.task_id ?? "Não correlacionada"],
+                ["Origem do modelo", dispatch?.model_source === "executor_journal" ? "Registro do executor"
+                    : dispatch?.model_source === "first_dispatched" ? "Primeiro modelo despachado" : dispatch?.observed_model ? "Seleção do runtime" : "Não registrada"],
+                ["Tarefa", principal ? "Agente principal da sessão" : dispatch?.executor_task ?? dispatch?.task_id ?? "Não correlacionada"],
                 ["Última observação", principal && shownState.session_activity?.observed_at ? date(shownState.session_activity.observed_at) : dispatch?.observed_at ? date(dispatch.observed_at) : "Não registrada"],
                 ["Disponibilidade", STATUS[dispatch?.task_status] ?? "Não registrada"],
+                ...(dispatch?.source === "executor" ? [
+                    ["Etapa", `${dispatch.stage}${dispatch.round ? ` · rodada de reparo ${dispatch.round}` : ""}`],
+                    ["Tentativa", dispatch.attempt],
+                    ["Resultado", OUTCOME_LABELS[dispatch.outcome] ?? "Ainda sem resultado"],
+                    ["Motivo", dispatch.error ? `${dispatch.error}${dispatch.cause ? ` (${dispatch.cause})` : ""}` : "Não registrado"],
+                ] : []),
             ]) list.append(element("dt", label), element("dd", value));
             if (dispatch?.status === "idle" || dispatch?.task_status === "idle") {
                 container.append(element("p", "Disponível para outro turno. Esse estado, sozinho, não indica que você precise responder."));
@@ -535,18 +630,21 @@ async function startInterface() {
             const item = element("li");
             const time = element("time", new Date(event.at).toLocaleTimeString("pt-BR"));
             time.title = date(event.at);
-            const source = element("span", ({ runtime: "RUNTIME", coordinator: "COORDENADOR", artifacts: "ARTEFATOS", observer: "OBSERVADOR" })[event.source] ?? "REGISTRO", "event-source");
+            const source = element("span", ({ runtime: "RUNTIME", coordinator: "COORDENADOR", artifacts: "ARTEFATOS", observer: "OBSERVADOR", executor: "EXECUTOR" })[event.source] ?? "REGISTRO", "event-source");
             const data = event.data;
             const dispatch = shownState.dispatches.find(value => value.id === data.dispatch_id || value.id === data.id);
+            const byExecutor = event.source === "executor";
             const description = event.type === "phase" ? `Fase: ${PHASES[data.phase] ?? data.phase}`
-                : event.type === "dispatch" ? `${data.agent_id}: despacho registrado; aguardando observação`
+                : event.type === "dispatch" ? (byExecutor ? `${data.agent_id}: pedido emitido pelo executor (tentativa ${data.attempt})` : `${data.agent_id}: despacho registrado; aguardando observação`)
                 : event.type === "binding" ? `${dispatch?.agent_id ?? "Agente"}: chamada correlacionada`
-                : event.type === "runtime" ? `${dispatch?.agent_id ?? "Agente"}: ${STATUS[data.status] ?? "metadados atualizados"}`
+                : event.type === "runtime" ? `${dispatch?.agent_id ?? "Agente"}: ${STATUS[data.status] ?? "metadados atualizados"}${byExecutor && data.outcome ? ` · ${OUTCOME_LABELS[data.outcome] ?? data.outcome}` : ""}${byExecutor && data.error ? ` · ${data.error}` : ""}`
+                : event.type === "executor" ? data.label
                 : event.type === "handoff" ? `${data.from} → ${data.to}: ${data.label}`
                 : event.type === "evidence" ? `Artefatos atualizados: ${data.agents} agentes, ${data.cycles} rodadas`
-                : event.type === "finish" ? `Encerramento solicitado: ${data.status}`
+                : event.type === "finish" ? (byExecutor ? `Execução encerrada pelo executor: ${data.status}` : `Encerramento solicitado: ${data.status}`)
                 : event.type === "session" ? `Sessão: ${{ processing: "processando", waiting: "principal entre etapas", idle: "sem tarefas em curso", completion_declared: "conclusão declarada" }[data.status] ?? data.status}`
-                : `Conexão: ${data.connection}`;
+                : event.type === "connection" ? `Conexão: ${data.connection}`
+                : `Evento: ${event.type}`;
             item.append(time, source, element("p", description));
             return item;
         }));
@@ -716,7 +814,14 @@ async function startInterface() {
             stream();
         } catch (error) { failure = error.message; alertState(); }
     });
-    window.addEventListener("beforeunload", () => { stopped = true; streamController?.abort(); });
+    // The clocks of the agents that are running move between the states the server pushes.
+    const clock = setInterval(() => {
+        if (stopped || !shownState || document.hidden) return;
+        if (!shownState.dispatches.some(item => item.source === "executor" && ["queued", "running"].includes(item.status))) return;
+        renderGraph();
+        if (activeTab === "details" && selection?.type === "agent") renderDetails();
+    }, 5000);
+    window.addEventListener("beforeunload", () => { stopped = true; clearInterval(clock); streamController?.abort(); });
 
     $("dashboard").dataset.windowFit = windowKey ? "pending" : "host-managed";
     fitWindow("compact");
