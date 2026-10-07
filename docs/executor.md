@@ -364,16 +364,37 @@ de modo que nenhuma memoização do runtime devolve a falha já obtida.
 - `python "<DOCSWARM>/scripts/orchestration" metrics "<swarm>"` decompõe o relógio em
   agente rodando, código rodando e ocioso. Cada agente é medido a partir do momento em que
   começou (`task_started`), não de quando foi emitido: se o processo caiu e o mesmo comando
-  rodou horas depois, a pausa é tempo ocioso, não tempo de agente.
-- O painel visual do monitor ainda não é alimentado pelo executor. Ele depende dos
-  despachos que o coordenador registra, e esta versão não os emite. Com `monitor: false`
-  no brief a extensão se recusa a abrir; com `true` ela abre e lê os artefatos (ciclos,
-  notas, portão), mas não mostra agente em execução. Para ver um swarm já executado, abra
-  uma **cópia** dele com `monitor: true`: editar o brief do original faz o ciclo corrente
-  ser pago de novo (veja "Seguir adiante depois de uma escalação"). O painel, o
+  rodou horas depois, a pausa é tempo ocioso, não tempo de agente. Num swarm que o painel
+  acompanhou, o journal do monitor só espelha o do executor (eventos `executor_batch`):
+  medido por si, apareceria como uma execução em que nada foi despachado. O `metrics` não o
+  mede à parte, avisa no stderr e aceita o id que o painel mostra em `--execution` para
+  escolher a medição do executor; o que o monitor registrou por conta própria continua
+  medido.
+- O `final-report.md` de um swarm do executor ganha a seção **Executor rework**, derivada
+  do journal: recusas de uma tentativa, rodadas de reparo, tarefas iniciadas duas vezes,
+  respostas obsoletas, vereditos retirados, mudanças da nota de aprovação, do teto de
+  ciclos e do plano, e a recuperação de um plano perdido. Uma execução que refez trabalho
+  não aparece como limpa. A seção "Watchdog recoveries" segue sendo só o que o vigia do
+  monitor registrou, e por isso diz "None recorded" num swarm do executor. A etapa da
+  narrativa fica de fora da lista: ela é escrita depois destes fatos e a partir deles, e o
+  motor só reaproveita uma narrativa aceita enquanto os fatos de que ela partiu não
+  mudam. Um journal que não pode ser lido recusa o relatório; linhas ilegíveis são
+  contadas e ditas no texto.
+- O painel visual do monitor é alimentado pelo executor: ele lê o journal e o batimento
+  (`scripts/checks/executor_view.py`, só leitura) e mostra quem está em execução e há quanto
+  tempo, o que cada agente levou, as passagens entre papéis, as recusas com o motivo e o
+  encerramento, e se fecha sozinho. Com o brief em `monitor: true` (o padrão), faça `start`
+  do monitor **antes** do `run` (o painel espera o journal existir) e não registre nada à
+  mão: `dispatch`, `phase`, `handoff` e `finish` são recusados num swarm assim. `status`
+  responde quem está rodando agora. Com `monitor: false` a extensão se recusa a abrir. Para
+  ver um swarm já executado, abra uma **cópia** dele com `monitor: true`: editar o brief do
+  original faz o ciclo corrente ser pago de novo (veja "Seguir adiante depois de uma
+  escalação"); a cópia mostra a execução inteira, reproduzida do journal. O painel, o
   `health.py` e o `resume.py` leem o plano: mostram o teto dado por `--max-cycles` e a
   nota de aprovação do swarm, e o painel colore cada nota pela nota sob a qual a própria
   revisão do ciclo foi julgada (um `A-` aprovado sob `A-` não aparece como reprovado).
+  A arquitetura da projeção, o cursor e as garantias estão em
+  [monitor.md](./monitor.md#execuções-conduzidas-pelo-executor-determinístico).
 
 ## Usar outro backend
 
@@ -438,8 +459,9 @@ O que a execução mostrou, tudo corrigido com teste e mutante:
    mediana de 44,1 s com eles (33,0 a 57,2 s) e 11,5 s sem (10,1 a 19,6 s): cerca de 33 s
    por chamada, em 3 chamadas alternadas de cada tipo. O backend agora desliga os
    servidores de que a tarefa não tem ferramenta (tabela acima). Os tempos desta execução
-   foram medidos antes da mudança, e o ganho ainda não foi medido numa execução completa:
-   numa chamada de 66 a 74 s, como as do revisor e do rubber duck, 33 s é quase metade.
+   foram medidos antes da mudança; a segunda execução (abaixo) a mediu numa execução
+   completa, junto com outras mudanças, e as chamadas curtas, como as do revisor e do
+   rubber duck, caíram cerca de metade: numa chamada de 66 a 74 s, 33 s é quase isso.
 5. **Uma resposta ilegível era recusada sem deixar rastro.** Duas recusas por "não é um
    objeto JSON" (um autor, depois de 218 s e com 1.088 caracteres, e uma narrativa de
    4.540) não deixaram a resposta para diagnosticar. Agora o leitor aceita as quebras de
@@ -496,10 +518,88 @@ o motor passa da rejeição; o ciclo corrente é o que se julga de novo.
 Achados em aberto:
 
 - **A extensão pedida não é exigida por nada.** Nem um verificador nem um revisor mede
-  o tamanho. O texto saiu com 58 % a mais que o limite superior pedido.
+  o tamanho. O texto saiu com 58 % a mais que o limite superior pedido, e com 43 % a mais
+  na segunda execução (4.997 palavras).
 - **A declaração do coordenador deste swarm mandava marcar a versão mais cautelosa como
   "pendente".** A marca vazou para o texto do leitor e o rubber duck e o revisor
-  editorial apontaram. Divergência entre autores vai em `divergences`, não no texto.
+  editorial apontaram. Divergência entre autores vai em `divergences`, não no texto. A
+  segunda execução, com a mesma declaração, não repetiu o vazamento, o que não é uma
+  correção.
+
+## Segunda execução real
+
+Ainda em 07/10/2026 o mesmo brief rodou de novo, num swarm novo (`2026-10-07-SWARM-02`:
+as mesmas oito declarações; só o id, o painel e as frases sobre o painel e a memória
+mudaram), depois das correções da primeira. Mudaram juntos, e a comparação não os
+separa: o CLI (1.0.93-4 em vez de 1.0.93-2), o desligamento dos servidores MCP por
+tarefa, a nota `A-` declarada desde o início e o painel ao vivo (`monitor: true`). O
+paralelismo foi o mesmo (`--parallel 3`), assim como o teto de 4 ciclos e de 3 tentativas.
+Foi um único `run`, sem pausa para corrigir nada, do início à entrega.
+
+| | Primeira (swarm 01) | Segunda (swarm 02) |
+|---|---|---|
+| Resultado | escalado no ciclo 4 sob `A`; aprovado ao julgar o ciclo 4 de novo sob `A-` | **aprovado no ciclo 4** sob `A-`, entrega no mesmo `run` |
+| Relógio do journal | 146,8 min, dos quais 77,9 min esperando a decisão sobre `A-` | **46,1 min** |
+| Relógio sem a espera | 68,8 min | 46,1 min |
+| Algum agente rodando | 55,9 min (soma 86,7 min, paralelismo 1,55x) | 45,7 min (soma 75,1 min, paralelismo 1,64x) |
+| Ocioso (nem agente nem código rodando) | 61,8 % do relógio; 12,7 min fora a espera | 0,3 % (7 s) |
+| Chamadas | 40: 35 aceitas, 5 recusadas | 38: 37 aceitas, 1 recusada |
+| Ciclos | 4, com um veredito retirado ao mudar a nota | 4, com uma rodada de reparo no ciclo 3 por uma fonte morta |
+| Mediana por chamada | autor 207,6 s, consolidação 149,4 s, revisor 74,2 s, rubber duck 64,1 s, narrativa 26,8 s | autor 166,6 s, consolidação 158,4 s, revisor 37,4 s, rubber duck 35,4 s, narrativa 27,8 s |
+| Custo | cerca de 1.398 AIU e 131 requisições premium (1.371 e 122,5 nos registros de uso, que perderam duas chamadas sobrescritas) | 1.377 AIU e 116,0 requisições premium (38 registros para 38 chamadas) |
+| Fontes | 27 ok, 4 redirecionamentos, 0 falhas | 24 ok, 3 redirecionamentos, 0 falhas |
+| Texto | 5.525 palavras, 2 diagramas, 1 travessão | 4.997 palavras, 2 diagramas, 0 travessões |
+| Notas do ciclo aprovado | 6 tópicos em A-; editorial A em 3 de 5 superfícies e A- em 2 | T03 em A e 5 tópicos em A-; editorial A nas 5 superfícies |
+
+As duas colunas vêm do `metrics` e dos registros de uso do swarm inteiro, entrega
+incluída; a tabela da primeira execução, acima, foi medida antes da entrega.
+
+O que a tabela diz, e o que não diz:
+
+- **O relógio tem duas partes que não se misturam.** A maior (77,9 min) foi uma espera
+  por uma decisão de pessoa na primeira execução: não é ganho do executor. O resto,
+  68,8 para 46,1 min (1,5x), vem de 12,7 min de pausas para corrigir defeitos que a
+  primeira execução expôs e a segunda já não tinha (ocioso de 12,7 min para 7 s) e de 10
+  min a menos de agente rodando.
+- **O tempo de agente caiu nas chamadas curtas.** A mediana do revisor e a do rubber duck
+  caíram cerca de metade (37 s e 29 s a menos), a do autor 20 % (41 s), e as da
+  consolidação e da narrativa não mudaram (9 s a mais e 1 s a mais). É o que o
+  desligamento dos servidores MCP prevê, cerca de 33 s de partida por chamada (44,1 s
+  contra 11,5 s numa chamada trivial), e some onde a chamada é longa e dominada pela
+  inferência. A execução não isola esse efeito: o CLI também mudou.
+- **O custo não mudou.** Uma diferença de 1,5 % nos AIU e de 11 % nas requisições premium
+  cabe no que duas execuções de um modelo diferem entre si, e não há dispersão medida.
+  O executor tira o tempo entre as chamadas e o de partida delas, não chamadas de modelo.
+- **Ninguém rodando passou de mais da metade do relógio para quase nada.** Esta é a medida
+  de estrutura que importa para o problema que originou o executor, o fluxo que parava
+  entre turnos: a medição histórica de 13 execuções do fluxo do coordenador achou o
+  relógio acordado e sem agente em 57 %; aqui foi 0,3 %. Não é o mesmo documento nem a
+  mesma máquina, e não houve uma execução do fluxo do coordenador com este brief.
+- **Duas execuções, uma de cada.** Um modelo não escreve o mesmo texto duas vezes: a
+  segunda precisou de 16 chamadas de autor contra 13 e de uma rodada de reparo, e as notas
+  seguiram outro caminho (no ciclo 3 a primeira teve um veto crítico do rubber duck, e a
+  segunda, B+ em três tópicos e uma conclusão que não se sustentava sozinha). A nota `A-`
+  declarada desde o início não encurtou nada: as duas aprovaram no ciclo 4, e a segunda
+  rejeitou os ciclos 1 a 3 sob `A-`.
+
+O painel acompanhou a execução inteira: 38 despachos (37 concluídos e 1 falha, a recusa
+do autor), pico de 3 agentes simultâneos, cursor 148, igual ao último `seq` do journal,
+nenhum evento ignorado, saúde `closed`, e fechou sozinho quando o journal registrou o
+`run_finished`.
+
+O que a execução mostrou, corrigido com teste e mutante:
+
+1. **O `metrics` imprimia um bloco com zero despachos antes do certo.** O journal do
+   monitor de um swarm do executor só guarda `executor_batch`; medido por si, parecia uma
+   execução em que nada foi despachado. Agora ele não é medido à parte, e o id do monitor
+   em `--execution` escolhe a medição do executor (veja "Observação").
+2. **O relatório final dizia "None recorded" para uma execução que refez trabalho.** A
+   seção de recuperações lia só os snapshots do monitor, e o que o executor refaz está no
+   journal dele: a rodada de reparo do ciclo 3 não aparecia, e a primeira execução teria
+   escondido quatro recusas, três trocas de plano, a mudança de `A` para `A-`, o veredito
+   retirado e um reinício. A seção **Executor rework** (veja "Observação") lista cada uma.
+   A narrativa dessa execução, escrita a partir dos fatos, disse que não houve
+   recuperações do watchdog, que era tudo o que os fatos diziam.
 
 ## Limites conhecidos
 
@@ -511,8 +611,11 @@ Achados em aberto:
   presença de uma opção não prova o seu efeito em outra versão: rode `qualify` depois de
   atualizar o CLI. O formato do registro de uso não está documentado e é lido de forma
   frouxa, com o arquivo cru guardado.
-- Nenhum benchmark pago foi executado, então não há promessa de ganho percentual. As
-  medições acima descrevem onde o tempo foi gasto, não quanto o executor economiza.
+- Há duas execuções reais, uma depois da outra e com correções entre elas (veja "Segunda
+  execução real"). Elas dizem onde o tempo foi gasto e o que mudou, sem dispersão e sem
+  pareamento com o fluxo do coordenador, que não rodou com este brief. Não há promessa de
+  ganho percentual sobre o fluxo do coordenador; o que está medido é a estrutura (quase
+  nenhum tempo sem agente rodando), não a economia.
 - O executor remove os intervalos entre turnos, mas não a latência dos modelos, os
   limites do provedor nem uma máquina que dorme. Uma execução longa desacompanhada
   precisa de um ambiente que não hiberne.

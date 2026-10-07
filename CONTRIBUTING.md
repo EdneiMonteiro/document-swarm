@@ -128,6 +128,20 @@ See [the presentation guide](./docs/presentations.md).
   synthetic events. Keep fixtures explicitly identified as demonstrations.
 - Installer tests must use isolated homes and prove links do not delete their
   destinations or replace unrelated user directories.
+- The panel of an executor swarm is a projection of the executor's journal
+  (`scripts/checks/executor_view.py`), applied as one `executor_batch` event. The
+  projection only reads; the extension treats everything it returns as untrusted (each
+  event is validated and copied field by field before anything changes, and what the
+  state cannot hold is skipped and counted, never half applied); and the executor knows
+  nothing of the panel. Keep it that way: no channel from the executor to the extension,
+  no field of the journal that reaches the state without being named, and no duration
+  taken from a record's own `seconds` (they run from the issue and include every stop).
+  When the Python side learns a new journal event, teach `executor_view.py` and its tests
+  first, then the batch shape in `state.mjs`.
+- A reader of a journal that comes back from disk must survive any field type, not only
+  the ones the engine writes: normalise table keys with `common.scalar`, and treat a line
+  the JSON parser refuses for any reason (`ValueError` and `RecursionError` as well as
+  `JSONDecodeError`) as unreadable, not as a crash.
 
 See [monitor architecture and development](./docs/monitor.md).
 
@@ -198,8 +212,19 @@ See [execution health and resume](./docs/monitor.md#saúde-da-execução-e-retom
 - Keep the engine suites sequential with other suites that share `tests/.work`:
   `python -m unittest tests.test_orchestration_engine tests.test_orchestration_backend
   tests.test_orchestration_cli tests.test_orchestration_hostile
-  tests.test_checker_crashes tests.test_executor_health -v`.
+  tests.test_checker_crashes tests.test_executor_health tests.test_executor_view
+  tests.test_orchestration_metrics -v`.
 - A change to the cycle contract in `SKILL.md` needs the same change in `engine.py`,
   `resume.py` and `health.py`.
+- What the executor redoes must reach the final report. `final_report.py` derives the
+  "Executor rework" section from the executor's journal; a journal event that stands for
+  redone work (a refusal, a repair, a restart, a withdrawn verdict, a changed policy or plan)
+  needs a row there and a test, or a repaired run reads as a clean one. The narrative stage
+  stays out of that section, because the engine reuses an accepted narrative only while the
+  facts it was written from stay the same.
+- The monitor's journal of an executor swarm only mirrors the executor's. Anything that
+  measures or summarises a swarm takes the executor's journal as the authority and must not
+  read the mirror as a run of its own (`metrics` skips journals with nothing of their own
+  dispatched; `tests/test_orchestration_metrics.py` ties the event type to the extension).
 
 See [the executor guide](./docs/executor.md).

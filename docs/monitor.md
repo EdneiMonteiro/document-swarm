@@ -107,13 +107,13 @@ pertencentes a outra sessão são abertas como histórico, sem retomar agentes.
 | Operação | Responsabilidade |
 |---|---|
 | `start` | Abre a observação da pasta selecionada e tenta apresentar a interface. |
-| `phase` | Registra uma fase e um ciclo realmente iniciados pelo coordenador. |
-| `dispatch` | Reserva a correlação de um trabalho; retorna `task_name`. |
-| `handoff` | Registra uma passagem efetiva entre nomes de agentes declarados. |
-| `refresh` | Relê artefatos da execução ativa. |
-| `finish` | Solicita encerramento da observação; a confirmação depende de `session.idle`, sem aprovar ou cancelar agentes. |
+| `phase` | Registra uma fase e um ciclo realmente iniciados pelo coordenador. Recusado num swarm de executor. |
+| `dispatch` | Reserva a correlação de um trabalho; retorna `task_name`. Recusado num swarm de executor. |
+| `handoff` | Registra uma passagem efetiva entre nomes de agentes declarados. Recusado num swarm de executor. |
+| `refresh` | Relê artefatos da execução ativa (e o journal do executor, se houver). |
+| `finish` | Solicita encerramento da observação; a confirmação depende de `session.idle`, sem aprovar ou cancelar agentes. Recusado num swarm de executor, que se encerra sozinho. |
 | `open` | Reabre o painel; `surface: "browser"` solicita o navegador. |
-| `status` | Retorna um resumo do monitor e sua condição de conexão. |
+| `status` | Retorna um resumo do monitor e sua condição de conexão; num swarm de executor, também quem está em execução. |
 
 Antes de chamar a ferramenta real `task`:
 
@@ -257,7 +257,9 @@ Cada recuperação executada pelo vigia é registrada com
 `{"operation":"recovery","rule":"R1".."R5","agent_id":...,"cycle":N,"detail":...}`.
 A extensão aplica os tetos: duas por agente por ciclo e seis por execução. Passar
 do teto é um erro explícito, não um registro silencioso. As recuperações aparecem
-no `final-report.md`, para que uma execução retomada não pareça limpa.
+no `final-report.md`, para que uma execução retomada não pareça limpa. Num swarm do
+executor determinístico, o mesmo papel é da seção **Executor rework**, derivada do
+journal dele (veja [executor.md](./executor.md#observação)).
 
 O vigia recupera execução, nunca qualidade. Ele não atribui nota, não pula
 revisor ou rubber duck e não aprova entrega. Se o laço do agente estiver travado,
@@ -277,9 +279,64 @@ agendado nem despachos do coordenador. O processo `run` regrava
 "Retomar" da tabela traz o comando que continua de onde parou, e `metrics` decompõe o
 relógio em agente, código e ocioso.
 
-O painel visual e o `health.json` da extensão não são alimentados por essa execução,
-porque dependem dos despachos que só o coordenador registra. O painel continua
-servindo ao fluxo do coordenador.
+O painel e o `health.json` da extensão seguem a mesma fonte, sem que o executor saiba que
+o painel existe e sem canal do executor para a extensão:
+
+```mermaid
+flowchart LR
+  X[Executor: journal.jsonl e driver.json] --> V[executor_view.py: projeção só de leitura]
+  V -->|lote: epoch, cursor, eventos| E[Extensão: um evento executor_batch]
+  E --> J[Journal e snapshot da execução]
+  E --> L[Leitura recente: quem roda e a saúde do executor]
+  J --> H[HTTP local e SSE]
+  L --> H
+  H --> P[Painel]
+```
+
+- **Projeção.** `scripts/checks/executor_view.py <swarm> --after N --epoch E` transforma o
+  journal em eventos que o painel já entende (fase, despacho, estado do agente, passagem,
+  nota do histórico e encerramento) e devolve também quem está em execução agora, os
+  contadores e a saúde que o `health.py` calcularia. Só lê. O mesmo journal gera sempre os
+  mesmos eventos com os mesmos nomes (o despacho se chama `x<seq>`, pela entrada do journal
+  que o emitiu). Cada pedido do executor é um despacho; a tentativa seguinte, ou o mesmo
+  pedido refeito com outras entradas, é outro, e o anterior vira "cancelado" em vez de
+  ficar executando para sempre. As duas durações vêm dos carimbos do journal (`task_started`
+  até `task_recorded`), nunca do campo `seconds` do registro, que corre desde a emissão e
+  contaria a espera por vaga e qualquer parada do executor.
+- **Cursor e época.** A extensão guarda o número da última entrada aplicada e a época do
+  journal (o instante da primeira entrada). Um cursor que não pertence a este journal (outra
+  época, ou à frente do fim) é recusado e mostrado como erro, nunca aplicado. Uma leitura
+  entrega no máximo 1.500 entradas, sem cortar uma entrada ao meio, e a extensão repete a
+  pergunta enquanto houver mais. Linhas que o Python não lê (um append cortado, um número de
+  milhares de dígitos, um aninhamento profundo) são contadas e puladas, e o painel avisa.
+- **Lote atômico.** Cada leitura vira um único evento `executor_batch`: uma linha no
+  `events.jsonl` e um snapshot, em vez de uma escrita por evento. O que chega é tratado como
+  não confiável: cada evento é validado inteiro e copiado campo a campo (nenhum campo
+  desconhecido, `task_id` e `tool_call_id` sempre nulos para o reconciliador nativo não
+  tocar neles) antes de mudar qualquer coisa, e o que o estado não pode manter é pulado e
+  contado, sem aplicar meio evento. Reabrir o monitor reconstrói tudo só pelo journal da
+  execução.
+- **Frescor.** Os despachos que o journal descreve valem como observados enquanto a última
+  leitura tem menos de um minuto. Quando o monitor deixa de ler o journal, eles voltam a
+  "Não observado" em vez de continuar parecendo em execução, e a saúde é `unobserved`. A
+  saúde publicada é a do próprio executor (batimento, journal, idade) e é recalculada a cada
+  leitura, no batimento de 15 s da extensão, em `status` e a cada mudança do diretório.
+- **Encerramento.** `run_finished` como última entrada do journal fecha a execução do
+  monitor (`completed` ou `escalated`), para o vigia e a leitura e publica a saúde
+  `closed`. Se a pessoa eleva o teto e roda de novo, o journal continua e é preciso chamar
+  `start` outra vez.
+- **Operações.** `dispatch`, `phase`, `handoff` e `finish` são recusados enquanto o swarm tem
+  journal de executor: o executor já registra tudo isso. `start`, `refresh`, `open`,
+  `status` e `recovery` funcionam. `status` traz `executor` (quem está em execução e desde
+  quando, contadores, o batimento, o último registro lido e quantos eventos não puderam ser
+  mostrados).
+
+No painel, cada cartão mostra "Executando · 3 min 20 s" e, depois, o tempo que levou; a
+barra de fases diz "Executor: 2 agentes em execução"; os detalhes trazem etapa, tentativa,
+resultado e o motivo de uma recusa; a aba Histórico rotula as linhas como `EXECUTOR`. O
+coordenador aparece como uma tarefa como as outras ("Declarado" até ser emitido), não como a
+sessão em que o painel está aberto. Os relógios andam a cada 5 segundos, entre os estados que
+o servidor empurra.
 
 ## Persistência e proteção de dados
 
@@ -359,6 +416,13 @@ Notas e contadores são sintéticos; não são uma avaliação de conteúdo de p
 Use eventos reais de uma tarefa limitada e de seu follow-up para comprovar a
 integração do SDK. Confira atualizações e geometria no navegador renderizado,
 não apenas valores solicitados ou capturas de uma tela estática.
+
+Para a alimentação pelo executor, os testes de Node usam um leitor injetado (o gerente aceita
+`executorReader`) e, uma vez, a ponte Python real sobre um journal escrito à mão; a projeção
+tem a suíte `tests.test_executor_view` e roda também sobre uma execução de verdade do motor.
+Para ver o painel ao vivo sem gastar nada, rode o executor sobre o CLI de teste com
+`FAKE_COPILOT_SLEEP` (veja `tests/fake_copilot.py`) e abra o monitor sobre a pasta do swarm
+antes do `run`; para ver uma execução antiga, abra uma cópia dela com `monitor: true`.
 
 Com a demonstração aberta no navegador de testes, o script
 `.github/extensions/document-swarm-monitor/tests/compact-ui.playwright.js`

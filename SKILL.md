@@ -362,6 +362,18 @@ automaticamente que o usuário precisa responder. A sessão principal pode estar
 consolidando, validando ou executando outro trabalho enquanto os especialistas
 estão entre turnos.
 
+**Swarm conduzido pelo executor determinístico (seção 2.7).** Aí quem despacha, muda de
+fase, passa artefatos e encerra é o código, e o monitor lê isso do próprio journal e do
+batimento do executor (`reports/execution/`), por `scripts/checks/executor_view.py`:
+mostra quem está em execução e há quanto tempo, as passagens entre papéis, as
+recusas com o motivo e o encerramento, e se fecha sozinho quando o executor termina.
+Faça só `start`, e **antes** do `run`, com o brief em `monitor: true`; o journal pode
+ainda não existir. `status` diz quem está rodando agora, de quem é o último registro e
+a saúde do executor. A extensão recusa `dispatch`, `phase`, `handoff` e `finish` num
+swarm assim: registrar à mão a mesma coisa duplicaria o que o executor já registra.
+`refresh`, `open` e `recovery` continuam valendo. Depois de uma escalação, para
+acompanhar a continuação (`run ... --max-cycles`), chame `start` de novo.
+
 ### 2.4. Composição e inspeção profissional de PDF
 
 Quando PDF fizer parte da entrega, use o motor portátil de ReportLab/Platypus
@@ -613,10 +625,12 @@ Conduta quando o usuário escolhe o executor:
 
 1. Faça as fases 0 a 2 como sempre: enquadramento, brief, memória, agentes, modelos
    confirmados e `lint_agents.py`.
-2. Não despache agentes nem execute à mão os scripts do ciclo. Execute o comando
-   abaixo e acompanhe a tabela que ele imprime a cada minuto. O vigia da seção 2.6
-   não se aplica: o executor mantém o próprio batimento em
-   `reports/execution/driver.json`, que `health.py` lê.
+2. Não despache agentes nem execute à mão os scripts do ciclo. Com o monitor
+   habilitado (o padrão, seção 2.3), faça `start` dele **antes** do `run`: ele lê o
+   journal e o batimento do executor e mostra o andamento ao vivo, sem que você
+   registre nada. Execute o comando abaixo e acompanhe a tabela que ele imprime a
+   cada minuto. O vigia da seção 2.6 não se aplica: o executor mantém o próprio
+   batimento em `reports/execution/driver.json`, que `health.py` lê.
 3. Retomar é repetir o mesmo comando, depois de uma queda, de uma máquina que
    dormiu ou de Ctrl+C. O estado vem dos artefatos e do journal.
 4. A entrega, o relatório derivado, a narrativa e a proposta de memória são feitos
@@ -654,7 +668,10 @@ restrição, paralelismo e modelo registrado. Uma sonda que falha desqualifica o
 backend.
 
 Quem preferir dirigir o motor de outro lugar usa `init`, `next`, `record` e `status`;
-a interface está no guia. `metrics` decompõe o relógio em agente, código e ocioso.
+a interface está no guia. `metrics` decompõe o relógio em agente, código e ocioso. O
+`final_report.py` de um swarm do executor traz a seção **Executor rework**, derivada do
+journal: recusas, reparos, reinícios, vereditos retirados e mudanças de nota, teto ou
+plano. Uma execução que refez trabalho não aparece como limpa.
 
 ## 3. Convenções de caminho e versão
 
@@ -1638,10 +1655,11 @@ Todos usam somente Python stdlib. Consulte `--help` para opções exatas.
 | `pdf_contract.py` | verifica os registros e hashes das inspeções PDF no gate | inspeção falhou, está ausente ou não corresponde aos artefatos atuais |
 | `presentation_contract.py` | reconstrói páginas, navegação e cobertura de uma apresentação e confere seus registros | contrato, evidência ou cobertura não correspondem à entrega atual |
 | `progress.py` | projeta artefatos para observação local, sem modificá-los | não é um portão; problemas de leitura são explícitos |
+| `executor_view.py` | projeta o journal e o batimento do executor determinístico em eventos que o monitor entende, a partir de um cursor | não é um portão; só lê, nunca grava; sai `1` com mensagem se o journal não pode ser lido |
 | `health.py` | compõe a tabela de saúde da execução a partir de medições | não é um portão; sai `1` em `stalled` ou `invalid` |
 | `resume.py` | projeta o próximo passo determinístico e grava `resume.json` | não é um portão; sai `1` quando a projeção registrada está desatualizada |
 | `inspect_nomenclature.py` | lista candidatos lexicais e suas ocorrências | não dá nota; erros de leitura são explícitos |
-| `final_report.py` | deriva fatos do relatório final | artefatos estão ausentes/inválidos |
+| `final_report.py` | deriva fatos do relatório final, inclusive o retrabalho do journal do executor | artefatos estão ausentes/inválidos, ou o journal do executor não pode ser lido |
 | `update_memory.py` | propõe e, após aprovação, aplica memória | swarm não aprovado ou fonte inelegível |
 | `scripts/orchestration` | executor determinístico opcional: `init`, `next`, `record`, `status`, `run`, `qualify` e `metrics` (seção 2.7) | não é um portão; só `gate.py` aprova; `run` sai `1` em escalação e `3` quando precisa de uma pessoa |
 

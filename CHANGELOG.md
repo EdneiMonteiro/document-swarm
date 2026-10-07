@@ -134,6 +134,41 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
   own review was judged under, so an `A-` approved at `A-` is no longer drawn as a failure.
   The decisions are pure functions with tests, and a test keeps a hard-coded pass mark out
   of the panel's source and page.
+- The visual monitor is fed by the executor. `scripts/checks/executor_view.py` projects the
+  executor's journal and heartbeat into the events the panel already knows (phase, dispatch,
+  state of an agent, handoff, a note for the history, the end of the run), from a cursor and
+  the epoch of the journal, and only reads: the executor does not know the panel exists and
+  there is no channel from it to the extension. The extension applies each reading as one
+  `executor_batch` event (one journal line, one snapshot), after validating every event whole
+  and copying it field by field; what the state cannot hold is skipped, counted and shown, and
+  never half applied. The panel shows who is running and for how long ("Executando · 3 min
+  20 s"), what each agent took (from the journal's times, never from the `seconds` of a
+  record, which run from the issue and include every stop of the executor), the handoffs
+  between roles, a refusal with its reason, the executor's own health, and it closes itself
+  when the run finishes. Dispatches that the journal describes stop looking observed when the
+  monitor stops reading it. `docswarm_monitor` refuses `dispatch`, `phase`, `handoff` and
+  `finish` on a swarm that has an executor journal, and `status` says who is running now. A
+  swarm run earlier is replayed from its journal: the 40 dispatches of the Laya run, with
+  their five refusals and their times, show up as they were. Open the monitor before `run`;
+  it waits for the journal. See `docs/monitor.md`.
+- The final report of an executor swarm lists what the executor had to redo. Its
+  "Watchdog recoveries" section reads only the monitor's snapshots, so a run with a repair
+  round, refused attempts, a restarted task or a withdrawn verdict was reported as "None
+  recorded". A new **Executor rework** section, derived from `reports/execution/journal.jsonl`,
+  lists each refused attempt (agent, attempt, first reason), repair round, task started
+  twice, stale answer, withdrawn verdict, change of the approval grade or the cycle ceiling,
+  plan recovery and plan change, with the cycle (taken from the task id when the event has
+  none). A swarm the executor did not run has no such section, a run with nothing redone says
+  so, unreadable lines are counted in the text, and a journal that cannot be read refuses the
+  report. The narrative stage is left out on purpose: it is written after these facts and
+  about them, and the engine reuses an accepted narrative only while those facts stay the
+  same. Cells are one printable line each, cut and with their pipes escaped.
+- The second real run (`docs/executor.md`, "Segunda execução real") ran the same brief again
+  after the fixes. It was approved in cycle 4 under `A-` in 46.1 minutes without a person,
+  against 68.8 minutes of working clock (and a 77.9 minute wait for a decision) in the first;
+  it spent 0.3 % of the clock with nothing running against 61.8 %; the median call of the
+  short roles was about half as long; and the cost was the same within the variation of two
+  runs. It is two single runs with several changes between them, not a paired benchmark.
 
 ### Changed
 
@@ -178,17 +213,17 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
   `gpt-5-mini`, 7 of 7 probes) and produced a whole article through four cycles (see
   `docs/executor.md`, "Primeira execução real"). It was qualified again after the MCP
   servers were stopped per task (CLI 1.0.93-4, 7 of 7, web probe included). It is not
-  qualified on other CLI versions: run `qualify` after upgrading. No paid benchmark against
+  qualified on other CLI versions: run `qualify` after upgrading. A second real run
+  followed (`docs/executor.md`, "Segunda execução real"), but no paired benchmark against
   the coordinator flow was run, so there is no promised percentage gain.
-- The visual monitor panel is not driven by the executor (it shows cycles, grades and the
-  gate from the artifacts, not agents at work), and a dead source found by the final
-  recheck blocks the delivery until someone replaces it.
+- A dead source found by the final recheck blocks the delivery until someone replaces it.
 - The length a brief asks for is not checked by anything: the first real run delivered
-  5,525 words against a requested 2,500 to 3,500.
-- The saving from stopping the MCP servers was measured on a trivial call, not on a whole
-  run: the timings of the first real run were taken before the change. The listing of the
-  servers is read whole or not at all, so a CLI whose listing changes format loses the
-  saving (and nothing else) until the parser is taught the new format.
+  5,525 words against a requested 2,500 to 3,500, and the second 4,997.
+- The saving from stopping the MCP servers was measured on a trivial call and then on a whole
+  run, but the second run changed the CLI version, the grade and the panel at the same time,
+  so it is not isolated. The listing of the servers is read whole or not at all, so a CLI
+  whose listing changes format loses the saving (and nothing else) until the parser is taught
+  the new format.
 - An approved verdict is bound to the brief, the rubber duck's declaration, the document,
   the grades and the checks (through the identity of the audit), not to the declarations of
   the authors and reviewers, which the document and the grades already pin. A rejected cycle
@@ -212,6 +247,31 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
 ### Fixed
 
+- Building the live feed of the monitor showed that the readers of the executor's journal
+  trusted the type of every field of a file that is read back from disk, and that a hostile or
+  merely odd entry stopped the reading of all the others. Fixed with a test and a mutant each:
+  - `health.executor_state` and `metrics.executor_events` used the task id, the attempt, the
+    stage and the cycle as dictionary keys. A list or an object where the engine writes a word
+    raised `TypeError: unhashable type`, which ended `health.py` and `metrics` with a traceback.
+    Both normalise those fields with `common.scalar`, and `metrics` no longer raises on a
+    `seconds` that is not a number.
+  - A journal line the JSON parser refuses for a reason other than its syntax (an integer of
+    thousands of digits, a list nested a hundred thousand deep) raises `ValueError` or
+    `RecursionError`, which neither reader treated as an unreadable line. `health.py` and the
+    projection now skip and count it, like a torn append; `metrics` reports it as invalid JSON
+    with its line number.
+  - The journal reader is one function (`health.read_executor_journal`), shared by `health.py`
+    and `executor_view.py`, so a fix to how a line is read cannot reach one and miss the other.
+  - `common.scalar`, which makes a journal field fit to be a key, raised `RecursionError` for a
+    value nested deeper than the JSON encoder follows and `ValueError` for one that contains
+    itself. It now returns a marker string, so such an entry cannot end the reading of the others.
+- `metrics` over a swarm whose monitor followed the executor printed a block with zero
+  dispatches before the right one: the monitor's journal of such a swarm holds only
+  `executor_batch` events, none of the vocabulary `metrics` reads. A journal with nothing of
+  its own dispatched is no longer measured as a run (the executor's journal is), its name is
+  reported on stderr, and the id the monitor shows selects the executor's figures in
+  `--execution`. What the monitor recorded itself is still measured, and a test ties the event
+  type the extension records to the one `metrics` skips.
 - Two independent reviews of the changes that followed the first real run (one of the
   design, one line by line) found, and the following were fixed with a test and a mutant:
   - `task_started` and `task_recorded` did not carry the identity of the task

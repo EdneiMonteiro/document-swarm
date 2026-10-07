@@ -153,6 +153,12 @@ documento aprovado. Fechar a tela não encerra o trabalho.
 atividade do principal é mostrada separadamente, e o encerramento solicitado
 pelo coordenador aguarda a confirmação de ociosidade da sessão.
 
+Num swarm conduzido pelo [executor determinístico](#executor-determinístico) o painel é
+alimentado pelo journal e pelo batimento do próprio executor: cada agente mostra "Executando
+· 3 min 20 s" e, depois, quanto levou; a barra de fases diz quantos agentes o executor tem em
+execução; recusas aparecem com o motivo e o painel se fecha sozinho quando o executor termina.
+Abra-o antes do `run`, que o painel espera o journal existir.
+
 Use `monitor: false` no brief ou peça uma execução sem monitor para não abrir o
 painel. Falhas da interface são avisadas e não alteram os critérios de qualidade.
 Veja [uso, arquitetura, segurança e diagnóstico](./docs/monitor.md).
@@ -203,10 +209,13 @@ Cada agente roda como um processo `copilot` não interativo, com só as ferramen
 seu papel, sem escrita e sem comandos, e o resultado volta como JSON validado. O mesmo
 comando retoma uma execução parada. Só um `run` opera um swarm por vez, e Ctrl+C
 encerra os agentes em andamento sem perder o que já terminou. Esta versão cobre
-documentos Markdown novos; o
-backend foi testado com um CLI substituto e deve ser qualificado com o comando
-`qualify`, que faz poucas chamadas reais e exige `--yes`. Veja o
-[guia do executor](./docs/executor.md).
+documentos Markdown novos. O backend foi qualificado com chamadas reais e produziu dois
+artigos de verdade; rode `qualify`, que faz poucas chamadas reais e exige `--yes`, depois
+de atualizar o CLI. Na segunda execução, depois das correções da primeira, o mesmo brief foi
+aprovado no ciclo 4, em 46 minutos, sem uma pausa, e só 0,3 % do relógio teve ninguém
+rodando (61,8 % na primeira, que incluiu esperas por pessoas); o custo foi o mesmo. São duas
+execuções com várias mudanças entre elas, não um benchmark pareado contra o fluxo do
+coordenador. Veja o [guia do executor](./docs/executor.md).
 
 ## PDFs profissionais
 
@@ -328,10 +337,11 @@ biblioteca padrão do Python.
 | `lint_agents.py` | Valida frontmatter, modelo declarado e swarm do agente. |
 | `gate.py` | Aplica a régua, o veto crítico, o limite de ciclos e o contrato editorial da entrega. |
 | `progress.py` | Projeta os artefatos para o monitor, sem modificá-los ou aprovar conteúdo. |
+| `executor_view.py` | Projeta o journal e o batimento do executor em eventos do monitor, a partir de um cursor; só lê. |
 | `health.py` | Compõe a tabela de saúde da execução a partir de medições; diz "não observado" em vez de inventar. |
 | `resume.py` | Projeta o próximo passo determinístico e grava `resume.json` vinculado a hashes. |
 | `inspect_nomenclature.py` | Lista candidatos a siglas/códigos e suas ocorrências, sem avaliar significado ou dar nota. |
-| `final_report.py` | Deriva os fatos do relatório final dos artefatos estruturados. |
+| `final_report.py` | Deriva os fatos do relatório final dos artefatos estruturados, inclusive o retrabalho registrado no journal do executor. |
 | `update_memory.py` | Propõe e, após aprovação explícita, atualiza a memória. |
 | `pdf_contract.py` | Verifica no gate os hashes e resultados do motor PDF opcional, sem importar suas dependências. |
 | `presentation_contract.py` | Reconstrói páginas, navegação e cobertura de uma apresentação e confronta os registros com os arquivos reais. |
