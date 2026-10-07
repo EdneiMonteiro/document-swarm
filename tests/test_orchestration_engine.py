@@ -212,6 +212,7 @@ class PipelineTests(EngineCase):
         report = (self.root / "reports" / "final-report.md").read_text(encoding="utf-8")
         self.assertIn("riscos residuais registrados pelo coordenador", report)
         self.assertNotIn("<!-- COORDINATOR", report)
+        self.assertIn("None recorded in the executor journal.", report, "a run with nothing redone says so")
 
     def test_what_the_engine_writes_passes_the_unmodified_legacy_readers(self):
         self.finish()
@@ -548,6 +549,15 @@ class ValidationTests(EngineCase):
         retry = agent.prompts[("c01.r0.reviewers.reviewer-02-clarity", 2)]
         self.assertIn("a tentativa anterior foi recusada", retry)
         self.assertIn("uma frase que não existe", retry)
+
+    def test_a_refused_attempt_reaches_the_facts_of_the_final_report(self):
+        self.finish(self.agent(mutate=self.broken_quote))
+        report = (self.root / "reports" / "final-report.md").read_text(encoding="utf-8")
+        section = report.split("### Executor rework")[1].split("## ")[0]
+        self.assertIn("refused attempt", section)
+        self.assertIn("reviewer-02-clarity, attempt 1", section)
+        self.assertIn("does not appear in the reviewed text", section)
+        self.assertNotIn("None recorded", section, "a run that had to redo a call is not reported as clean")
 
     def test_the_retry_prompt_differs_so_the_runtime_cannot_replay_the_failure(self):
         agent = self.agent(mutate=self.broken_quote)

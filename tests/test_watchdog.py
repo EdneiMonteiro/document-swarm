@@ -494,6 +494,107 @@ class RecoveryReportTests(unittest.TestCase):
         text = final_report.render(self.root)
         self.assertIn("author-01-platform", text)
 
+    def journal(self, *events: dict, raw: str = "") -> None:
+        lines = [json.dumps({"seq": number, "at": f"2026-01-01T00:{number:02d}:00.000Z", **event})
+                 for number, event in enumerate(events, start=1)]
+        self.swarm.write("reports/execution/journal.jsonl", "\n".join(lines) + "\n" + raw)
+
+    def rework(self) -> str:
+        return final_report.render(self.root).split("### Executor rework")[1].split("## Coordinator narrative")[0]
+
+    def test_a_swarm_the_executor_did_not_run_has_no_executor_section(self):
+        self.assertNotIn("### Executor rework", final_report.render(self.root))
+
+    def test_an_executor_run_without_rework_says_so(self):
+        task = "c01.r0.authors.author-01"
+        self.journal({"event": "run_started", "plan_sha256": "a" * 64},
+                     {"event": "task_started", "task_id": task, "attempt": 1, "agent": "author-01"},
+                     {"event": "task_recorded", "task_id": task, "attempt": 1, "outcome": "accepted", "errors": []},
+                     {"event": "plan_refreshed", "plan_sha256": "a" * 64})
+        text = self.rework()
+        self.assertIn("None recorded in the executor journal.", text)
+        self.assertNotIn("| At |", text)
+
+    def test_every_kind_of_rework_is_listed_with_its_cycle_and_its_reason(self):
+        author, review = "c01.r0.authors.author-01", "c01.r0.reviewers.reviewer-01"
+        self.journal(
+            {"event": "run_started", "plan_sha256": "a" * 64},
+            {"event": "task_started", "task_id": author, "attempt": 1, "agent": "author-01", "inputs_sha256": "x"},
+            {"event": "task_recorded", "task_id": author, "attempt": 1, "agent": "author-01", "cycle": 1,
+             "outcome": "rejected", "errors": ["the answer is not a JSON object", "a second reason"]},
+            {"event": "task_started", "task_id": author, "attempt": 1, "agent": "author-01", "inputs_sha256": "x"},
+            {"event": "task_recorded", "task_id": "c01.r0.authors.author-02", "attempt": 1, "agent": "author-02",
+             "cycle": 1, "outcome": "null", "errors": ["the agent returned no result"]},
+            {"event": "task_stale", "task_id": review, "attempt": 2},
+            {"event": "repair_started", "cycle": 3, "round": 1, "items": 2},
+            {"event": "verdict_withdrawn", "cycle": 4, "recorded": "escalate", "reason": "it cannot be reproduced"},
+            {"event": "approval_grade_changed", "previous": "A", "current": "A-"},
+            {"event": "max_cycles_changed", "previous": 4, "current": 5},
+            {"event": "plan_recovered", "reason": "the plan was deleted"},
+            {"event": "plan_refreshed", "plan_sha256": "a" * 64},
+            {"event": "plan_refreshed", "plan_sha256": "b" * 64},
+            {"event": "task_started", "task_id": "c04.r0.rubber-duck.rubber-duck", "attempt": 1, "agent": "rubber-duck"},
+            {"event": "task_started", "task_id": "c04.r0.rubber-duck.rubber-duck", "attempt": 1, "agent": "rubber-duck"},
+        )
+        text = self.rework()
+        rows = [line for line in text.splitlines() if line.startswith("| 2026-")]
+        self.assertEqual(rows, [
+            "| 2026-01-01T00:03:00 | 1 | refused attempt | author-01, attempt 1: the answer is not a JSON object |",
+            "| 2026-01-01T00:04:00 | 1 | task restarted | author-01, attempt 1: started a second time |",
+            "| 2026-01-01T00:05:00 | 1 | refused attempt | author-02, attempt 1: the agent returned no result |",
+            f"| 2026-01-01T00:06:00 | 1 | stale answer refused | {review}, attempt 2 |",
+            "| 2026-01-01T00:07:00 | 3 | repair round | round 1: 2 item(s) |",
+            "| 2026-01-01T00:08:00 | 4 | verdict withdrawn | recorded escalate: it cannot be reproduced |",
+            "| 2026-01-01T00:09:00 |  | approval grade changed | A to A- |",
+            "| 2026-01-01T00:10:00 |  | cycle ceiling changed | 4 to 5 |",
+            "| 2026-01-01T00:11:00 |  | plan recovered | the plan was deleted |",
+            "| 2026-01-01T00:13:00 |  | plan changed | aaaaaaaa to bbbbbbbb |",
+            "| 2026-01-01T00:15:00 | 4 | task restarted | rubber-duck, attempt 1: started a second time |",
+        ])
+        self.assertIn("not a clean execution", text)
+        self.assertIn("never awards a grade", text)
+        self.assertNotIn("could not be read", text)
+
+    def test_a_task_asked_again_under_a_new_identity_is_not_a_restart(self):
+        task = "c01.r0.authors.author-01"
+        self.journal({"event": "task_started", "task_id": task, "attempt": 1, "agent": "author-01", "inputs_sha256": "x"},
+                     {"event": "task_started", "task_id": task, "attempt": 1, "agent": "author-01", "inputs_sha256": "y"})
+        self.assertIn("None recorded in the executor journal.", self.rework())
+
+    def test_the_narrative_stage_is_not_part_of_the_facts_it_is_written_from(self):
+        narrative = "c04.r0.narrative.coordinator"
+        self.journal({"event": "task_started", "task_id": narrative, "attempt": 1, "agent": "coordinator"},
+                     {"event": "task_recorded", "task_id": narrative, "attempt": 1, "agent": "coordinator",
+                      "outcome": "rejected", "errors": ["the answer is not a JSON object"]},
+                     {"event": "task_started", "task_id": narrative, "attempt": 1, "agent": "coordinator"},
+                     {"event": "task_stale", "task_id": narrative, "attempt": 2})
+        self.assertIn("None recorded in the executor journal.", self.rework())
+
+    def test_a_hostile_journal_cannot_break_the_table_or_the_report(self):
+        self.journal(
+            {"event": "task_recorded", "task_id": "c01.r0.authors.author-01", "attempt": 1, "agent": "a|b\nc",
+             "outcome": "rejected", "errors": [["nested", {"deep": 1}], "| pipe | row |"]},
+            {"event": "repair_started", "cycle": ["x"], "round": {"a": 1}, "items": "\x1b[31mred" + "y" * 5000},
+            {"event": "verdict_withdrawn", "recorded": None, "reason": "r" * 100000},
+            {"event": "plan_refreshed", "plan_sha256": ["not", "text"]},
+            raw="{ torn line\n[1, 2]\n" + "[" * 100000 + "\n")
+        text = self.rework()
+        rows = [line for line in text.splitlines() if line.startswith("| 2026-")]
+        self.assertEqual(len(rows), 3)
+        for row in rows:
+            self.assertEqual(len(re.findall(r"(?<!\\)\|", row)), 5, f"a cell broke out of its column: {row}")
+            self.assertLess(len(row), 400)
+        self.assertIn(r"a\|b c", rows[0])
+        self.assertNotIn("\x1b", text)
+        self.assertIn("3 journal line(s) could not be read", text)
+
+    def test_a_journal_that_cannot_be_read_refuses_the_report(self):
+        path = self.root / "reports" / "execution" / "journal.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"\xff\xfe this is not text")
+        with self.assertRaisesRegex(InputError, "cannot read the executor journal"):
+            final_report.render(self.root)
+
 
 if __name__ == "__main__":
     unittest.main()

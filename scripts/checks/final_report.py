@@ -13,8 +13,9 @@ from typing import Any
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.checks.common import InputError, load_data
+from scripts.checks.common import InputError, load_data, scalar
 from scripts.checks.gate import evaluate, evaluate_current
+from scripts.checks.health import read_executor_journal
 
 
 def find_artifacts(swarm: Path, name: str) -> list[Path]:
@@ -66,6 +67,82 @@ def watchdog_recoveries(swarm: Path) -> list[dict[str, Any]]:
             if isinstance(item, dict):
                 found.append({**item, "execution_id": data.get("execution_id", path.parent.name)})
     return sorted(found, key=lambda item: (str(item.get("at", "")), str(item.get("id", ""))))
+
+
+def flat(value: Any, limit: int) -> str:
+    """A journal field as one printable line cut at ``limit``.
+
+    The journal is read back from disk, where a field the engine wrote as text may hold a list, a line break or a control
+    character, and a table row must stay one line.
+    """
+    if value is None:
+        return ""
+    text = " ".join("".join(char if char.isprintable() else " " for char in str(scalar(value))[:limit * 4 + 16]).split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def task_parts(task_id: Any) -> tuple[str, str] | None:
+    """The cycle and the stage a task id such as ``c04.r0.reviewers.reviewer-01-facts`` names."""
+    match = re.fullmatch(r"c(\d+)\.r\d+\.([a-z-]+)\..+", task_id) if isinstance(task_id, str) and len(task_id) <= 200 else None
+    return (str(int(match.group(1))), match.group(2)) if match else None
+
+
+def executor_rework(swarm: Path) -> dict[str, Any] | None:
+    """What the executor had to redo, from its journal, so that a repaired or restarted run is not reported as clean.
+
+    None for a swarm the executor did not run: the watchdog's snapshots are the record of those.  The narrative stage is
+    left out, because it is written after these facts and about them, and the engine reuses an accepted narrative only
+    while the facts it was written from stay the same.
+    """
+    journal = swarm / "reports" / "execution" / "journal.jsonl"
+    if not journal.is_file():
+        return None
+    try:
+        events, skipped = read_executor_journal(journal)
+    except (OSError, UnicodeError) as exc:
+        raise InputError(f"cannot read the executor journal {journal}: {exc}") from exc
+    rows: list[dict[str, str]] = []
+    started: set[tuple[Any, Any, Any]] = set()
+    plan: Any = None
+
+    def note(item: dict[str, Any], what: str, detail: str, cycle: str = "") -> None:
+        rows.append({"at": flat(item.get("at"), 64)[:19], "cycle": flat(item.get("cycle"), 6) or cycle, "what": what,
+                     "detail": flat(detail, 220)})
+
+    for item in events:
+        kind, task_id = item.get("event"), item.get("task_id")
+        parts = task_parts(task_id)
+        if parts and parts[1] == "narrative":
+            continue
+        cycle = parts[0] if parts else ""
+        if kind == "task_recorded" and item.get("outcome") != "accepted":
+            errors = item.get("errors")
+            first = errors[0] if isinstance(errors, list) and errors else errors
+            note(item, "refused attempt", f"{flat(item.get('agent'), 80)}, attempt {flat(item.get('attempt'), 6)}: "
+                                          f"{flat(first, 140)}", cycle)
+        elif kind == "task_started" and isinstance(task_id, str):
+            key = (task_id, scalar(item.get("attempt")), scalar(item.get("inputs_sha256")))
+            if key in started:
+                note(item, "task restarted", f"{flat(item.get('agent'), 80)}, attempt {flat(item.get('attempt'), 6)}: "
+                                             "started a second time", cycle)
+            started.add(key)
+        elif kind == "task_stale":
+            note(item, "stale answer refused", f"{flat(task_id, 80)}, attempt {flat(item.get('attempt'), 6)}", cycle)
+        elif kind == "repair_started":
+            note(item, "repair round", f"round {flat(item.get('round'), 6)}: {flat(item.get('items'), 6)} item(s)")
+        elif kind == "verdict_withdrawn":
+            note(item, "verdict withdrawn", f"recorded {flat(item.get('recorded'), 20)}: {flat(item.get('reason'), 140)}")
+        elif kind in ("approval_grade_changed", "max_cycles_changed"):
+            what = "approval grade changed" if kind == "approval_grade_changed" else "cycle ceiling changed"
+            note(item, what, f"{flat(item.get('previous'), 6)} to {flat(item.get('current'), 6)}")
+        elif kind == "plan_recovered":
+            note(item, "plan recovered", flat(item.get("reason"), 200))
+        elif kind in ("run_started", "plan_refreshed"):
+            digest = scalar(item.get("plan_sha256"))
+            if plan is not None and digest != plan:
+                note(item, "plan changed", f"{flat(plan, 64)[:8]} to {flat(digest, 64)[:8]}")
+            plan = digest
+    return {"rows": rows, "skipped": skipped}
 
 
 def render(swarm: Path) -> str:
@@ -250,6 +327,20 @@ def render(swarm: Path) -> str:
         lines.append("- Recoveries restore execution only; they never award a grade or approve delivery.")
     else:
         lines.append("- None recorded.")
+    rework = executor_rework(swarm)
+    if rework is not None:
+        lines += ["", "### Executor rework"]
+        if rework["rows"]:
+            lines += ["- A refused, repaired, restarted or withdrawn step is not a clean execution; each row below is work "
+                      "that was redone or a rule that changed.",
+                      "| At | Cycle | What | Detail |", "| --- | ---: | --- | --- |"]
+            for row in rework["rows"]:
+                lines.append("| " + " | ".join(row[key].replace("|", "\\|") for key in ("at", "cycle", "what", "detail")) + " |")
+            lines.append("- Rework redoes execution only; it never awards a grade or approves delivery.")
+        else:
+            lines.append("- None recorded in the executor journal.")
+        if rework["skipped"]:
+            lines.append(f"- {rework['skipped']} journal line(s) could not be read, so the record above may be incomplete.")
     lines += [
         "",
         "## Coordinator narrative (complete manually)",
