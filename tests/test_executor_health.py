@@ -189,6 +189,30 @@ class ExecutorHealthTests(EngineCase):
         self.assertEqual(health.compose(self.root)["executor"]["pending_agents"], ["author-02-operations"],
                          "an agent whose result was recorded is no longer pending")
 
+    def test_one_identitys_answer_does_not_hide_the_pending_work_of_another(self):
+        engine = self.start()
+        task = engine.next()["tasks"][0]
+        other = dict(task_id=task["task_id"], attempt=task["attempt"], agent=task["agent"], outcome="accepted")
+        engine.journal.append("task_recorded", inputs_sha256="f" * 64, **other)
+        self.assertIn(task["agent"], health.compose(self.root)["executor"]["pending_agents"],
+                      "the record answers inputs that nobody issued; the issued ones are still out")
+        engine.journal.append("task_recorded", inputs_sha256=task["inputs_sha256"], **other)
+        self.assertNotIn(task["agent"], health.compose(self.root)["executor"]["pending_agents"])
+
+    def test_an_answer_from_before_the_journal_carried_the_identity_answers_whatever_was_issued(self):
+        engine = self.start()
+        task = engine.next()["tasks"][0]
+        engine.journal.append("task_recorded", task_id=task["task_id"], attempt=task["attempt"], agent=task["agent"],
+                              outcome="accepted")
+        self.assertNotIn(task["agent"], health.compose(self.root)["executor"]["pending_agents"])
+        issued_before = dict(task_id="c01.r0.authors.legacy", attempt=1, agent="legacy", cycle=1, round=0, stage="authors", kind="author")
+        engine.journal.append("task_issued", **issued_before)
+        self.assertIn("legacy", health.compose(self.root)["executor"]["pending_agents"])
+        engine.journal.append("task_recorded", inputs_sha256="e" * 64, outcome="accepted",
+                              **{key: issued_before[key] for key in ("task_id", "attempt", "agent")})
+        self.assertNotIn("legacy", health.compose(self.root)["executor"]["pending_agents"],
+                         "an issue with no identity is answered by any record of its task and attempt")
+
     def test_a_corrupt_heartbeat_is_ignored_not_trusted_and_not_fatal(self):
         self.start()
         (self.root / "reports" / "execution" / "driver.json").write_text("{not json", encoding="utf-8")

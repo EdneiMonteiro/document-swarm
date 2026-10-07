@@ -179,7 +179,8 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--approval-grade", choices=APPROVAL_GRADES, default=None,
                       help="the grade every topic and editorial surface must reach; kept in the plan until another is "
                            "given. Without it a swarm keeps the grade it runs under, or takes the skill's current policy "
-                           "(A-) when it is new")
+                           "(A-) when it is new. It is also how a plan that was edited or lost is started again: stating "
+                           "the policy is a decision, and the journal records it")
     swarm_command("next", "advance as far as code can and print what is needed next, or the outcome", command_next)
     swarm_command("record", "validate and persist one agent result read as JSON from stdin", command_record)
     swarm_command("status", "summarise the run from its journal", command_status)
@@ -206,7 +207,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--approval-grade", choices=APPROVAL_GRADES, default=None,
                      help="the grade every topic and editorial surface must reach; kept in the plan until another is "
                           "given. Without it a swarm keeps the grade it runs under, or takes the skill's current policy "
-                          "(A-) when it is new")
+                          "(A-) when it is new. It is also how a plan that was edited or lost is started again: stating "
+                          "the policy is a decision, and the journal records it")
     run.add_argument("--tick", type=float, default=60.0, help="seconds between the status tables")
     run.add_argument("--json", action="store_true", help="print the final answer as JSON on stdout, tables on stderr")
     run.add_argument("--plan-only", action="store_true",

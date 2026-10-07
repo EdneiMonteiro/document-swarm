@@ -1,7 +1,7 @@
 ---
 name: document-swarm
 skill_version: "3.6.0"
-description: "Use when the user asks for a substantial document (playbook, whitepaper, report, RFC, policy, technical guide, comparison), for a presentation delivered as offline HTML plus a faithful and an editable PowerPoint file, or wants to evolve an artefact an earlier swarm produced. The skill frames the request, creates declarative specialist agents with session-validated model provenance, runs evidence-based improvement cycles, executes deterministic source/table/composition/quality gates, and stops only when every evaluated topic reaches at least A or the work is explicitly escalated. Do not use for short text such as a paragraph or email."
+description: "Use when the user asks for a substantial document (playbook, whitepaper, report, RFC, policy, technical guide, comparison), for a presentation delivered as offline HTML plus a faithful and an editable PowerPoint file, or wants to evolve an artefact an earlier swarm produced. The skill frames the request, creates declarative specialist agents with session-validated model provenance, runs evidence-based improvement cycles, executes deterministic source/table/composition/quality gates, and stops only when every evaluated topic reaches the approval grade (A, or A- under the current provisional policy) or the work is explicitly escalated. Do not use for short text such as a paragraph or email."
 ---
 
 # Document Swarm Skill
@@ -823,7 +823,10 @@ não atingir o nível de excelência e desempenho que se busca, as execuções n
 aprovam em `A-`. O executor usa `A-` por padrão em um swarm novo; no fluxo do
 coordenador, declare `approval_grade: A-` no brief e copie o valor para a matriz,
 salvo orientação contrária do usuário. Quem aprova continua sendo `gate.py`, que
-lê o valor da própria revisão.
+lê o valor da própria revisão e recusa (exit 3) uma que declare menos do que o swarm
+autoriza: a opção `--approval-grade` do executor (guardada no plano), o `approval_grade`
+do brief ou, na falta dos dois, a `A` original. A revisão diz sob que nota foi julgada,
+mas não a escolhe; declarar uma nota mais estrita do que a autorizada só é mais estrito.
 
 O valor aparece no resultado do portão (somente quando difere de `A`, para que o
 que foi gravado antes do campo continue reproduzível) e no relatório final, de modo
@@ -1698,9 +1701,12 @@ Swarm concluído: `<OUTPUT_ROOT>/<swarm_id>/`
 Documento: `output/<documento>.md`
 Relatório: `reports/final-report.md`
 Versão da skill: <skill_version>
-Ciclos: <N> | Tópicos: <k>/<k> ≥ A | Gate: aprovado
+Ciclos: <N> | Tópicos: <k>/<k> ≥ <approval_grade da revisão> | Gate: aprovado
 Fontes: <ok> ok, <warn> warn, 0 fail
 ```
+
+Diga qual foi a nota de aprovação (`A-` ou `A`), que está no relatório final, para que uma
+aprovação em `A-` nunca seja lida como `A`.
 
 Para uma apresentação, informe os três arquivos e o perfil usado:
 

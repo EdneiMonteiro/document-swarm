@@ -144,6 +144,21 @@ inclui a nota) e a narrativa do novo desfecho. Para exigir `A` em um swarm novo,
 `--approval-grade A` ou declare `approval_grade: A` no brief. Para voltar à régua original
 em todos, troque `PROVISIONAL_APPROVAL_GRADE` em `scripts/orchestration/contracts.py`.
 
+**Quem autoriza a nota.** A revisão declara a nota sob a qual foi julgada, mas não a
+escolhe. A nota que o swarm autoriza vem, nesta ordem, da opção que uma pessoa deu ao
+executor (guardada no plano), do `approval_grade` do brief e do registro do próprio plano;
+sem nenhum dos três, é a `A` original. `gate.py` recusa (exit 3) uma revisão que declare
+menos do que isso, e o painel e o `resume.py` usam a mesma função. Declarar uma nota mais
+estrita do que a autorizada só é mais estrito. Uma exceção: um swarm do executor que nunca
+teve plano (diário não vazio e nenhum `plan.json`, como o de quem só usa `next` e `record`)
+tem como nota o padrão do próprio executor, que o portão não tem como saber; ali o portão
+não compara, e quem garante é o executor, que não confia numa revisão que não montou sob
+essa política. Como o plano guarda a opção, ele é atestado
+pelo journal: veja a linha do `plan.json` na tabela acima. Só o ciclo corrente é julgado de
+novo quando a nota muda. Um ciclo rejeitado que já tem sucessor é histórico (o sucessor
+começa no instante em que o motor passa da rejeição, então a janela em que isso importaria
+é de milissegundos).
+
 | Opção de `run` | Padrão | Efeito |
 |---|---:|---|
 | `--parallel` | 4 | Agentes rodando ao mesmo tempo |
@@ -168,7 +183,11 @@ python "<DOCSWARM>/scripts/orchestration" qualify --model <o-modelo-mais-barato>
 
 Em 07/10/2026, com o CLI 1.0.93-2 e o modelo `gpt-5-mini`, as 7 sondas passaram
 (contrato, uso, sem escrita, confinamento, web, paralelismo e prompt grande de 40 KB).
-Repita depois de atualizar o CLI.
+Depois que o backend passou a desligar os servidores MCP de que a tarefa não precisa, a
+qualificação foi refeita com o CLI 1.0.93-4 e passou do mesmo modo, com as sondas de
+paralelismo (dois processos em 10,9 s) e de web já sob a poda. Repita depois de atualizar
+o CLI. O relatório é gravado na pasta onde o comando é executado: rode-o fora do
+repositório do skill.
 
 Cada sonda verifica uma propriedade de que o executor depende: o prompt chega por stdin
 e a resposta JSON é lida; um agente com ferramentas só de leitura não consegue criar um
@@ -254,7 +273,7 @@ sequenceDiagram
 | Risco | Proteção |
 |---|---|
 | Agente devolve JSON inválido ou incompleto | Recusado na hora com o motivo exato; a tentativa seguinte recebe o erro no prompt |
-| Resposta cercada por texto ou crases | O JSON é recuperado do texto; o que sobra ainda precisa cumprir o contrato |
+| Resposta cercada por texto ou crases | O JSON é recuperado do texto; o que sobra ainda precisa cumprir o contrato. As cercas são procuradas numa passada só: uma resposta feita de cercas abertas (144 KB delas levaram 25 s com o executor travado) custa tempo proporcional ao seu tamanho |
 | Resposta aninhada demais, ou algo que o validador não previu | Recusada como qualquer resposta inválida: nunca uma exceção que encerra o `run` e descarta o que os outros agentes do passo já entregaram |
 | Citação do revisor editorial que não está no texto | Recusada no registro, com a citação e o motivo; a comparação ignora diferenças de espaço em branco, não de letras |
 | Revisor deixa tópico sem nota ou nota abaixo de A sem ação | Recusado: a matriz sai exatamente das notas dos revisores |
@@ -271,7 +290,9 @@ sequenceDiagram
 | Verificador que quebra | Sai com 3, nunca com o 1 de "achados", e o executor exige de cada verificador um relatório novo e legível: sem ele, `script_error`, seja qual for o status |
 | Veredito gravado, editado ou forjado | `gate.py` é avaliado de novo sobre os arquivos de agora; só o que reproduz o resultado gravado vale; um gate que quebra ou cujo registro não se reproduz falha uma vez, sem repetir até o limite de passos |
 | Matriz que diz `critico: false` ao lado de um achado crítico | `gate.py` recusa (exit 3): o veto não se descarta por uma bandeira |
-| Resultado aceito editado depois de registrado | O resumo (SHA-256) do resultado entra no journal na mesma chamada que o aceita; se o arquivo deixar de bater, a etapa bloqueia (`result_altered`): nem confia no arquivo, nem paga o agente de novo sem uma pessoa decidir |
+| Resultado aceito editado depois de registrado | O resumo (SHA-256) do resultado entra no journal na mesma chamada que o aceita, com a identidade da tarefa (`inputs_sha256`); se o arquivo deixar de bater, a etapa bloqueia (`result_altered`): nem confia no arquivo, nem paga o agente de novo sem uma pessoa decidir. Um resultado aceito para entradas antigas não atesta o arquivo de uma tarefa pedida de novo com o mesmo id e a mesma tentativa |
+| `plan.json` editado à mão, apagado ou de outro swarm (a nota de aprovação e os tetos vivem nele) | O plano só vale se o resumo dele bate com o próprio conteúdo **e** o journal registrou esse resumo ao gravá-lo. O journal é escrito antes do plano, então uma queda no meio deixa o plano anterior, que ele conhece. Editado, o plano é recusado por toda chamada que o lê. Para continuar sem um backup, uma pessoa recomeça o plano declarando a política (`init` ou `run` com `--approval-grade`): o plano novo é montado do brief, das declarações e das opções dadas, nada do plano velho é lido, e o journal registra `plan_recovered` com o motivo e a nota. Apagado depois de o journal dizer que ele foi gravado e que agentes foram pagos, é recusado do mesmo modo: não se recomeça sob a nota de um swarm novo sem que uma pessoa a diga. Um swarm dirigido só por `next` e `record` nunca teve plano, e isso não é erro |
+| Revisão que declara uma `approval_grade` menor do que o swarm autoriza | `gate.py` recusa (exit 3). A revisão diz sob que nota foi julgada, mas quem autoriza é a opção do executor (no plano), o brief ou, na falta dos dois, a `A` original. Declarar uma nota mais estrita que a autorizada só é mais estrito |
 | Nota de revisor ou veto do rubber duck alterados | As notas e o veto vêm dos resultados verificados. Os arquivos de revisor em `reports/` são uma cópia, reescrita a partir deles na etapa da matriz e na entrega; um veto apagado do registro bloqueia a etapa, e a matriz fica reprovada enquanto isso |
 | Nota alterada no disco depois da aprovação | A matriz é refeita a partir dos resultados verificados dos revisores e o portão roda de novo |
 | Resultado para uma tentativa que o executor nunca emitiu | Recusado (`stale`): a identidade de uma tarefa é pública, então quem a calcula não semeia resultados |
@@ -283,7 +304,8 @@ sequenceDiagram
 | Rechecagem final mexe nos carimbos das fontes | Cada rodada guarda um retrato das fontes; a aprovação não reabre a revisão por causa de um timestamp |
 | Dois `run` no mesmo swarm | O `run` toma `reports/execution/.run.lock` antes de tudo: o segundo recusa na hora, sem pagar agente e sem tocar o batimento do primeiro |
 | Duas operações (`next`, `record`) ao mesmo tempo | Trava do sistema operacional por operação, liberada sozinha se o dono morrer |
-| Ctrl+C no meio de um passo | Os agentes em execução são encerrados antes de qualquer espera, nada novo é iniciado, e o que já terminou é registrado |
+| Ctrl+C no meio de um passo | Os agentes em execução são encerrados antes de qualquer espera, nada novo é iniciado, e o que já terminou é registrado. A checagem do cancelamento e o registro do processo são um passo só: um agente que ia começar enquanto a listagem dos servidores MCP ainda rodava não começa, em vez de correr sem supervisão até o limite de tempo e ter a resposta paga descartada |
+| Listagem dos servidores MCP que demora, deixa filhos segurando os pipes ou muda de formato | A listagem é um processo como os agentes: o cancelamento a alcança e, se estourar o limite (60 s), ela e tudo o que iniciou são encerrados e nada é podado. O texto é lido inteiro ou não é lido: uma linha que não é título nem entrada desliga a poda, porque os servidores embutidos são desligados por uma só flag e uma listagem cortada levaria junto um de que a tarefa precisa |
 | Queda no meio de um passo | Escritas atômicas e journal anexado; a próxima chamada recomputa o mesmo estado. Uma queda entre os arquivos de um resultado e o seu registro refaz uma chamada de agente; uma queda entre inserir a narrativa e registrar o passo não a duplica nem paga de novo |
 | Agentes com nomes que só diferem na caixa, nome de dispositivo do Windows ou ponto final | Recusados na compilação: o nome vira nome de arquivo |
 | Brief que o portão não pode aprovar (sem `quality_contract: editorial-v1`, revisor editorial fora do padrão `reviewer-*`) ou pasta do swarm longa demais para o Windows | `init` recusa antes de pagar qualquer agente |
@@ -348,8 +370,10 @@ de modo que nenhuma memoização do runtime devolve a falha já obtida.
   no brief a extensão se recusa a abrir; com `true` ela abre e lê os artefatos (ciclos,
   notas, portão), mas não mostra agente em execução. Para ver um swarm já executado, abra
   uma **cópia** dele com `monitor: true`: editar o brief do original faz o ciclo corrente
-  ser pago de novo (veja "Seguir adiante depois de uma escalação"). `health.py` e o painel
-  mostram o teto do brief, não o de `--max-cycles`.
+  ser pago de novo (veja "Seguir adiante depois de uma escalação"). O painel, o
+  `health.py` e o `resume.py` leem o plano: mostram o teto dado por `--max-cycles` e a
+  nota de aprovação do swarm, e o painel colore cada nota pela nota sob a qual a própria
+  revisão do ciclo foi julgada (um `A-` aprovado sob `A-` não aparece como reprovado).
 
 ## Usar outro backend
 
@@ -391,7 +415,7 @@ Em 07/10/2026 o executor produziu um artigo de verdade, sobre o modelo Laya, com
 | Relógio | 66,9 min no journal: 54,1 min com algum agente rodando (soma de 85 min, paralelismo de 1,57x), 8 s de código do executor e 12,7 min ociosos. Quase todo o ocioso foi a pausa de 6,7 min para corrigir o defeito 1 e os 5 min entre o `--plan-only` e a primeira chamada. Duas retomadas pelo mesmo comando; nenhum resultado aceito foi refeito. É uma medição, não uma comparação: não há execução pareada com o fluxo do coordenador |
 | Por papel | Autor: mediana de 3,5 min por chamada. Consolidação: 2,5 min. Revisor: 74 s. Rubber duck: 66 s. Narrativa: 44 s |
 | Chamadas | 40, das quais 35 aceitas e 5 recusadas e refeitas (2 do coordenador, 1 de um autor, 1 de um revisor e 1 da narrativa) |
-| Custo | cerca de 1.398 AIU e 131 requisições premium. Autores 512 AIU, revisores 571, consolidação 178, auditoria cerca de 119 (5 chamadas), narrativa cerca de 17 (3 chamadas). Os registros de uso somam 1.371 AIU, porque a chamada refeita sob uma identidade nova reaproveita o rótulo e sobrescreve o registro anterior (duas vezes, na entrega). Uma chamada de `gpt-5.5` conta 7,5 requisições premium; as dos outros modelos, 1 |
+| Custo | cerca de 1.398 AIU e 131 requisições premium. Autores 512 AIU, revisores 571, consolidação 178, auditoria cerca de 119 (5 chamadas), narrativa cerca de 17 (3 chamadas). Os registros de uso somam 1.371 AIU, porque a chamada refeita sob uma identidade nova reaproveitava o rótulo e sobrescrevia o registro anterior (duas vezes, na entrega; corrigido depois, e o registro repetido fica ao lado como `<rótulo>.2.json`). Uma chamada de `gpt-5.5` conta 7,5 requisições premium; as dos outros modelos, 1 |
 | Texto | 5.525 palavras, 2 diagramas, 1 travessão. O brief pedia de 2.500 a 3.500 palavras |
 
 O que a execução mostrou, tudo corrigido com teste e mutante:
@@ -430,6 +454,45 @@ O que a execução mostrou, tudo corrigido com teste e mutante:
    fim. A emissão agora é registrada por identidade, e o registro de uso de uma chamada
    repetida fica ao lado do anterior (`<rótulo>.2.json`) em vez de sobrescrevê-lo.
 
+### Revisão adversarial depois da primeira execução
+
+Duas revisões independentes das mudanças que se seguiram à execução (uma do desenho, outra
+linha a linha) acharam o que a lista acima não mostrava. Tudo foi corrigido com teste e
+mutante:
+
+1. **A identidade de uma tarefa só estava no registro da emissão.** `task_started` e
+   `task_recorded` não a traziam, então o resultado aceito para entradas antigas atestava
+   o arquivo de uma tarefa pedida de novo, `status` contava a emissão nova como a antiga e
+   o `health.py` escondia o trabalho pendente de uma identidade atrás da resposta de outra.
+   Agora os três eventos a trazem e todo leitor casa por ela, com tolerância ao journal
+   antigo, que não a tem.
+2. **A nota de aprovação não tinha autoria.** Uma revisão podia declarar `A-` por conta
+   própria, e um `plan.json` apagado ou editado fazia o swarm recomeçar sob a nota de um
+   swarm novo. Agora `gate.py` recusa uma declaração menor do que a autorizada, e o plano é
+   atestado pelo journal (veja "A nota de aprovação" e a tabela de proteções).
+3. **O painel pintava um `A-` aprovado como reprovado.** A régua `A` estava fixa na
+   interface, em três lugares. Agora a contagem, a cor de cada célula e a legenda vêm de
+   funções puras que recebem a nota do ciclo.
+4. **O cancelamento tinha uma janela.** A listagem dos servidores MCP, que pode demorar,
+   ficava entre a checagem do cancelamento e o registro do processo: um agente podia
+   começar depois do Ctrl+C, rodar sem supervisão e ter a resposta paga descartada. E a
+   listagem não tinha limite de tempo que valesse em Windows quando deixava filhos
+   segurando os pipes.
+5. **Uma listagem MCP cortada era usada pela metade**, e a flag que desliga os servidores
+   embutidos leva todos junto.
+6. **Uma resposta ilegível com um caractere substituto solto derrubava o registro**
+   (`UnicodeEncodeError`): a tentativa não era contada e o mesmo agente era pago de novo.
+7. **A busca das cercas de código era quadrática:** 144 KB delas levavam 25 s com o
+   executor travado.
+8. **O leitor do plano aceitava um plano malformado com uma exceção crua.**
+
+Duas conclusões da revisão não foram adotadas, e o motivo fica registrado. A de que um
+veredito aprovado sobrevive a uma edição do brief estava errada: a identidade da auditoria
+inclui o brief, o que a medição numa cópia do swarm real já mostrara, e agora há um teste.
+A de que a mudança da nota deveria julgar de novo um ciclo rejeitado que ainda não tem
+sucessor descreve uma janela de milissegundos, porque o sucessor começa no instante em que
+o motor passa da rejeição; o ciclo corrente é o que se julga de novo.
+
 Achados em aberto:
 
 - **A extensão pedida não é exigida por nada.** Nem um verificador nem um revisor mede
@@ -441,15 +504,29 @@ Achados em aberto:
 ## Limites conhecidos
 
 - O backend do `copilot` foi qualificado em 07/10/2026 (7 de 7 sondas, CLI 1.0.93-2) e
-  rodou um documento inteiro, mas a presença de uma opção não prova o seu efeito em
-  outra versão: rode `qualify` depois de atualizar o CLI. O formato do registro de uso
-  não está documentado e é lido de forma frouxa, com o arquivo cru guardado.
+  rodou um documento inteiro. A qualificação foi refeita depois de o backend desligar os
+  servidores MCP de que a tarefa não precisa, agora com o CLI 1.0.93-4: 7 de 7, inclusive a
+  sonda web (`web_fetch` funciona com a lista restrita de ferramentas e sem os servidores
+  desligados) e a de paralelismo (dois processos simultâneos em 10,9 s). Ainda assim, a
+  presença de uma opção não prova o seu efeito em outra versão: rode `qualify` depois de
+  atualizar o CLI. O formato do registro de uso não está documentado e é lido de forma
+  frouxa, com o arquivo cru guardado.
 - Nenhum benchmark pago foi executado, então não há promessa de ganho percentual. As
   medições acima descrevem onde o tempo foi gasto, não quanto o executor economiza.
 - O executor remove os intervalos entre turnos, mas não a latência dos modelos, os
   limites do provedor nem uma máquina que dorme. Uma execução longa desacompanhada
   precisa de um ambiente que não hiberne.
 - Markdown apenas; apresentações e PDF seguem o fluxo do coordenador.
+- O veredito fica preso, pela identidade da auditoria, ao brief, à declaração do rubber
+  duck, ao documento, às avaliações e às verificações: editar qualquer um depois da
+  aprovação retira o veredito (`verdict_withdrawn`) e pede o trabalho de novo. As
+  declarações dos autores e dos revisores **não** entram: o que eles produziram já está
+  fixado pelo documento e pelas notas, e palavras acrescentadas depois ao texto que
+  descreve o agente não mudam o que foi aprovado. É uma decisão, com teste.
+- O journal é a âncora de confiança. O executor se defende de uma edição isolada de
+  um resultado, do plano ou de uma nota, não de quem forja o journal e o arquivo juntos:
+  sem o journal, os resultados não têm resumo para comparar e valem, e um `plan.json` sem
+  journal é recusado.
 - Só foi executado no Windows. O bloqueio exclusivo por `fcntl` e o encerramento por
   grupo de processos (`killpg`) são os caminhos de Linux e macOS, e nunca rodaram. Rode
   `python3 -m unittest discover -s tests` nesses sistemas antes de depender do executor

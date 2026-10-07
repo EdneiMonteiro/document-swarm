@@ -25,6 +25,8 @@ Behaviour switches come from the environment, so one script covers success, fail
     FAKE_COPILOT_FAIL_WITH_OUTPUT  1: print a valid answer and still exit 1
     FAKE_COPILOT_MCP_LIST text that `mcp list` prints (default: no servers); "fail" exits 1, as an old CLI would
     FAKE_COPILOT_MCP_LOG  file that receives one JSON line per `mcp list` run, which is not an agent call
+    FAKE_COPILOT_MCP_SLEEP seconds `mcp list` waits before it answers
+    FAKE_COPILOT_MCP_CHILD 1: `mcp list` starts a child that holds its pipes open and outlives it, and logs its pid
 """
 
 from __future__ import annotations
@@ -159,6 +161,13 @@ def list_mcp() -> int:
     log = os.environ.get("FAKE_COPILOT_MCP_LOG")
     if log:
         append_line(log, json.dumps({"mcp_list": sys.argv[1:], "cwd": os.getcwd()}))
+    if os.environ.get("FAKE_COPILOT_MCP_CHILD") == "1":
+        child = subprocess.Popen([sys.executable, "-S", "-c", "import time; time.sleep(40)"])
+        if log:
+            append_line(log, json.dumps({"child": child.pid}))
+    delay = float(os.environ.get("FAKE_COPILOT_MCP_SLEEP", "0") or 0)
+    if delay:
+        time.sleep(delay)
     listing = os.environ.get("FAKE_COPILOT_MCP_LIST", "No MCP servers configured.\n")
     if listing == "fail":
         # A listing that looks right and an exit status that says it is not: the status is what must decide.

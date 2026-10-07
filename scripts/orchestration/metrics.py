@@ -328,6 +328,9 @@ def executor_events(journal: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
     opened: set[tuple[Any, Any, Any]] = set()
     starts: dict[tuple[Any, Any], list[float]] = {}
     issued: dict[tuple[Any, Any], dict[str, Any]] = {}
+    # The dispatch each task is running as right now.  A task asked again under a new identity has the same id and attempt
+    # as the one before it, so a record must end the run it follows, not the latest run of that name.
+    running: dict[tuple[Any, Any], str] = {}
     for item in journal:
         key = (item.get("task_id"), item.get("attempt"))
         if item.get("event") == "task_started" and parse_time(item.get("at")) is not None:
@@ -359,9 +362,10 @@ def executor_events(journal: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
         elif kind == "task_started":
             if key in issued:
                 later = sum(1 for other in starts[key] if other > moment)
-                dispatch(ident if not later else f"{ident}.s{later}", issued[key], at)
+                running[key] = ident if not later else f"{ident}.s{later}"
+                dispatch(running[key], issued[key], at)
         elif kind == "task_recorded":
-            events.append({"at": at, "type": "runtime", "data": {"dispatch_id": ident, "status": "completed"}})
+            events.append({"at": at, "type": "runtime", "data": {"dispatch_id": running.get(key, ident), "status": "completed"}})
         elif kind in ("script_finished", "gate_run", "delivery_step"):
             seconds = float(item.get("seconds") or 0.0)
             if seconds > 0:

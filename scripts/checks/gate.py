@@ -28,6 +28,7 @@ CRITICAL_SEVERITIES = {"critical", "critico", "crítico"}
 # relaxed bar says so and one written before the field existed keeps meaning what it always meant.
 APPROVAL_GRADES = ("A-", "A")
 ORIGINAL_APPROVAL_GRADE = "A"
+MAX_PLAN_BYTES = 2 * 1024 * 1024
 
 
 def approval_grade(data: dict[str, Any]) -> str:
@@ -38,6 +39,50 @@ def approval_grade(data: dict[str, Any]) -> str:
     if declared not in APPROVAL_GRADES:
         raise InputError(f"approval_grade must be one of {', '.join(APPROVAL_GRADES)}, not {declared}")
     return declared
+
+
+def authorized_grade(brief: dict[str, Any], plan: dict[str, Any]) -> str:
+    """The grade a swarm authorizes for approval, in the order the executor resolves it.
+
+    What a person set with ``--approval-grade`` stays in the executor's plan and outranks the brief; the plan's own record
+    comes last, and a swarm with none (the coordinator flow, or a plan from before the field) is judged against the original
+    ``A``.  Nothing a review says about itself is part of it, because that is what is checked against it.
+    """
+    options = plan.get("options") if isinstance(plan.get("options"), dict) else {}
+    for candidate in (options.get("approval_grade"), brief.get("approval_grade"), plan.get("approval_grade")):
+        if isinstance(candidate, str) and candidate in APPROVAL_GRADES:
+            return candidate
+    return ORIGINAL_APPROVAL_GRADE
+
+
+def executor_plan(swarm: Path) -> dict[str, Any]:
+    """The executor's plan of a swarm as a mapping, or an empty one if there is none or it cannot be read as one.
+
+    It is read only to find the grade the swarm authorizes.  The executor checks the plan against its journal before it
+    runs anything on it, so nothing here decides on a plan's word alone.
+    """
+    try:
+        root = swarm.resolve(strict=True)
+        path = (root / "reports" / "execution" / "plan.json").resolve(strict=True)
+        if root not in path.parents or path.stat().st_size > MAX_PLAN_BYTES:
+            return {}
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def driven_without_a_plan(swarm: Path) -> bool:
+    """True for an executor swarm that never had a plan, such as one driven by ``next`` and ``record`` alone.
+
+    Its grade is the executor's own default, which only the executor knows, so the gate has nothing to compare a review's
+    declaration with.  The executor does not trust a review it did not render from that policy, so nothing is lost.
+    """
+    execution = swarm / "reports" / "execution"
+    try:
+        return (execution / "journal.jsonl").stat().st_size > 0 and not (execution / "plan.json").exists()
+    except OSError:
+        return False
 
 
 def requires_editorial(data: dict[str, Any]) -> bool:
@@ -195,6 +240,14 @@ def evaluate_current(data: Any, swarm: Path | None) -> dict[str, Any]:
     if "quality_contract" in brief and brief["quality_contract"] != "editorial-v1":
         raise InputError("unknown brief quality contract")
     result = evaluate(data, require_editorial=requires_editorial(brief))
+    if swarm is not None and not driven_without_a_plan(swarm):
+        # A review states the bar it was judged under, but it does not get to choose it: the swarm authorizes one, and a review
+        # that declares less is not a review of this swarm.  A stricter bar than the one authorized is only stricter.
+        authorized, declared = authorized_grade(brief, executor_plan(swarm)), approval_grade(data)
+        if GRADE_INDEX[declared] < GRADE_INDEX[authorized]:
+            raise InputError(f"the review declares approval_grade {declared}, but this swarm authorizes {authorized}; a review "
+                             "cannot lower the bar (declare approval_grade in the brief, or give the executor "
+                             "--approval-grade, to change it)")
     if requires_editorial(data) or requires_editorial(brief):
         if swarm is None or not brief:
             raise InputError("editorial validation requires the swarm brief and artifacts")

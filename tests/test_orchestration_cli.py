@@ -148,6 +148,41 @@ class CommandLineTests(EngineCase):
         changes = [(item["previous"], item["current"]) for item in events if item["event"] == "approval_grade_changed"]
         self.assertEqual(changes, [("A-", "A"), ("A", "A-")])
 
+    def test_a_plan_that_was_edited_is_refused_with_the_remedy_and_started_again_by_stating_the_policy(self):
+        code, _, err = cli("init", str(self.root), "--approval-grade", "A")
+        self.assertEqual(code, 0, err)
+        path = self.root / "reports" / "execution" / "plan.json"
+        plan = json.loads(path.read_text(encoding="utf-8"))
+        plan["approval_grade"] = plan["options"]["approval_grade"] = "A-"
+        path.write_text(json.dumps(plan), encoding="utf-8")
+        for command in ("next", "status", "init"):
+            with self.subTest(command=command):
+                code, _, err = cli(command, str(self.root))
+                self.assertEqual(code, 2, err)
+                self.assertIn("was edited", err)
+                self.assertIn("--approval-grade A- or --approval-grade A", err)
+        code, _, err = cli("init", str(self.root), "--approval-grade", "A")
+        self.assertEqual(code, 0, err)
+        code, out, err = cli("status", str(self.root))
+        self.assertEqual((code, json.loads(out)["approval_grade"]), (0, "A"), err)
+        events = [json.loads(line) for line in (self.root / "reports" / "execution" / "journal.jsonl")
+                  .read_text(encoding="utf-8").splitlines()]
+        [recovered] = [item for item in events if item["event"] == "plan_recovered"]
+        self.assertEqual(recovered["approval_grade"], "A")
+
+    def test_an_unreadable_answer_with_a_lone_surrogate_is_refused_by_record_not_raised(self):
+        # A payload is JSON text, and "\ud800" in it is a perfectly valid way to write a lone surrogate.
+        cli("init", str(self.root))
+        code, out, err = cli("next", str(self.root))
+        self.assertEqual(code, 0, err)
+        task = json.loads(out)["tasks"][0]
+        payload = ('{"task_id": "%s", "attempt": 1, "inputs_sha256": "%s", "result": "{\\"files\\": [ \\ud800 sem fim"}'
+                   % (task["task_id"], task["inputs_sha256"]))
+        code, out, err = cli("record", str(self.root), raw=payload.encode("ascii"))
+        self.assertEqual(code, 0, err)
+        answer = json.loads(out)
+        self.assertEqual((answer["accepted"], answer["retry"]), (False, True))
+
     def test_a_grade_other_than_a_minus_or_a_is_refused_at_the_command_line(self):
         for value in ("B+", "A+", "a"):
             with self.subTest(value=value):

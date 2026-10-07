@@ -6,9 +6,12 @@ import hashlib
 import io
 import json
 import os
+import random
+import re
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from collections import Counter
 from http.server import ThreadingHTTPServer
@@ -1308,6 +1311,29 @@ class RecordTests(EngineCase):
         self.assertEqual(value, {"narrative_markdown": "primeira linha\nsegunda\tcom tab"})
         self.assertEqual(contracts.parse_agent_json(f"Aqui está:\n```json\n{text}\n```\n")[0], value)
 
+    OLD_FENCE = r"```(?:json)?[ \t]*\r?\n(.*?)\r?\n```"
+
+    def test_the_code_fences_of_an_answer_are_found_exactly_as_the_regex_they_replaced_found_them(self):
+        pieces = ("```", "```json", "```JSON", "\n", "\r\n", " ", "\t", "x", "{", "}", '{"a": 1}')
+        generator = random.Random(20261007)
+        texts = ["", "```", "```\n```", "```json\n\n```", "```json\n{}\n```", "a```json\n{}\n```b```\n{}\n```",
+                 "```json\r\n{}\r\n```", '```json \t\n{}\n```\n```json\n{"b": 2}\n```']
+        for _ in range(4000):
+            texts.append("".join(generator.choice(pieces) for _ in range(generator.randint(1, 14))))
+        for text in texts:
+            self.assertEqual(contracts.fenced_blocks(text), re.findall(self.OLD_FENCE, text, re.S | re.I), repr(text))
+
+    def test_an_answer_made_of_opening_fences_alone_costs_time_in_proportion_to_its_size(self):
+        # 72 KB of it took about 6 s with the regex that looked for the pair from every fence, and 144 KB took 25 s.
+        started = time.monotonic()
+        value, problem = contracts.parse_agent_json("x```json\n" * 8000)
+        self.assertLess(time.monotonic() - started, 1.5)
+        self.assertIsNone(value)
+        self.assertIn("not a JSON object", problem)
+        started = time.monotonic()
+        self.assertEqual(contracts.fenced_blocks("```json\n{}\n```\n" * 8000)[:2], ["{}", "{}"])
+        self.assertLess(time.monotonic() - started, 1.5)
+
     def test_an_answer_that_cannot_be_read_is_told_where_the_object_breaks(self):
         cases = {
             "cut off inside a string": ('{"files": [{"path": "output/sections/a.md", "content": "texto sem fim',
@@ -1916,6 +1942,111 @@ class RobustnessTests(EngineCase):
         self.assertIsNone(engine.accepted_result(record))
         self.assertIsNone(engine.accepted_result({**record, "accepted": None}), "no accepted attempt, no result")
 
+    def test_a_result_accepted_for_earlier_inputs_does_not_vouch_for_the_file_of_a_later_identity(self):
+        engine = self.engine()
+        engine.init()
+        task_id = "c01.r0.rubber-duck.rubber-duck"
+        earlier = {"critical": False, "findings": [], "consistency_notes": "antes"}
+        later = {"critical": True, "findings": [], "consistency_notes": "depois"}
+        record = {"task_id": task_id, "stage": "rubber-duck", "cycle": 1, "round": 0, "inputs_sha256": "b" * 64,
+                  "attempts": [], "accepted": 1, "result": later}
+        for identity, result in (("a" * 64, earlier), ("b" * 64, later)):
+            engine.journal.append("task_recorded", task_id=task_id, attempt=1, outcome="accepted",
+                                  inputs_sha256=identity, accepted_sha256=digest_json(result))
+        self.assertFalse(engine.result_altered(record))
+        record["result"] = earlier
+        self.assertTrue(engine.result_altered(record), "it was accepted, but for inputs that are no longer these")
+        self.assertIsNone(engine.accepted_result(record))
+        # An entry from before the journal carried the identity still vouches for its task and attempt.
+        legacy = {**record, "task_id": "c01.r0.rubber-duck.legacy"}
+        engine.journal.append("task_recorded", task_id=legacy["task_id"], attempt=1, outcome="accepted",
+                              accepted_sha256=digest_json(earlier))
+        self.assertFalse(engine.result_altered(legacy))
+        legacy["result"] = later
+        self.assertTrue(engine.result_altered(legacy))
+
+    def test_the_result_of_a_task_asked_again_cannot_be_swapped_for_the_one_it_replaced(self):
+        agent = self.agent()
+        engine = self.engine()
+        engine.init()
+        first = next(item for item in engine.next()["tasks"] if item["agent"] == "author-01-platform")
+        self.assertTrue(engine.record(first["task_id"], 1, first["inputs_sha256"], agent(first))["accepted"])
+        path = self.results(first["task_id"])
+        earlier = json.loads(path.read_text(encoding="utf-8"))["result"]
+        brief = self.root / "brief.md"
+        brief.write_text(brief.read_text(encoding="utf-8") + "\nUm novo requisito do enquadramento.\n", encoding="utf-8")
+        second = next(item for item in self.engine().next()["tasks"] if item["task_id"] == first["task_id"])
+        self.assertNotEqual(second["inputs_sha256"], first["inputs_sha256"])
+        revised = agent(second)
+        revised["files"][0]["content"] += "\nRevisado sob o novo requisito.\n"
+        self.assertTrue(self.engine().record(second["task_id"], 1, second["inputs_sha256"], revised)["accepted"])
+        record = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(record["inputs_sha256"], second["inputs_sha256"])
+        self.assertNotEqual(record["result"], earlier)
+        record["result"] = earlier
+        path.write_text(json.dumps(record), encoding="utf-8")
+        outcome = self.engine().next()
+        self.assertEqual((outcome["status"], outcome["kind"]), ("blocked", "result_altered"))
+        self.assertEqual(outcome["tasks"], [first["task_id"]])
+
+    def test_every_event_of_a_task_names_the_identity_it_belongs_to(self):
+        self.finish()
+        events = self.engine().journal.events()
+        issued = {(item["task_id"], item["attempt"]): item["inputs_sha256"] for item in events if item["event"] == "task_issued"}
+        for kind in ("task_issued", "task_started", "task_recorded"):
+            found = [item for item in events if item["event"] == kind]
+            self.assertTrue(found, kind)
+            for item in found:
+                self.assertEqual(item.get("inputs_sha256"), issued[(item["task_id"], item["attempt"])], kind)
+
+    def test_a_task_asked_again_under_new_inputs_counts_as_another_issue(self):
+        engine = self.engine()
+        engine.init()
+        first = engine.next()["tasks"]
+        brief = self.root / "brief.md"
+        brief.write_text(brief.read_text(encoding="utf-8") + "\nUm novo requisito do enquadramento.\n", encoding="utf-8")
+        again = self.engine()
+        second = again.next()["tasks"]
+        self.assertEqual({item["task_id"] for item in first}, {item["task_id"] for item in second})
+        self.assertTrue({item["inputs_sha256"] for item in first}.isdisjoint({item["inputs_sha256"] for item in second}))
+        self.assertEqual(again.status()["tasks_issued"], len(first) + len(second),
+                         "each is a call somebody paid for, so the count cannot fold them by id and attempt")
+
+    def test_an_approved_verdict_does_not_survive_an_edit_of_the_brief(self):
+        agent = self.agent()
+        self.finish(agent)
+        calls = len(agent.calls)
+        self.assertEqual(self.engine().next()["status"], "done")
+        brief = self.root / "brief.md"
+        brief.write_text(brief.read_text(encoding="utf-8") + "\nUm novo requisito do enquadramento.\n", encoding="utf-8")
+        outcome = self.engine().next()
+        self.assertEqual((outcome["status"], outcome["stage"]), ("agents", "authors"),
+                         "asked again, not delivered as approved: the approval was for another brief")
+        self.assertEqual(len(self.engine().journal.find("verdict_withdrawn", cycle=1)), 1)
+        self.assertEqual(len(agent.calls), calls, "asking costs no agent until one is run")
+
+    def test_an_approved_verdict_does_not_survive_an_edit_of_the_auditors_declaration(self):
+        agent = self.agent()
+        self.finish(agent)
+        duck = self.root / "agents" / "rubber-duck.md"
+        duck.write_text(duck.read_text(encoding="utf-8") + "\nAuditar também a redação.\n", encoding="utf-8")
+        outcome = self.engine().next()
+        self.assertEqual((outcome["status"], outcome["stage"]), ("agents", "rubber-duck"))
+        self.assertEqual([item["agent"] for item in outcome["tasks"]], ["rubber-duck"], "only the audit is asked again")
+
+    def test_the_declarations_of_the_authors_and_the_reviewers_are_not_part_of_an_approved_verdict(self):
+        # A decision, not an accident: what an author or a reviewer produced is pinned by the document and the grades, which
+        # the identity of the audit hashes, so words added later to the text that describes the agent change nothing.
+        agent = self.agent()
+        self.finish(agent)
+        for relative in ("agents/authors/author-01-platform.md", "agents/reviewers/reviewer-01-facts.md"):
+            path = self.root / relative
+            path.write_text(path.read_text(encoding="utf-8") + "\nUm parágrafo a mais na declaração.\n", encoding="utf-8")
+        calls = len(agent.calls)
+        again = self.engine().next()
+        self.assertEqual((again["status"], again["outcome"]), ("done", "approved"))
+        self.assertEqual(len(agent.calls), calls)
+
     def test_the_latest_round_is_the_largest_number_not_the_last_in_alphabetical_order(self):
         engine = self.engine()
         engine.init()
@@ -2125,11 +2256,165 @@ class ApprovalGradeTests(EngineCase):
         plan = json.loads(path.read_text(encoding="utf-8"))
         plan.pop("approval_grade")
         plan["options"].pop("approval_grade")
+        # What an engine of that time left behind: a plan with its own digest, which its journal had recorded.
+        plan.pop("plan_sha256")
+        plan["plan_sha256"] = digest_json(plan)
         path.write_text(json.dumps(plan), encoding="utf-8")
+        self.engine().journal.append("plan_refreshed", plan_sha256=plan["plan_sha256"], agents=len(plan["agents"]))
         engine = self.engine()
         engine.load(adopt=True)
         self.assertEqual(engine.approval_grade, "A", "a swarm that was already running does not take the new policy")
         self.assertEqual(engine.recorded_approval_grade(), "A")
+
+    def plan_path(self) -> Path:
+        return self.root / "reports" / "execution" / "plan.json"
+
+    def lowered(self, *, digest: bool) -> None:
+        """What a hand edit of the plan to the relaxed grade looks like, with the digest left alone or recomputed."""
+        plan = json.loads(self.plan_path().read_text(encoding="utf-8"))
+        plan["approval_grade"] = plan["options"]["approval_grade"] = "A-"
+        if digest:
+            plan.pop("plan_sha256")
+            plan["plan_sha256"] = digest_json(plan)
+        self.plan_path().write_text(json.dumps(plan), encoding="utf-8")
+
+    def test_a_plan_edited_to_lower_the_bar_is_refused_by_every_call_that_reads_it(self):
+        self.finish(self.agent(), approval_grade="A")
+        honest = self.plan_path().read_bytes()
+        for label, digest, message in (("digest left alone", False, "was edited"),
+                                       ("digest recomputed", True, "not a plan this executor wrote")):
+            with self.subTest(edit=label):
+                self.lowered(digest=digest)
+                for call in (lambda: self.engine().status(), lambda: self.engine().next(),
+                             lambda: self.engine().init(), lambda: self.engine().record("c01.r0.authors.x", 1, "0" * 64, {})):
+                    with self.assertRaisesRegex(InputError, message):
+                        call()
+                self.plan_path().write_bytes(honest)
+        self.assertEqual(self.engine().status()["approval_grade"], "A", "the honest plan is accepted again")
+
+    def test_a_plan_that_cannot_be_read_as_a_plan_is_an_error_with_a_remedy_not_a_traceback(self):
+        self.finish(self.agent(), approval_grade="A")
+        for text in ("{broken", "[1, 2]", '"text"', "null", '{"options": []}'):
+            with self.subTest(text=text):
+                self.plan_path().write_text(text, encoding="utf-8")
+                with self.assertRaises(InputError):
+                    self.engine().status()
+
+    def test_a_swarm_driven_by_next_and_record_without_init_has_no_plan_and_needs_none(self):
+        # The command line allows it, and the swarm then runs under the policy of a new one: nothing was ever written down.
+        agent = self.agent()
+        for task in self.engine().next()["tasks"]:
+            self.assertTrue(self.engine().record(task["task_id"], task["attempt"], task["inputs_sha256"], agent(task))["accepted"])
+        self.assertFalse(self.plan_path().exists())
+        status = self.engine().status()
+        self.assertEqual((status["approval_grade"], status["tasks_recorded"]), ("A-", 2))
+
+    def test_a_swarm_driven_without_init_reaches_a_verdict_under_the_executors_own_policy(self):
+        # With no plan the gate cannot know the grade of an executor swarm (the default lives in the executor), so it must not
+        # refuse the review the executor itself rendered for it; the executor already checks that the review is its own.
+        agent = self.agent()
+        for _ in range(60):
+            directive = self.engine().next()
+            if directive["status"] != "agents":
+                break
+            for task in directive["tasks"]:
+                self.engine().record(task["task_id"], task["attempt"], task["inputs_sha256"], agent(task))
+        self.assertEqual((directive["status"], directive.get("outcome")), ("done", "approved"), directive)
+        self.assertFalse(self.plan_path().exists())
+        record = json.loads(self.text("reports/cycle-01-gate.json"))
+        self.assertEqual((record["exit_code"], record["result"]["approval_grade"]), (0, "A-"))
+
+    def test_a_plan_deleted_after_agents_were_paid_for_is_not_replaced_by_the_policy_of_a_new_swarm(self):
+        self.finish(self.agent(), approval_grade="A")
+        self.plan_path().unlink()
+        for call in (lambda: self.engine().init(), lambda: self.engine().next(), lambda: self.engine().status()):
+            with self.assertRaisesRegex(InputError, "plan.json is missing"):
+                call()
+        self.assertFalse(self.plan_path().exists(), "refusing writes nothing")
+        # Nothing was paid for yet: a first start that stopped between its journal entry and its plan can go on.
+        fresh = build_swarm(Path(self.temporary.name) / "fresh")
+        Engine(fresh).journal.append("run_started", plan_sha256="0" * 64, agents=2)
+        self.assertTrue(Engine(fresh).init()["ok"])
+        self.assertTrue((fresh / "reports" / "execution" / "plan.json").is_file())
+
+    def test_a_stop_between_the_journal_and_the_plan_leaves_a_plan_the_journal_knows(self):
+        self.finish(self.agent(), approval_grade="A")
+        before = self.plan_path().read_bytes()
+        original_write, original_append = Engine.write_json, Journal.append
+
+        def stop_writing_the_plan(engine, relative, value):
+            if relative.endswith("plan.json"):
+                raise OSError("the machine stopped")
+            return original_write(engine, relative, value)
+
+        def stop_journaling_the_start(journal, event, **fields):
+            if event in ("run_started", "plan_refreshed"):
+                raise OSError("the machine stopped")
+            return original_append(journal, event, **fields)
+
+        for label, patched in (("after the journal, before the plan", mock.patch.object(Engine, "write_json", stop_writing_the_plan)),
+                               ("before the journal", mock.patch.object(Journal, "append", stop_journaling_the_start))):
+            with self.subTest(stopped=label):
+                with patched, self.assertRaises(OSError):
+                    Engine(self.root, Options(approval_grade="A-")).init()
+                self.assertEqual(self.plan_path().read_bytes(), before, "the plan on disk is still the earlier one")
+                self.assertEqual(self.engine().status()["approval_grade"], "A", "and it is accepted: the journal wrote it down")
+        self.assertTrue(Engine(self.root, Options(approval_grade="A-")).init()["ok"], "so the same command can be run again")
+        self.assertEqual(self.engine().status()["approval_grade"], "A-")
+
+    def test_a_plan_nobody_can_vouch_for_is_started_again_only_by_a_person_who_states_the_policy(self):
+        self.finish(self.agent(), approval_grade="A")
+        honest = self.plan_path().read_bytes()
+        damages = (("edited", lambda: self.lowered(digest=False)), ("forged", lambda: self.lowered(digest=True)),
+                   ("deleted", lambda: self.plan_path().unlink()),
+                   ("unreadable", lambda: self.plan_path().write_text("{broken", encoding="utf-8")),
+                   ("binary", lambda: self.plan_path().write_bytes(b"\xff\xfe\x00")),
+                   ("not a plan", lambda: self.plan_path().write_text("[1]", encoding="utf-8")))
+        for label, damage in damages:
+            with self.subTest(damage=label):
+                self.plan_path().write_bytes(honest)
+                damage()
+                with self.assertRaisesRegex(InputError, "--approval-grade A- or --approval-grade A"):
+                    self.engine().init()
+                with self.assertRaises(InputError):
+                    Engine(self.root, Options(approval_grade="B+")).init()
+                Engine(self.root, Options(approval_grade="A")).init()
+                recovered = self.engine().journal.find("plan_recovered")[-1]
+                self.assertEqual(recovered["approval_grade"], "A")
+                self.assertTrue(recovered["reason"], "the journal says what was wrong with the plan it replaced")
+                self.assertEqual(self.engine().status()["approval_grade"], "A", "what the person said, not what the plan said")
+                self.assertEqual(json.loads(self.plan_path().read_text(encoding="utf-8"))["options"]["approval_grade"], "A")
+        self.assertEqual(len(self.engine().journal.find("plan_recovered")), len(damages))
+
+    def test_a_failed_init_does_not_leave_the_plan_unread(self):
+        self.finish(self.agent(), approval_grade="A")
+        self.lowered(digest=False)
+        engine = Engine(self.root, Options(approval_grade="A"))
+        with mock.patch.object(Engine, "load", side_effect=InputError("boom")), self.assertRaisesRegex(InputError, "boom"):
+            engine.init()
+        self.assertIsNone(engine.plan_lost)
+        with self.assertRaisesRegex(InputError, "was edited"):
+            engine.status()
+
+    def test_a_plan_whose_journal_is_gone_is_not_a_plan_this_executor_wrote(self):
+        self.finish(self.agent(), approval_grade="A")
+        (self.root / "reports" / "execution" / "journal.jsonl").unlink()
+        with self.assertRaisesRegex(InputError, "not a plan this executor wrote"):
+            self.engine().status()
+
+    def test_a_plan_whose_options_are_not_a_mapping_is_read_as_having_none(self):
+        self.finish(self.agent(), approval_grade="A")
+        plan = json.loads(self.plan_path().read_text(encoding="utf-8"))
+        plan.pop("plan_sha256")
+        plan["options"] = []
+        plan["plan_sha256"] = digest_json(plan)
+        self.plan_path().write_text(json.dumps(plan), encoding="utf-8")
+        self.engine().journal.append("plan_refreshed", plan_sha256=plan["plan_sha256"], agents=len(plan["agents"]))
+        engine = self.engine()
+        engine.load(adopt=True)
+        self.assertEqual((engine.options.max_attempts, engine.options.max_cycles), (2, None))
+        self.assertIsNone(engine.stored_ceiling())
+        self.assertIsNone(engine.stored_approval_grade())
 
     def test_a_task_asked_again_under_a_new_identity_is_issued_again_and_measured_from_that_issue(self):
         # The first real run recorded 4,850 s for a one minute audit: the task had the same id and attempt as one issued

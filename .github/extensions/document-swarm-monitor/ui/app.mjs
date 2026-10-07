@@ -5,6 +5,48 @@ export const AGENT_STATUS = {
 };
 const TERMINAL = new Set(["completed", "escalated", "aborted"]);
 
+export const APPROVAL_GRADES = ["A-", "A"];
+
+// The grade a cycle was judged against: the one its own review declares, then the swarm's, and the original A when
+// neither says (evidence recorded before the field existed).  Hard-coding A would paint a gate-approved A- as failing.
+export function approvalGrade(cycle, evidence) {
+    for (const candidate of [cycle?.approval_grade, evidence?.approval_grade]) {
+        if (APPROVAL_GRADES.includes(candidate)) return candidate;
+    }
+    return "A";
+}
+
+export function meetsApproval(scale, grade, bar) {
+    return scale.includes(grade) && scale.indexOf(grade) >= scale.indexOf(bar);
+}
+
+export function gradeKind(value, scale, bar) {
+    if (!value || !scale.includes(value)) return "missing";
+    return meetsApproval(scale, value, bar) ? "good" : "bad";
+}
+
+export function gradeView(value, cycle, evidence) {
+    const kind = gradeKind(value, evidence.grade_scale, approvalGrade(cycle, evidence));
+    return { text: kind === "missing" ? "N/D" : value, kind };
+}
+
+export function gradeCount(cycle, evidence) {
+    if (cycle?.consistent === false) return "Divergente";
+    if (!cycle?.topics.length) return "Pendente";
+    const bar = approvalGrade(cycle, evidence);
+    const passing = cycle.topics.filter(topic => meetsApproval(evidence.grade_scale, topic.grade, bar)).length;
+    return `${passing} / ${cycle.topics.length}`;
+}
+
+export function approvalLegend(cycle, evidence) {
+    return `Nota de aprovação: ${approvalGrade(cycle, evidence)} · abaixo bloqueia · achado crítico veta`;
+}
+
+export function gradeCaption(cycle, evidence) {
+    const bar = approvalGrade(cycle, evidence);
+    return { label: `≥ ${bar}`, title: `Tópicos com nota mínima ${bar} ou acima; isso não substitui o gate` };
+}
+
 export function archived(state, cycle) {
     return state.connection === "historical" || TERMINAL.has(state.status) || cycle !== state.cycle;
 }
@@ -231,10 +273,10 @@ async function startInterface() {
         $("session-status").title = stall ? stall.detail : archived(data, selectedCycle)
             ? "O registro encerrado não informa se a sessão iniciou outro trabalho."
             : "Atividade do agente principal observada no runtime, separada da disponibilidade dos subagentes.";
-        const scale = data.evidence.grade_scale;
-        const a = scale.indexOf("A");
-        $("grade-count").textContent = cycle?.consistent === false ? "Divergente"
-            : cycle?.topics.length ? `${cycle.topics.filter(topic => scale.indexOf(topic.grade) >= a).length} / ${cycle.topics.length}` : "Pendente";
+        const caption = gradeCaption(cycle, data.evidence);
+        $("grade-label").textContent = caption.label;
+        $("grade-card").title = caption.title;
+        $("grade-count").textContent = gradeCount(cycle, data.evidence);
         for (const id of ["agent-count", "running-count", "cycle-count", "grade-count"]) $(id).title = $(id).textContent;
         $("phases").replaceChildren(...Object.entries(PHASES).map(([key, label]) => element("span", label, `phase${data.phase === key ? " active" : ""}`)));
         if (activeTab !== "flow") seenEdges = new Set(data.edges.map(edge => edge.id));
@@ -353,10 +395,9 @@ async function startInterface() {
         if (focused) [...graph.querySelectorAll("[data-agent]")].find(node => node.dataset.agent === focused)?.focus();
     }
 
-    function grade(value, scale) {
-        if (!value || !scale.includes(value)) return element("span", "N/D", "grade missing");
-        const approved = scale.indexOf(value) >= scale.indexOf("A");
-        return element("span", value, `grade ${approved ? "good" : "bad"}`);
+    function grade(value, cycle) {
+        const view = gradeView(value, cycle, shownState.evidence);
+        return element("span", view.text, `grade ${view.kind}`);
     }
     function renderScores(cycle) {
         const scroll = { top: $("score-container").scrollTop, left: $("score-container").scrollLeft };
@@ -379,7 +420,7 @@ async function startInterface() {
         const checks = [
             `Fontes (última checagem): ${sourceStatus === "pending" ? "aguardando" : sourceStatus === "invalid" ? "dados inválidos" : sourceStatus === "stale" ? "desatualizadas" : `${counts.ok + counts.redirect} válidas · ${counts.warn} avisos · ${counts.fail} falhas`}`,
             `Tabelas: ${!cycle || cycle.tables.status === "pending" ? "aguardando" : `${cycle.tables.failures} falhas`}`,
-            "A- bloqueia · achado crítico veta",
+            approvalLegend(cycle, shownState.evidence),
         ];
         $("checks").replaceChildren(...checks.map(value => element("span", value)));
         $("score-note").textContent = cycle?.individual_reviews === "not_recorded"
@@ -412,12 +453,12 @@ async function startInterface() {
             for (const reviewer of reviewers) {
                 const cell = element("td");
                 const entry = cycle.reviews.find(item => item.topic === topic.id && item.reviewer === reviewer);
-                cell.append(grade(entry?.grade, shownState.evidence.grade_scale));
+                cell.append(grade(entry?.grade, cycle));
                 cell.title = entry ? entry.justification : "Avaliação individual não registrada";
                 row.append(cell);
             }
             const effective = element("td");
-            effective.append(grade(topic.grade, shownState.evidence.grade_scale));
+            effective.append(grade(topic.grade, cycle));
             effective.title = topic.reviewer ? `Mínimo registrado por ${topic.reviewer}` : "Consolidação pendente";
             row.append(effective);
             body.append(row);

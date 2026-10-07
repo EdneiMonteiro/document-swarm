@@ -247,6 +247,29 @@ class ExecutorTests(unittest.TestCase):
         self.assertEqual([item["agent"] for item in result["dispatches_without_an_end"]], ["author-01"],
                          "the stopped run is listed as having no end, honestly")
 
+    def test_a_task_asked_again_under_a_new_identity_is_two_runs_each_with_its_own_end(self):
+        # The delivery of the first real run: the audit and the narrative had the same id and attempt as the ones paid for
+        # before the approval grade changed.  Each record ends the run it follows, so neither is lost or left without an end.
+        journal = ExecutorJournal().add(0, "run_started")
+        journal.issue(0, "t1", "author-01").start(0, "t1", "author-01").record(60, "t1", "author-01")
+        journal.issue(500, "t1", "author-01").start(500, "t1", "author-01").record(590, "t1", "author-01")
+        result = self.measure(journal)
+        self.assertEqual(result["dispatches"], 2)
+        self.assertEqual(result["agent_running_union_seconds"], 150, "60 s for the first run and 90 s for the second")
+        self.assertEqual(result["dispatches_without_an_end"], [])
+
+    def test_a_task_asked_again_whose_new_run_never_ended_is_listed_without_an_end(self):
+        # The first run was recorded.  The same task under new inputs was started and the machine stopped before its record:
+        # the record that exists belongs to the first run, and must not hide that the second one has none.
+        journal = ExecutorJournal().add(0, "run_started")
+        journal.issue(0, "t1", "author-01").start(0, "t1", "author-01").record(60, "t1", "author-01")
+        journal.issue(500, "t1", "author-01").start(500, "t1", "author-01")
+        result = self.measure(journal)
+        self.assertEqual(result["dispatches"], 2)
+        self.assertEqual(result["agent_running_union_seconds"], 60, "the run that ended is credited; the other one is not")
+        [lost] = result["dispatches_without_an_end"]
+        self.assertEqual(lost["agent"], "author-01")
+
     def test_a_journal_without_task_started_falls_back_to_the_issue(self):
         journal = ExecutorJournal().add(0, "run_started").issue(10, "t1", "author-01").record(70, "t1", "author-01")
         self.assertEqual(self.measure(journal)["agent_running_union_seconds"], 60)

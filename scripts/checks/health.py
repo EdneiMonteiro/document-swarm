@@ -144,8 +144,19 @@ def executor_state(root: Path) -> dict[str, Any] | None:
                 events.append(item)
     except (OSError, UnicodeError):
         return None
-    issued = {(item.get("task_id"), item.get("attempt")): item for item in events if item.get("event") == "task_issued"}
-    recorded = {(item.get("task_id"), item.get("attempt")) for item in events if item.get("event") == "task_recorded"}
+    issued = {(item.get("task_id"), item.get("attempt"), item.get("inputs_sha256")): item
+              for item in events if item.get("event") == "task_issued"}
+    # An answer covers an issue of the same task and attempt that asked for the same identity.  An entry from before
+    # the journal carried the identity covers whatever was asked, as it always did; one identity's answer does not
+    # hide the pending work of another that shares its id and attempt.
+    recorded: dict[tuple[Any, Any], set[Any]] = {}
+    for item in events:
+        if item.get("event") == "task_recorded":
+            recorded.setdefault((item.get("task_id"), item.get("attempt")), set()).add(item.get("inputs_sha256"))
+
+    def answered(task_id: Any, attempt: Any, identity: Any) -> bool:
+        identities = recorded.get((task_id, attempt), set())
+        return bool(identities) and (identity is None or None in identities or identity in identities)
     # Finished only if nothing happened after the verdict: a person who raises the ceiling and runs again
     # continues the same journal, and that run is not closed.
     finished = [events[-1]] if events and events[-1].get("event") == "run_finished" else []
@@ -165,7 +176,8 @@ def executor_state(root: Path) -> dict[str, Any] | None:
         "finished": bool(finished), "outcome": finished[-1].get("outcome") if finished else None,
         "last_event": events[-1].get("event") if events else None,
         "last_event_age_seconds": age_of(last_at),
-        "pending_agents": sorted({str(item.get("agent")) for key, item in issued.items() if key not in recorded}),
+        "pending_agents": sorted({str(item.get("agent")) for (task_id, attempt, identity), item in issued.items()
+                                  if not answered(task_id, attempt, identity)}),
         "driver": beat,
     }
 

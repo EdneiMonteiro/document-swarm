@@ -140,6 +140,29 @@ def storable(value: Any) -> bool:
     return len(encoded) <= MAX_RESULT_BYTES
 
 
+FENCE_OPEN = re.compile(r"```(?:json)?[ \t]*\r?\n", re.I)
+FENCE_CLOSE = re.compile(r"\r?\n```")
+
+
+def fenced_blocks(text: str) -> list[str]:
+    """The bodies of the code fences in an answer, found in one pass over it.
+
+    A fence is closed by the first line break and fence after it.  One regex that looked for the pair from every opening
+    fence read to the end of the text each time, so a reply made of opening fences alone took quadratic time (about 25 s
+    for 144 KB) with the swarm locked.  If no closing fence follows an opening one, none follows any later one either.
+    """
+    blocks, position = [], 0
+    while True:
+        opening = FENCE_OPEN.search(text, position)
+        if opening is None:
+            return blocks
+        closing = FENCE_CLOSE.search(text, opening.end())
+        if closing is None:
+            return blocks
+        blocks.append(text[opening.end():closing.start()])
+        position = closing.end()
+
+
 def parse_agent_json(text: str) -> tuple[dict[str, Any] | None, str | None]:
     """Recover the JSON object an agent was asked to return, tolerating the usual wrappers.
 
@@ -152,7 +175,7 @@ def parse_agent_json(text: str) -> tuple[dict[str, Any] | None, str | None]:
     breaks, so that the retry corrects that and not a guess.
     """
     candidates = [text.strip()]
-    candidates += [item.strip() for item in re.findall(r"```(?:json)?[ \t]*\r?\n(.*?)\r?\n```", text, re.S | re.I)]
+    candidates += [item.strip() for item in fenced_blocks(text)]
     start, end = text.find("{"), text.rfind("}")
     if start >= 0:
         # An answer cut off before its last brace still shows where it broke.
@@ -177,6 +200,16 @@ def parse_agent_json(text: str) -> tuple[dict[str, Any] | None, str | None]:
                       f"({reason}); reply with only the JSON object that obeys the schema, writing quotes and line "
                       'breaks inside strings as \\" and \\n')
     return None, "the answer is not a JSON object; reply with only the JSON object that obeys the schema"
+
+
+def readable_excerpt(text: str, limit: int) -> str:
+    """The first ``limit`` characters of text an agent returned, made safe to write down.
+
+    What an agent returns is untrusted, and a reply that could not be read as JSON never went through ``storable``.  A lone
+    surrogate in it cannot be written as UTF-8, so it would fail the write of the whole record of the attempt, and with
+    it the run.  It becomes ``?`` here, and the excerpt is still what the agent said as far as it can be said.
+    """
+    return text[:limit].encode("utf-8", errors="replace").decode("utf-8")
 
 
 def clean_runtime(runtime: Any) -> dict[str, Any]:

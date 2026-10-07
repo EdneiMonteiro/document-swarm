@@ -110,8 +110,13 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(argv[:2], ["python", "wrapper.py"])
 
     def test_describing_a_command_never_runs_the_cli(self):
-        # The executable is not even a program: building the command must not start it.
-        argv = CopilotCli(executable=["nao-existe-copilot-xyz"]).command(task_for())
+        # Not a program that cannot be found, which would hide an attempt to run it: any attempt fails the test.
+        backend = CopilotCli(executable=["nao-existe-copilot-xyz"])
+        with mock.patch.object(CopilotCli, "list_mcp", side_effect=AssertionError("asked the CLI for its servers")), \
+                mock.patch.object(subprocess, "Popen", side_effect=AssertionError("started a process")), \
+                mock.patch.object(subprocess, "run", side_effect=AssertionError("ran a process")):
+            argv = backend.command(task_for())
+            self.assertEqual(backend.command(task_for(), None, None), argv)
         self.assertNotIn("--disable-mcp-server", argv)
         self.assertNotIn("--disable-builtin-mcps", argv)
 
@@ -135,6 +140,21 @@ class CommandTests(unittest.TestCase):
                      "User servers:\n  " + "x" * 200 + " (local)\n"):
             with self.subTest(text=text[:30]):
                 self.assertEqual(parse_mcp_list(text), {})
+
+    def test_a_listing_with_a_line_that_is_not_part_of_it_is_not_acted_on_in_part(self):
+        # The builtin servers are stopped by one flag for all of them: read only as far as the odd line, the listing
+        # would name computer-use alone, and stopping "the builtin servers" would take github-mcp-server with it.
+        broken = ("User servers:\n  playwright (local)\n\nBuiltin servers:\n  computer-use (local)\n"
+                  "warning: the listing was cut short\n  github-mcp-server (http)\n")
+        self.assertEqual(parse_mcp_list(broken), {})
+        for text in (MCP_LISTING + "Note: run `copilot mcp add` to add a server.\n", MCP_LISTING.replace("Builtin servers:", "Builtin servers (2):"),
+                     "Builtin servers:\n  computer-use (local)\n  github-mcp-server\n"):
+            with self.subTest(text=text[-40:]):
+                self.assertEqual(parse_mcp_list(text), {})
+        self.assertEqual(parse_mcp_list(MCP_LISTING)["builtin"], ["computer-use", "github-mcp-server"])
+        self.assertEqual(parse_mcp_list(MCP_LISTING.replace("\n", "\r\n"))["user"], MCP_NAMES[:6], "the CLI on Windows ends lines with CRLF")
+        self.assertEqual(parse_mcp_list("\n\nUser servers:\n  playwright (local)\n\n\n"), {"user": ["playwright"]})
+        self.assertEqual(parse_mcp_list("User servers:\n\nPlugin servers:\n  msx (local)\n"), {"plugin": ["msx"]}, "a heading with nothing under it")
 
     def test_every_server_the_task_has_no_tool_of_is_stopped_builtin_ones_with_their_own_flag(self):
         flags = mcp_flags(["view", "glob"], parse_mcp_list(MCP_LISTING))
@@ -484,6 +504,79 @@ class McpPruningTests(BackendCase):
         backend(self.first_task())
         self.assertNotIn("--disable-mcp-server", self.calls()[0]["argv"])
         self.assertFalse(log.exists())
+
+    def test_the_listing_leaves_nothing_registered_as_running(self):
+        backend = self.fake(FAKE_COPILOT_MCP_LIST=MCP_LISTING)
+        self.assertEqual(backend.list_mcp()["builtin"], ["computer-use", "github-mcp-server"])
+        self.assertEqual(backend.running, {})
+
+    def test_a_cancel_that_arrives_while_the_servers_are_being_listed_starts_no_agent(self):
+        backend = self.fake()
+        listing, release = threading.Event(), threading.Event()
+
+        def slow() -> dict[str, list[str]]:
+            listing.set()
+            release.wait(30)
+            return {}
+
+        backend.list_mcp = slow
+        task = self.first_task()
+        answers: list[Answer] = []
+        worker = threading.Thread(target=lambda: answers.append(backend(task)))
+        worker.start()
+        self.assertTrue(listing.wait(30), "the worker is inside the listing")
+        backend.cancel()
+        release.set()
+        worker.join(timeout=30)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(answers[0].runtime["error"], "cancelled")
+        self.assertEqual(self.calls(), [], "no agent ran unwatched, and none was paid for only to be thrown away")
+
+    def test_a_cancel_ends_a_listing_that_is_still_running(self):
+        log = Path(self.temporary.name) / "mcp.jsonl"
+        backend = self.fake(FAKE_COPILOT_MCP_LIST=MCP_LISTING, FAKE_COPILOT_MCP_LOG=log, FAKE_COPILOT_MCP_SLEEP=60)
+        task = self.first_task()
+        answers: list[Answer] = []
+        worker = threading.Thread(target=lambda: answers.append(backend(task)))
+        worker.start()
+        deadline = time.monotonic() + 30
+        while not log.exists() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertTrue(log.exists(), "the listing started")
+        started = time.monotonic()
+        backend.cancel()
+        worker.join(timeout=30)
+        self.assertFalse(worker.is_alive())
+        self.assertLess(time.monotonic() - started, 20, "the listing was stopped, not waited for (it sleeps for 60 s)")
+        self.assertEqual(answers[0].runtime["error"], "cancelled")
+        self.assertEqual(self.calls(), [])
+
+    def test_a_listing_that_overruns_is_ended_with_everything_it_started(self):
+        log = Path(self.temporary.name) / "mcp.jsonl"
+        backend = self.fake(FAKE_COPILOT_MCP_LIST=MCP_LISTING, FAKE_COPILOT_MCP_LOG=log, FAKE_COPILOT_MCP_SLEEP=60,
+                            FAKE_COPILOT_MCP_CHILD=1)
+        backend.drain_timeout = 2
+        children: list[int] = []
+        try:
+            with mock.patch("scripts.orchestration.backend.MCP_LIST_TIMEOUT", 3):
+                started = time.monotonic()
+                found = backend.list_mcp()
+                elapsed = time.monotonic() - started
+            children = [json.loads(line)["child"] for line in log.read_text(encoding="utf-8").splitlines() if '"child"' in line]
+            self.assertEqual(found, {})
+            self.assertLess(elapsed, 25, "a child that holds the pipes open must not keep the run waiting (it lives for 40 s)")
+            self.assertEqual(len(children), 1)
+            deadline = time.monotonic() + 10
+            while alive(children[0]) and time.monotonic() < deadline:
+                time.sleep(0.2)
+            self.assertFalse(alive(children[0]), "what the listing started does not outlive it")
+            self.assertEqual(backend.running, {})
+        finally:
+            for pid in children:
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
+                elif alive(pid):
+                    os.kill(pid, 9)
 
 
 class MonitorTests(EngineCase):

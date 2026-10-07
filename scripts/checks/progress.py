@@ -14,7 +14,9 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.checks.common import InputError, parse_data
-from scripts.checks.gate import GRADE_INDEX, SCALE, evaluate, evaluate_current, normalize_grade, value
+from scripts.checks.gate import (
+    GRADE_INDEX, ORIGINAL_APPROVAL_GRADE, SCALE, authorized_grade, evaluate, evaluate_current, normalize_grade, value,
+)
 from scripts.checks.lint_agents import frontmatter_text
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -97,6 +99,23 @@ def snapshot(swarm: Path) -> dict[str, Any]:
     brief = frontmatter_text(brief_text)
     swarm_id = text(brief.get("swarm_id"), "swarm_id")
     maximum = integer(brief.get("max_cycles"), "max_cycles")
+    # An executor swarm keeps in its plan what a person set with --max-cycles and --approval-grade, because editing the
+    # brief would make the current cycle be paid for again.  Showing the brief's values would disagree with the run.
+    plan: dict[str, Any] = {}
+    plan_problem = None
+    plan_path = root / "reports" / "execution" / "plan.json"
+    if plan_path.is_file():
+        try:
+            parsed = json.loads(read(plan_path).decode("utf-8"))
+            if not isinstance(parsed, dict):
+                raise InputError("expected an object")
+            plan = parsed
+        except (OSError, UnicodeError, ValueError, InputError) as exc:
+            plan_problem = f"plan.json: {exc}"
+    options = plan.get("options") if isinstance(plan.get("options"), dict) else {}
+    if type(options.get("max_cycles")) is int and options["max_cycles"] >= 1:
+        maximum = options["max_cycles"]
+    swarm_grade = authorized_grade(brief, plan)
     heading = re.search(r"(?m)^#\s+(.+)$", brief_text)
     result: dict[str, Any] = {
         "schema_version": 1,
@@ -104,6 +123,7 @@ def snapshot(swarm: Path) -> dict[str, Any]:
         "title": heading.group(1).strip() if heading else swarm_id,
         "skill_version": str(brief.get("skill_version", "not recorded")),
         "max_cycles": maximum,
+        "approval_grade": swarm_grade,
         "monitor_enabled": brief.get("monitor", True) is not False,
         "demo": brief.get("demo") is True,
         "grade_scale": list(SCALE),
@@ -114,6 +134,8 @@ def snapshot(swarm: Path) -> dict[str, Any]:
         "warnings": [],
     }
     warnings = result["warnings"]
+    if plan_problem:
+        warnings.append(plan_problem)
     artifact_paths: set[Path] = {brief_path}
 
     def load(path: Path) -> tuple[bytes, dict[str, Any]]:
@@ -157,7 +179,7 @@ def snapshot(swarm: Path) -> dict[str, Any]:
         cycle = cycles.setdefault(number, {
             "cycle": number, "topics": [], "reviews": [], "issues": [],
             "gate": {"status": "not_recorded"}, "tables": {"status": "pending"},
-            "consistent": True,
+            "consistent": True, "approval_grade": swarm_grade,
         })
         try:
             raw, data = load(path)
@@ -171,6 +193,8 @@ def snapshot(swarm: Path) -> dict[str, Any]:
                 decision = evaluate(data)
                 if decision["cycle"] != number:
                     raise InputError("review cycle does not match its filename")
+                # The grade the review itself was judged under, which is what the gate applied.
+                cycle["approval_grade"] = decision.get("approval_grade", ORIGINAL_APPROVAL_GRADE)
                 cycle["review_sha256"] = hashlib.sha256(raw).hexdigest()
                 cycle["review_file"] = path.name
                 cycle["computed"] = decision

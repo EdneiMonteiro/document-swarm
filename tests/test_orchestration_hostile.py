@@ -144,6 +144,22 @@ class HostileAnswerTests(EngineCase):
         self.assertEqual(Journal(self.root / "reports" / "execution" / "journal.jsonl").count("task_recorded"), 1,
                          "the attempt is counted, so the retry budget advances")
 
+    def test_an_unreadable_answer_with_a_lone_surrogate_is_a_rejection_the_run_survives(self):
+        # The excerpt kept of a reply that could not be read never went through `storable`, and a lone surrogate cannot be
+        # written as UTF-8: it failed the record of the attempt and, with it, the run.
+        cases = {"in the head": ('{"files": [ \ud800 sem fim', 1, 0), "in the tail": ("x" * 400 + "\udc00" + "y" * 10, 0, 1)}
+        for label, (text, in_head, in_tail) in cases.items():
+            with self.subTest(case=label):
+                root = build_swarm(Path(self.temporary.name) / label.replace(" ", "-"))
+                engine = Engine(root)
+                task = self.first_task(engine)
+                outcome = engine.record(task["task_id"], 1, task["inputs_sha256"], text)
+                self.assertEqual((outcome["accepted"], outcome["retry"]), (False, True))
+                runtime = engine.load_record(task["task_id"])["attempts"][0]["runtime"]
+                self.assertEqual((runtime["answer_head"].count("?"), runtime["answer_tail"].count("?")), (in_head, in_tail),
+                                 "the surrogate becomes a question mark and the rest of the excerpt is kept")
+                self.assertEqual(Journal(root / "reports" / "execution" / "journal.jsonl").count("task_recorded"), 1)
+
     def test_a_file_that_cannot_be_written_is_a_rejection_not_an_exception(self):
         engine = self.engine()
         task = self.first_task(engine)

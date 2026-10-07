@@ -2,6 +2,10 @@
 # Cada execução cria <OUTPUT_ROOT>/<YYYY-MM-DD>-SWARM-XX/ aqui por padrão.
 /swarms/
 
+# Relatório que `orchestration qualify` grava onde o comando roda (gasta créditos; é do ambiente, não da skill)
+/copilot-cli-qualification.json
+/copilot-cli-qualification.usage/
+
 # Ruído de validação de diagramas Mermaid
 *.svg
 .mermaid-validation/

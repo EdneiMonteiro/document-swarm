@@ -111,6 +111,29 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
   calls of each kind): a median of 44.1 s with the user's thirteen servers, 11.5 s without.
   Building a command (`command()`) starts nothing; the listing is asked for by the code that
   runs or previews a task.
+- The grade a swarm authorizes is no longer only what a review says about itself. `gate.py`
+  refuses (exit 3) a review that declares less than the swarm authorizes: the executor's
+  `--approval-grade` (kept in the plan), the brief's `approval_grade`, or the original `A`.
+  `progress.py` (monitor, `health.py`, `resume.py`) uses the same function. The plan that
+  holds the option is itself attested: it counts only if its digest matches its content and
+  the journal recorded that digest when it was written (the journal is written first, so a
+  stop in between leaves a plan the journal knows). An edited plan is refused by every call
+  that reads it, and a plan deleted after the journal says it was written and agents were
+  paid for is refused instead of being replaced by the policy of a new swarm. A person who
+  has no backup starts the plan again by stating the policy (`init` or `run` with
+  `--approval-grade`): the new plan is built from the brief, the declarations and the options
+  given, nothing of the old one is read, and the journal records `plan_recovered` with the
+  reason and the grade. A swarm driven by
+  `next` and `record` alone never had a plan, and that is not an error. For that one case
+  the gate stands down (a non-empty executor journal and no `plan.json`): the grade of such a
+  swarm is the executor's own default, which the gate cannot know, and the executor does not
+  trust a review it did not render from that policy.
+- The monitor panel, `health.py` and `resume.py` read the executor's plan: they show the
+  ceiling given with `--max-cycles` and the swarm's approval grade, and the panel colours
+  each grade, counts the topics that pass and words its legend against the grade the cycle's
+  own review was judged under, so an `A-` approved at `A-` is no longer drawn as a failure.
+  The decisions are pure functions with tests, and a test keeps a hard-coded pass mark out
+  of the panel's source and page.
 
 ### Changed
 
@@ -153,16 +176,24 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
   before spending anything.
 - The `copilot` backend was qualified with real calls on 2026-10-07 (CLI 1.0.93-2,
   `gpt-5-mini`, 7 of 7 probes) and produced a whole article through four cycles (see
-  `docs/executor.md`, "Primeira execução real"). It is not qualified on other CLI
-  versions: run `qualify` after upgrading. No paid benchmark against the coordinator
-  flow was run, so there is no promised percentage gain.
-- The visual monitor panel is not driven by the executor, and a dead source found by
-  the final recheck blocks the delivery until someone replaces it. `health.py` and the
-  panel show the brief's cycle ceiling, not one set with `--max-cycles`.
+  `docs/executor.md`, "Primeira execução real"). It was qualified again after the MCP
+  servers were stopped per task (CLI 1.0.93-4, 7 of 7, web probe included). It is not
+  qualified on other CLI versions: run `qualify` after upgrading. No paid benchmark against
+  the coordinator flow was run, so there is no promised percentage gain.
+- The visual monitor panel is not driven by the executor (it shows cycles, grades and the
+  gate from the artifacts, not agents at work), and a dead source found by the final
+  recheck blocks the delivery until someone replaces it.
 - The length a brief asks for is not checked by anything: the first real run delivered
   5,525 words against a requested 2,500 to 3,500.
 - The saving from stopping the MCP servers was measured on a trivial call, not on a whole
-  run: the timings of the first real run were taken before the change.
+  run: the timings of the first real run were taken before the change. The listing of the
+  servers is read whole or not at all, so a CLI whose listing changes format loses the
+  saving (and nothing else) until the parser is taught the new format.
+- An approved verdict is bound to the brief, the rubber duck's declaration, the document,
+  the grades and the checks (through the identity of the audit), not to the declarations of
+  the authors and reviewers, which the document and the grades already pin. A rejected cycle
+  that already has a successor is history: only the current cycle is judged again when the
+  grade changes.
 - Only run on Windows. The `fcntl` lock and the process-group kill are the Linux and
   macOS paths and have never run; run the test suite there before relying on them.
   Files the executor writes on POSIX are owner-only (0600), a `mkstemp` default.
@@ -181,6 +212,41 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
 ### Fixed
 
+- Two independent reviews of the changes that followed the first real run (one of the
+  design, one line by line) found, and the following were fixed with a test and a mutant:
+  - `task_started` and `task_recorded` did not carry the identity of the task
+    (`inputs_sha256`), only `task_issued` did. A result accepted for earlier inputs could
+    therefore vouch for the file of a task asked again with the same id and attempt,
+    `status` counted the new issue as the old one, and `health.py` hid the pending work of
+    one identity behind the answer to another. All three events carry it and every reader
+    matches on it, tolerating a journal written before (an entry without it covers
+    whatever was asked, as it always did).
+  - A review could declare `approval_grade: A-` by itself, and a `plan.json` that was
+    deleted or edited made the swarm start over under the policy of a new one (see Added).
+  - The monitor drew an `A-` approved by the gate as a failure, because `A` was written in
+    three places of the panel and in its page (see Added).
+  - A cancellation could arrive while the MCP servers were being listed, between the check
+    for a cancellation and the registration of the process: an agent then started after
+    Ctrl+C, ran unwatched for up to its timeout and had its paid answer discarded. The check
+    and the registration are now one step. The listing is a supervised process too:
+    `cancel()` reaches it, and one that overruns its 60 s is ended with everything it
+    started (it used to wait for children holding the pipes open).
+  - A listing of the MCP servers with a line that is neither a heading nor an entry was used
+    up to that line. The builtin servers are stopped by one flag for all of them, so a cut
+    listing could stop one the task needs. The listing is now read whole or not at all.
+  - A reply that could not be read, holding a lone surrogate, made `record` raise
+    `UnicodeEncodeError` while writing the excerpt kept for diagnosis: the attempt was not
+    counted and the same agent was paid for again. The excerpts are made safe to write.
+  - The search for code fences in a reply was quadratic: 144 KB of opening fences took 25 s
+    with the swarm locked. It is one pass now, and a test compares it with the regex it
+    replaced on thousands of generated strings.
+  - Every reader of `plan.json` now goes through one accessor that tolerates a plan or an
+    `options` that is not an object, where one of them raised an unhandled exception.
+  - `metrics` has a test for the run of a re-issued task that never ended: the record that
+    exists belongs to the first run and must not hide that the second has none.
+  - A test now pins that an approved verdict does not survive an edit of the brief or of the
+    rubber duck's declaration (it is bound through the identity of the audit), and that the
+    declarations of authors and reviewers are deliberately not part of it.
 - First real run of the executor (an article about the Laya model, four cycles):
   - The contract was enforced but not stated. A coordinator was refused twice for
     writing "author-01 e author-03" and "T01 / T06 (licença)" where the engine needs one

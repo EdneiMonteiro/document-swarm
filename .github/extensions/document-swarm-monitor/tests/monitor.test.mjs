@@ -9,7 +9,7 @@ import { createMonitorServer, readArtifact } from "../server.mjs";
 import { MonitorManager, readEvidence } from "../manager.mjs";
 import { yieldsToProject } from "../ownership.mjs";
 import { canvasWindowTitle, createCanvasWindow } from "../window.mjs";
-import { AGENT_STATUS, archived, agentStatus, dispatchStatus, healthLabel, sessionLabel } from "../ui/app.mjs";
+import { AGENT_STATUS, APPROVAL_GRADES, agentStatus, approvalGrade, approvalLegend, archived, dispatchStatus, gradeCaption, gradeCount, gradeKind, gradeView, healthLabel, meetsApproval, sessionLabel } from "../ui/app.mjs";
 
 const digest = value => createHash("sha256").update(value).digest("hex");
 async function fixture(t) {
@@ -595,6 +595,91 @@ test("the panel shows a stall instead of a comfortable session label", async t =
     assert.equal(sessionLabel(stalled, 1, true), "Sessão processando", "the raw label stays raw; the stall is reported beside it");
     assert.equal(healthLabel(stalled, 1, false), null, "a disconnected panel claims nothing about the session");
     assert.equal(healthLabel({ ...base, health: { state: "active", reason: "ok" } }, 1, true), null);
+});
+
+test("the panel judges grades against the bar its review was judged under, not against a hard-coded A", () => {
+    const scale = ["B+", "A-", "A", "A+"];
+    assert.deepEqual(APPROVAL_GRADES, ["A-", "A"]);
+    // The grade of the cycle's own review wins, then the swarm's, then the original A.
+    assert.equal(approvalGrade({ approval_grade: "A-" }, { approval_grade: "A" }), "A-");
+    assert.equal(approvalGrade({ approval_grade: "A" }, { approval_grade: "A-" }), "A");
+    assert.equal(approvalGrade({}, { approval_grade: "A-" }), "A-");
+    assert.equal(approvalGrade(undefined, undefined), "A", "evidence recorded before the field existed");
+    for (const odd of ["B+", "A+", "", null, 3, ["A-"], {}]) {
+        assert.equal(approvalGrade({ approval_grade: odd }, { approval_grade: odd }), "A", `ignored: ${JSON.stringify(odd)}`);
+    }
+    // Under A- an A- passes, as the gate decided; under A it does not; nothing below the bar ever does.
+    assert.equal(meetsApproval(scale, "A-", "A-"), true);
+    assert.equal(meetsApproval(scale, "A-", "A"), false);
+    assert.equal(meetsApproval(scale, "A", "A-"), true);
+    assert.equal(meetsApproval(scale, "A+", "A"), true);
+    assert.equal(meetsApproval(scale, "B+", "A-"), false);
+    assert.equal(meetsApproval(scale, "Z", "A-"), false, "a grade that is not on the scale never passes");
+    assert.equal(meetsApproval(scale, undefined, "A-"), false);
+});
+
+test("the count, the cell colour and the legend of a cycle all follow its bar", () => {
+    const evidence = { grade_scale: ["B+", "A-", "A", "A+"], approval_grade: "A" };
+    const topics = ["B+", "A-", "A", "A+"].map((grade, index) => ({ id: `T0${index + 1}`, grade }));
+    const under = bar => ({ approval_grade: bar, topics, consistent: true });
+    assert.equal(gradeCount(under("A-"), evidence), "3 / 4");
+    assert.equal(gradeCount(under("A"), evidence), "2 / 4");
+    assert.equal(gradeCount({ topics, consistent: true }, evidence), "2 / 4", "no declaration on the cycle: the swarm's bar");
+    assert.equal(gradeCount({ topics, consistent: true }, { ...evidence, approval_grade: "A-" }), "3 / 4");
+    assert.equal(gradeCount({ ...under("A-"), consistent: false }, evidence), "Divergente");
+    assert.equal(gradeCount({ approval_grade: "A-", topics: [], consistent: true }, evidence), "Pendente");
+    assert.equal(gradeCount(undefined, evidence), "Pendente");
+    assert.deepEqual(["B+", "A-", "A", "A+"].map(grade => gradeKind(grade, evidence.grade_scale, "A-")), ["bad", "good", "good", "good"]);
+    assert.deepEqual(["B+", "A-", "A", "A+"].map(grade => gradeKind(grade, evidence.grade_scale, "A")), ["bad", "bad", "good", "good"]);
+    for (const absent of [undefined, null, "", "Z"]) assert.equal(gradeKind(absent, evidence.grade_scale, "A-"), "missing");
+    // The cell a person reads is built from the cycle, not from a bar the caller has to remember to pass.
+    assert.deepEqual(gradeView("A-", under("A-"), evidence), { text: "A-", kind: "good" });
+    assert.deepEqual(gradeView("A-", under("A"), evidence), { text: "A-", kind: "bad" });
+    assert.deepEqual(gradeView("A-", { topics }, { ...evidence, approval_grade: "A-" }), { text: "A-", kind: "good" });
+    assert.deepEqual(gradeView("A-", undefined, evidence), { text: "A-", kind: "bad" });
+    assert.deepEqual(gradeView(undefined, under("A-"), evidence), { text: "N/D", kind: "missing" });
+    assert.deepEqual(gradeView("Z", under("A-"), evidence), { text: "N/D", kind: "missing" });
+    assert.equal(approvalLegend(under("A-"), evidence), "Nota de aprovação: A- · abaixo bloqueia · achado crítico veta");
+    assert.equal(approvalLegend(under("A"), evidence), "Nota de aprovação: A · abaixo bloqueia · achado crítico veta");
+    assert.equal(approvalLegend(undefined, { ...evidence, approval_grade: "A-" }), "Nota de aprovação: A- · abaixo bloqueia · achado crítico veta");
+    assert.deepEqual(gradeCaption(under("A-"), evidence), { label: "≥ A-", title: "Tópicos com nota mínima A- ou acima; isso não substitui o gate" });
+    assert.deepEqual(gradeCaption(under("A"), evidence), { label: "≥ A", title: "Tópicos com nota mínima A ou acima; isso não substitui o gate" });
+    assert.equal(gradeCaption(undefined, { ...evidence, approval_grade: "A-" }).label, "≥ A-");
+});
+
+test("the panel source does not hard-code a pass mark again", async () => {
+    // The helpers above are only worth anything while the panel uses them; these are the forms it used to use.
+    const source = await fs.readFile(new URL("../ui/app.mjs", import.meta.url), "utf8");
+    assert.doesNotMatch(source, /indexOf\(\s*"A"\s*\)/, "the index of a literal A is a pass mark");
+    assert.doesNotMatch(source, /"A- bloqueia/, "the legend must say what the cycle's bar is");
+    assert.match(source, /gradeCount\(cycle, data\.evidence\)/);
+    assert.match(source, /approvalLegend\(cycle, shownState\.evidence\)/);
+    assert.match(source, /gradeView\(value, cycle, shownState\.evidence\)/);
+    assert.match(source, /gradeCaption\(cycle, data\.evidence\)/);
+    assert.match(source, /\$\("grade-label"\)\.textContent = caption\.label;/);
+    assert.match(source, /\$\("grade-card"\)\.title = caption\.title;/);
+    assert.equal(source.match(/\.append\(grade\([^)]*, cycle\)\)/g)?.length, 2, "both cells of the table are built from the cycle");
+    const html = await fs.readFile(new URL("../ui/index.html", import.meta.url), "utf8");
+    assert.doesNotMatch(html, /≥ A|A ou A\+/, "the page does not say which grade passes before the cycle says it");
+    assert.match(html, /id="grade-label"/);
+    assert.match(html, /id="grade-card"/);
+});
+
+test("a grade that is not on the scale never passes, even against a bar that is not on it either", () => {
+    assert.equal(meetsApproval(["A-", "A"], "Z", "Q"), false, "-1 >= -1 would pass it");
+});
+
+test("the Python bridge carries the approval grade and the executor's ceiling to the panel", async t => {
+    const f = await fixture(t);
+    await fs.writeFile(path.join(f.root, "brief.md"), `---\nswarm_id: fixture\nskill_version: "3.1.0"\nmax_cycles: 3\n---\n# Fixture\n`, "utf8");
+    const execution = path.join(f.root, "reports", "execution");
+    await fs.mkdir(execution, { recursive: true });
+    await fs.writeFile(path.join(execution, "plan.json"), JSON.stringify({
+        max_cycles: 3, approval_grade: "A-", options: { max_cycles: 6, approval_grade: "A-" },
+    }));
+    const evidence = await readEvidence(f.root);
+    assert.equal(evidence.approval_grade, "A-");
+    assert.equal(evidence.max_cycles, 6, "what a person set with --max-cycles, not the brief's");
 });
 
 test("a recovery is journaled, capped per agent and capped per execution", async t => {

@@ -258,5 +258,5 @@ correspondente, não apenas a detecção de que o hash mudou.
 A integração também altera fonte, PDF, PNG, manifesto, layout e inspeção após
 uma aprovação de fixture: gate, relatório, monitor e memória deixam de aceitá-la.
 As notas desse teste são anotações explícitas de teste, não avaliações produzidas
-pelo motor. Uma nota editorial abaixo de A continua bloqueando um PDF mecanicamente
-válido.
+pelo motor. Uma nota editorial abaixo da `approval_grade` da revisão (`A`, ou `A-` na régua
+provisória) continua bloqueando um PDF mecanicamente válido.

@@ -44,11 +44,16 @@ def parse_mcp_list(text: str) -> dict[str, list[str]]:
     """The MCP servers ``copilot mcp list`` names, by origin; empty if the text is not that listing.
 
     The listing is a few headings ("User servers:", "Plugin servers:", "Builtin servers:") with one
-    ``name (type)`` line under each.  Anything else is not trusted: an empty result means "do not prune".
+    ``name (type)`` line under each, and blank lines.  It is read whole or not at all: a line that is none of those means
+    the text is not the format read here, and acting on the part before it could stop a server the task needs (the
+    builtin servers are stopped by one flag for all of them, so a listing cut short would take the rest with it).
+    An empty result means "do not prune".
     """
     found: dict[str, list[str]] = {}
     origin = ""
     for line in text.splitlines():
+        if not line.strip():
+            continue
         heading = MCP_SECTION.match(line)
         if heading:
             origin = heading.group(1).strip().lower()
@@ -56,6 +61,8 @@ def parse_mcp_list(text: str) -> dict[str, list[str]]:
         entry = MCP_ENTRY.match(line)
         if entry and origin:
             found.setdefault(origin, []).append(entry.group(1))
+            continue
+        return {}
     return found
 
 
@@ -151,17 +158,28 @@ class CopilotCli:
             return self.mcp_found
 
     def list_mcp(self) -> dict[str, list[str]]:
-        # Listed from an empty folder, like the agents run, so that a workspace file cannot change the answer.
+        # Listed from an empty folder, like the agents run, so that a workspace file cannot change the answer.  It is a
+        # process like the agents: cancel() reaches it, and one that overruns is ended with whatever it started.
         work = tempfile.mkdtemp(prefix="docswarm-mcp-")
+        process = None
         try:
-            done = subprocess.run([*self.executable, "mcp", "list"], stdin=subprocess.DEVNULL, capture_output=True,
-                                  cwd=work, env={**os.environ, "NO_COLOR": "1", **self.environment},
-                                  timeout=MCP_LIST_TIMEOUT)
+            process = self.start([*self.executable, "mcp", "list"], work, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if process is None:
+                return {}
+            try:
+                out, _ = process.communicate(timeout=MCP_LIST_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                self.kill(process)
+                self.drain(process)
+                return {}
+            return parse_mcp_list(out.decode("utf-8", errors="replace")) if process.returncode == 0 else {}
         except (OSError, subprocess.SubprocessError):
             return {}
         finally:
+            if process is not None:
+                self.release(process)
             shutil.rmtree(work, ignore_errors=True)
-        return parse_mcp_list(done.stdout.decode("utf-8", errors="replace")) if done.returncode == 0 else {}
 
     def command(self, task: dict[str, Any], usage_file: Path | None = None,
                 mcp_servers: dict[str, list[str]] | None = None) -> list[str]:
@@ -224,6 +242,26 @@ class CopilotCli:
         except subprocess.TimeoutExpired:
             pass
 
+    def start(self, argv: list[str], work: str, **streams: Any) -> subprocess.Popen[bytes] | None:
+        """Start a process in ``work`` that ``cancel`` can stop, or None if a cancellation was already asked for.
+
+        The check and the registration are one step under the lock that ``cancel`` takes after it sets its flag, so a
+        process is either seen by ``cancel`` and stopped or never started.  Whatever can wait (the listing of the MCP
+        servers can take a minute) has to come before this call, never between the check and the registration: an agent
+        that began after the cancellation would run unwatched for as long as its timeout and its answer would be thrown away.
+        """
+        with self.guard:
+            if self.cancelled.is_set():
+                return None
+            process = subprocess.Popen(argv, cwd=work, env={**os.environ, "NO_COLOR": "1", **self.environment},
+                                       **streams, **self.group_flags())
+            self.running[process.pid] = process
+            return process
+
+    def release(self, process: subprocess.Popen[bytes]) -> None:
+        with self.guard:
+            self.running.pop(process.pid, None)
+
     def cancel(self) -> None:
         """Stop every agent that is running and refuse new ones."""
         self.cancelled.set()
@@ -249,14 +287,13 @@ class CopilotCli:
         argv = self.command(task, usage_file, self.mcp_servers())
         work = tempfile.mkdtemp(prefix="docswarm-agent-")
         try:
-            process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                       cwd=work, env={**os.environ, "NO_COLOR": "1", **self.environment},
-                                       **self.group_flags())
+            process = self.start(argv, work, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except OSError as exc:
             shutil.rmtree(work, ignore_errors=True)
             return Answer(None, {"error": f"cannot start the CLI: {type(exc).__name__}"})
-        with self.guard:
-            self.running[process.pid] = process
+        if process is None:
+            shutil.rmtree(work, ignore_errors=True)
+            return Answer(None, {"error": "cancelled"})
         try:
             try:
                 out, err = process.communicate(task["prompt"].encode("utf-8"), timeout=self.timeout)
@@ -265,8 +302,7 @@ class CopilotCli:
                 self.drain(process)
                 return Answer(None, {"error": "timeout", "seconds": round(time.monotonic() - started, 1)})
         finally:
-            with self.guard:
-                self.running.pop(process.pid, None)
+            self.release(process)
             shutil.rmtree(work, ignore_errors=True)
         runtime: dict[str, Any] = {"seconds": round(time.monotonic() - started, 1), "exit_code": process.returncode,
                                    "backend": self.name}

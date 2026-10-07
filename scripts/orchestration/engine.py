@@ -91,6 +91,9 @@ class Task:
 
 
 class Engine:
+    # What a person says to start a plan again that nobody can vouch for: stating the policy is a decision, and the journal records it.
+    RESTATE = "run the same command with --approval-grade A- or --approval-grade A"
+
     def __init__(self, swarm: Path, options: Options = Options(), clock: Callable[[], float] = time.time) -> None:
         self.root = swarm.resolve(strict=True)
         self.options = options
@@ -100,14 +103,56 @@ class Engine:
         self.lock = FileLock(self.exec / ".lock")
         self.run_lock = FileLock(self.exec / ".run.lock")
         self._loaded = False
+        # Why the plan on disk is not read, while ``init`` writes a new one for a person who stated the policy.
+        self.plan_lost: str | None = None
 
     # -- configuration -------------------------------------------------------
-    def adopt_plan_options(self) -> None:
-        """A swarm keeps the limits it was initialised with, so each call needs no flags."""
+    def read_plan(self) -> dict[str, Any] | None:
+        """The plan on disk if this executor wrote it; None for a swarm that has no plan yet.
+
+        The plan holds the policy of the run: the approval grade every topic has to reach and the ceilings a person set.
+        A plan that nobody wrote must not set them, so it counts only if its digest matches its own content and is one the
+        journal recorded when it wrote a plan.  A swarm whose journal says a plan was written and agents were paid for
+        since, and that has none now, is refused instead of being started again under the policy of a new swarm, which
+        would lower the bar by deleting a file.  Only ``init`` started by a person who states the policy (see there) gets
+        past that, and then the plan it writes is read as any other.
+        """
+        if self.plan_lost is not None:
+            return None
         path = self.exec / "plan.json"
         if not path.is_file():
+            # A swarm driven by next and record alone never had a plan, and that is not an error.  One whose journal says a
+            # plan was written, and that has paid agents since, has lost it.
+            if (self.journal.find("run_started") or self.journal.find("plan_refreshed")) and self.journal.find("task_issued"):
+                raise InputError("reports/execution/plan.json is missing, but the journal records that it was written and "
+                                 "that agents were paid for since; restore the plan from a backup, or start it again by "
+                                 f"stating the policy: {self.RESTATE}")
+            return None
+        try:
+            plan = read_json(path)
+        except (InputError, OSError, UnicodeError) as exc:
+            raise InputError(f"reports/execution/plan.json cannot be read ({exc}); restore it from a backup, or start it "
+                             f"again by stating the policy: {self.RESTATE}") from exc
+        if not isinstance(plan, dict):
+            raise InputError(f"reports/execution/plan.json is not a JSON object; restore it from a backup, or start it again "
+                             f"by stating the policy: {self.RESTATE}")
+        digest = plan.get("plan_sha256")
+        if digest != digest_json({key: value for key, value in plan.items() if key != "plan_sha256"}):
+            raise InputError("reports/execution/plan.json was edited: its digest no longer matches its content; restore it "
+                             f"from a backup, or start it again by stating the policy: {self.RESTATE}")
+        written = {item.get("plan_sha256") for name in ("run_started", "plan_refreshed")
+                   for item in self.journal.find(name)} - {None}
+        if digest not in written:
+            raise InputError("reports/execution/plan.json is not a plan this executor wrote: the journal never recorded its "
+                             f"digest; restore it from a backup, or start it again by stating the policy: {self.RESTATE}")
+        return plan
+
+    def adopt_plan_options(self) -> None:
+        """A swarm keeps the limits it was initialised with, so each call needs no flags."""
+        plan = self.read_plan()
+        if plan is None:
             return
-        stored = read_json(path).get("options", {})
+        stored = plan.get("options") if isinstance(plan.get("options"), dict) else {}
         attempts, repairs, cycles = stored.get("max_attempts"), stored.get("max_repairs"), stored.get("max_cycles")
         grade = stored.get("approval_grade")
         self.options = Options(max_attempts=attempts if type(attempts) is int and attempts >= 1 else self.options.max_attempts,
@@ -118,34 +163,30 @@ class Engine:
 
     def stored_ceiling(self) -> int | None:
         """The ceiling a person set with ``--max-cycles`` on an earlier call, which stays until another is given."""
-        path = self.exec / "plan.json"
-        plan = read_json(path) if path.is_file() else None
-        options = plan.get("options") if isinstance(plan, dict) else None
+        plan = self.read_plan()
+        options = plan.get("options") if plan else None
         value = options.get("max_cycles") if isinstance(options, dict) else None
         return value if type(value) is int and value >= 1 else None
 
     def recorded_ceiling(self) -> int | None:
         """The ceiling the plan on disk was written with, whatever set it."""
-        path = self.exec / "plan.json"
-        plan = read_json(path) if path.is_file() else None
-        value = plan.get("max_cycles") if isinstance(plan, dict) else None
+        plan = self.read_plan()
+        value = plan.get("max_cycles") if plan else None
         return value if type(value) is int and value >= 1 else None
 
     def stored_approval_grade(self) -> str | None:
         """The grade a person set with ``--approval-grade`` on an earlier call, which stays until another is given."""
-        path = self.exec / "plan.json"
-        plan = read_json(path) if path.is_file() else None
-        options = plan.get("options") if isinstance(plan, dict) else None
+        plan = self.read_plan()
+        options = plan.get("options") if plan else None
         value = options.get("approval_grade") if isinstance(options, dict) else None
         return value if value in APPROVAL_GRADES else None
 
     def recorded_approval_grade(self) -> str | None:
         """The grade the plan on disk was written under; a plan from before the field existed was written under A."""
-        path = self.exec / "plan.json"
-        if not path.is_file():
+        plan = self.read_plan()
+        if plan is None:
             return None
-        plan = read_json(path)
-        value = plan.get("approval_grade") if isinstance(plan, dict) else None
+        value = plan.get("approval_grade")
         return value if value in APPROVAL_GRADES else ORIGINAL_APPROVAL_GRADE
 
     def load(self, *, models: list[str] | None = None, strict: bool = True, adopt: bool = False) -> specs.Compiled:
@@ -291,6 +332,10 @@ class Engine:
         if attempt is None:
             return False
         events = self.journal.find("task_recorded", task_id=record["task_id"], attempt=attempt, outcome="accepted")
+        # Only what was accepted for this very identity vouches for it.  A task asked again after its inputs changed
+        # shares its id and attempt with the earlier one, and the earlier result must not vouch for a file that replaced
+        # the later one.  An entry from before the journal carried the identity has none, and vouches as it always did.
+        events = [item for item in events if item.get("inputs_sha256") in (None, record.get("inputs_sha256"))]
         digests = {item.get("accepted_sha256") for item in events} - {None}
         return bool(digests) and digest_json(record["result"]) not in digests
 
@@ -323,11 +368,25 @@ class Engine:
 
     # -- setup ---------------------------------------------------------------
     def init(self, *, models: list[str] | None = None) -> dict[str, Any]:
+        try:
+            return self.initialise(models)
+        finally:
+            self.plan_lost = None
+
+    def initialise(self, models: list[str] | None) -> dict[str, Any]:
         if type(self.options.max_attempts) is not int or self.options.max_attempts < 1 \
                 or type(self.options.max_repairs) is not int or self.options.max_repairs < 0:
             raise InputError("max_attempts must be a positive integer and max_repairs a non-negative integer")
         if self.options.max_cycles is not None and (type(self.options.max_cycles) is not int or self.options.max_cycles < 1):
             raise InputError("max_cycles must be a positive integer")
+        try:
+            self.read_plan()
+        except InputError as lost:
+            # A plan nobody can vouch for is started again only by a person who states the policy: an option on the command
+            # line is a decision, and the journal records it (plan_recovered).  Nothing the old plan said is read.
+            if self.options.approval_grade not in APPROVAL_GRADES:
+                raise
+            self.plan_lost = str(lost)
         if self.options.max_cycles is None:
             self.options = replace(self.options, max_cycles=self.stored_ceiling())
         if self.options.approval_grade is not None and self.options.approval_grade not in APPROVAL_GRADES:
@@ -353,7 +412,8 @@ class Engine:
                 "warnings": compiled.warnings,
             }
             plan["plan_sha256"] = digest_json(plan)
-            self.write_json("reports/execution/plan.json", plan)
+            # The journal is written first.  A plan is accepted only if the journal has recorded its digest, so a crash
+            # between the two writes leaves the earlier plan, which it knows, and never a plan it has not heard of.
             if previous is not None and previous != self.max_cycles:
                 # Raising the ceiling is a person's decision to keep going below the bar: it stays on the record.
                 self.journal.append("max_cycles_changed", previous=previous, current=self.max_cycles,
@@ -361,8 +421,11 @@ class Engine:
             if previous_grade is not None and previous_grade != self.approval_grade:
                 # So is a lower approval grade: the journal says from which grade to which, and when.
                 self.journal.append("approval_grade_changed", previous=previous_grade, current=self.approval_grade)
+            if self.plan_lost is not None:
+                self.journal.append("plan_recovered", reason=self.plan_lost, approval_grade=self.approval_grade)
             event = "run_started" if not self.journal.find("run_started") else "plan_refreshed"
             self.journal.append(event, plan_sha256=plan["plan_sha256"], agents=len(compiled.specs))
+            self.write_json("reports/execution/plan.json", plan)
             return {"ok": True, "plan_sha256": plan["plan_sha256"], "agents": len(compiled.specs),
                     "warnings": compiled.warnings}
 
@@ -1189,8 +1252,10 @@ class Engine:
             if parse_problem and answer:
                 # Without the answer itself there is no telling a reply that was cut off from one that was chatty.
                 # It stays in the record of the attempt, not in the journal, which holds only what the run did.
-                attempt_runtime.update(answer_head=answer[:ANSWER_EXCERPT], answer_tail=answer[-ANSWER_EXCERPT:]
-                                       if len(answer) > ANSWER_EXCERPT else "")
+                attempt_runtime.update(
+                    answer_head=contracts.readable_excerpt(answer, ANSWER_EXCERPT),
+                    answer_tail=contracts.readable_excerpt(answer[-ANSWER_EXCERPT:], ANSWER_EXCERPT)
+                    if len(answer) > ANSWER_EXCERPT else "")
             entry = {"attempt": attempt, "outcome": "accepted" if not errors else ("null" if missing else "rejected"),
                      "errors": errors, "result_sha256": digest_json(result) if storable else None,
                      "runtime": attempt_runtime}
@@ -1201,8 +1266,8 @@ class Engine:
             retry = bool(errors) and len(record["attempts"]) < self.options.max_attempts
             attested = {} if errors else {"accepted_sha256": digest_json(normal)}
             self.journal.append("task_recorded", task_id=task_id, stage=task.stage, kind=task.kind, agent=task.spec.name,
-                                cycle=task.cycle, round=task.round, attempt=attempt, outcome=entry["outcome"],
-                                errors=errors, seconds=seconds, runtime=runtime or {}, **attested)
+                                cycle=task.cycle, round=task.round, attempt=attempt, inputs_sha256=task.inputs_sha256,
+                                outcome=entry["outcome"], errors=errors, seconds=seconds, runtime=runtime or {}, **attested)
             return {"accepted": not errors, "retry": retry, "errors": errors}
 
     def task_for(self, task_id: str) -> Task | None:
@@ -1294,7 +1359,7 @@ class Engine:
     def status(self) -> dict[str, Any]:
         self.load(strict=False, adopt=True)
         events = self.journal.events()
-        issued = {(item["task_id"], item["attempt"]) for item in events if item["event"] == "task_issued"}
+        issued = {(item["task_id"], item["attempt"], item.get("inputs_sha256")) for item in events if item["event"] == "task_issued"}
         recorded = [item for item in events if item["event"] == "task_recorded"]
         return {"swarm": self.swarm_id, "problems": self.problems, "cycle": self.current_cycle(),
                 "max_cycles": self.max_cycles, "approval_grade": self.approval_grade,
@@ -1355,7 +1420,8 @@ class Engine:
         """
         try:
             with self.lock.held():
-                self.journal.append("task_started", task_id=task["task_id"], attempt=task["attempt"], agent=task["agent"])
+                self.journal.append("task_started", task_id=task["task_id"], attempt=task["attempt"], agent=task["agent"],
+                                    inputs_sha256=task.get("inputs_sha256"))
         except (InputError, OSError):
             pass
 
