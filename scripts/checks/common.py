@@ -8,7 +8,9 @@ a YAML subset and is preferable when values need escaping.
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -17,9 +19,24 @@ class InputError(ValueError):
     """Raised when a constrained review artifact cannot be decoded."""
 
 
+SCALE = ("D-", "D", "D+", "C-", "C", "C+", "B-", "B", "B+", "A-", "A", "A+")
+GRADE_INDEX = {grade: index for index, grade in enumerate(SCALE)}
+
+
+def normalize_grade(grade: Any) -> str:
+    """Return the canonical grade label, rejecting anything outside the scale."""
+    if not isinstance(grade, str) or grade.strip().upper() not in GRADE_INDEX:
+        raise InputError(f"invalid grade: {grade!r}; expected one of {', '.join(SCALE)}")
+    return grade.strip().upper()
+
+
 def load_data(path: Path) -> Any:
     """Load JSON or a deliberately small, safe YAML subset from *path*."""
-    text = path.read_text(encoding="utf-8")
+    return parse_data(path.read_text(encoding="utf-8"))
+
+
+def parse_data(text: str) -> Any:
+    """Decode a single captured document without rereading a changing file."""
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -130,7 +147,44 @@ def parse_yaml(text: str) -> Any:
     return data
 
 
+def parse_strict_json(text: str, *, name: str = "JSON") -> Any:
+    """Decode JSON while rejecting duplicate keys and non-finite numbers."""
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        seen: set[str] = set()
+        for key, _ in items:
+            if key in seen:
+                raise InputError(f"{name}: duplicate key {key!r}")
+            seen.add(key)
+        return dict(items)
+
+    def constant(literal: str) -> Any:
+        raise InputError(f"{name}: {literal} is not a finite JSON number")
+
+    try:
+        return json.loads(text, object_pairs_hook=pairs, parse_constant=constant)
+    except json.JSONDecodeError as exc:
+        raise InputError(f"{name}: invalid JSON: {exc}") from exc
+
+
 def write_json(path: Path, data: Any) -> None:
     """Write stable, readable JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def write_json_atomic(path: Path, data: Any) -> None:
+    """Publish a complete JSON file, replacing only the requested destination."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=f".{path.name}.", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(data, stream, ensure_ascii=False, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()

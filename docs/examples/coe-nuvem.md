@@ -168,3 +168,30 @@ Esses critérios entram nas notas por tópico do portão existente. Aplicá-los 
 playbook já entregue exige uma nova evolução com revisão completa, não uma
 alteração das notas ou dos relatórios históricos. Veja o
 [perfil editorial da skill](../../SKILL.md#21-perfil-editorial-técnico).
+
+## Acompanhamento visual nas novas execuções
+
+Com a extensão instalada e `monitor: true`, o painel abre depois do brief,
+antes de os autores serem criados. Os papéis de estratégia, plataforma, segurança,
+FinOps e operação aparecem conforme suas declarações são escritas.
+
+O coordenador registra cada despacho e usa o nome retornado pelo monitor na
+chamada real à ferramenta de agentes. Revisores produzem também seus JSONs
+individuais, permitindo comparar as notas sem reconstruí-las a partir do mínimo.
+Os resultados do gate ficam vinculados ao consolidado de cada ciclo.
+
+Isso não altera o relato histórico acima: estados ou notas individuais que não
+foram registrados naquela execução continuam identificados como não registrados.
+Veja o [guia do monitor](../monitor.md).
+
+Na versão 3.2, o revisor editorial designado no brief lê o documento inteiro
+antes da aprovação de cada ciclo, incluindo títulos e legendas acrescentados
+na evolução. Os novos arquivos de entrega constam em `deliverables`, e a
+avaliação registra seus hashes. A nota anterior do playbook não aprova
+automaticamente a redação da nova edição. Consulte o
+[contrato de revisão editorial](../editorial-review.md).
+
+Na orientação 3.2.2, expanda CoE no primeiro uso e apresente os níveis de
+maturidade com os nomes reais do modelo. Se códigos como N1 forem mantidos,
+defina-os no ponto de leitura e nas legendas das figuras. As chaves T01 etc.
+permanecem na matriz interna; a entrega usa nomes compreensíveis ao leitor.

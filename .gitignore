@@ -11,8 +11,10 @@
 *.bak
 *.tmp
 __pycache__/
+.venv-pdf/
 .DS_Store
 Thumbs.db
 
 # Ruído de depuração do Playwright MCP (browser console/page snapshots)
 .playwright-mcp/
+.venv-presentations/

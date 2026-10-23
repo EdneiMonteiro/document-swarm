@@ -14,7 +14,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.checks.common import InputError, load_data
-from scripts.checks.gate import evaluate
+from scripts.checks.gate import evaluate, evaluate_current
 
 
 def find_artifacts(swarm: Path, name: str) -> list[Path]:
@@ -50,6 +50,24 @@ def collect_json(paths: list[Path], artifact_name: str) -> list[dict[str, Any]]:
     return items
 
 
+def watchdog_recoveries(swarm: Path) -> list[dict[str, Any]]:
+    """Collect every recovery the watchdog recorded, so a resumed run never looks clean."""
+    found: list[dict[str, Any]] = []
+    for path in sorted((swarm / "reports" / "progress").glob("*/snapshot.json")):
+        try:
+            if path.stat().st_size > 16 * 1024 * 1024:
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError):
+            continue
+        if not isinstance(data, dict) or data.get("schema_version") != 1:
+            continue
+        for item in data.get("recoveries") or []:
+            if isinstance(item, dict):
+                found.append({**item, "execution_id": data.get("execution_id", path.parent.name)})
+    return sorted(found, key=lambda item: (str(item.get("at", "")), str(item.get("id", ""))))
+
+
 def render(swarm: Path) -> str:
     """Derive the non-narrative portion of a final report deterministically."""
     reports = swarm / "reports"
@@ -65,8 +83,8 @@ def render(swarm: Path) -> str:
     gate_results = []
     for path, review in reviews:
         try:
-            result = evaluate(review)
-        except InputError as exc:
+            result = evaluate_current(review, swarm) if path == reviews[-1][0] else evaluate(review)
+        except (InputError, OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise InputError(f"invalid review YAML {path}: {exc}") from exc
         result["artifact"] = str(path.relative_to(swarm))
         gate_results.append(result)
@@ -121,6 +139,49 @@ def render(swarm: Path) -> str:
                 ))
     else:
         lines.append("- No structured topic review found.")
+    editorial = latest.get("editorial")
+    if isinstance(editorial, dict):
+        lines += [
+            "", "### Final editorial review",
+            f"- Reviewer: {editorial['reviewer']}; scope: {editorial['scope']}; cycle: {editorial['cycle']}",
+            "- Declared review text and all delivery artifact hashes were checked.",
+            "| Surface | Grade |", "| --- | --- |",
+        ]
+        for item in editorial["surfaces"]:
+            lines.append(f"| {item['surface']} | {item.get('grade', 'not applicable')} |")
+        lines.append(f"- Findings: {json.dumps(editorial['findings'], ensure_ascii=False, sort_keys=True)}")
+        lines.append("- These records attest the declared review; semantic writing quality remains a reviewer judgment.")
+    if latest.get("presentation"):
+        block = latest["presentation"]
+        failed = {item["name"] for item in gate_results[-1]["blocked"] if item["kind"] == "presentation"}
+        lines += ["", "### Presentation delivery",
+                  f"- Capability: {block['capability']}; profile: {block['profile']}; cycle: {block['cycle']}",
+                  "- Inputs, manifest, inspections, every delivered file and each reviewer record were hash-verified.",
+                  "| Dimension | Positions | Below A |", "| --- | ---: | ---: |"]
+        counted: dict[str, list[int]] = {}
+        for row in block["reviews"]:
+            entry = counted.setdefault(row["dimension"], [0, 0])
+            entry[0] += 1
+            key = "/".join(str(part) for part in
+                           ((row["dimension"], row["topic_id"]) if "topic_id" in row
+                            else (row["dimension"], row["format"], row["page_id"])))
+            entry[1] += 1 if key in failed else 0
+        for dimension, (total, below) in sorted(counted.items()):
+            lines.append(f"| {dimension} | {total} | {below} |")
+        mechanical = sorted(name for name in failed if "/" in name and name.split("/")[0] in
+                            ("implementation", "profile", "candidate"))
+        lines.append(f"- Mechanical inspections that failed: {', '.join(mechanical) if mechanical else 'none'}")
+        lines.append("- These checks attest composition and bindings; legibility and wording remain reviewer judgments.")
+    if latest.get("pdf_inspections"):
+        failed = {item["name"] for item in gate_results[-1]["blocked"] if item["kind"] == "pdf"}
+        lines += ["", "### PDF mechanical inspections",
+                  "- Source, PDF, layout, inspection, extracted text and every preview were hash-verified.",
+                  "| PDF | Mechanical result |", "| --- | --- |"]
+        for record in latest["pdf_inspections"]:
+            name = record["pdf"]["path"].replace("\\", "/")
+            shown = name.replace("|", "\\|")
+            lines.append(f"| {shown} | {'fail' if name in failed else 'pass'} |")
+        lines.append("- Mechanical inspection does not award editorial or visual grades.")
     # Retain legacy deck sections only when the review actually contains them.
     for title, key, label in (("Final slide grades", "slides", "Slide"), ("Final deck dimensions", "deck_dimensions", "Dimension")):
         if key not in latest:
@@ -173,6 +234,18 @@ def render(swarm: Path) -> str:
                          + (f" — {result['error']}" if "error" in result else ""))
     else:
         lines.append("- No structured gate artifact found.")
+    recoveries = watchdog_recoveries(swarm)
+    lines += ["", "### Watchdog recoveries"]
+    if recoveries:
+        lines += ["- A resumed execution is not a clean execution; each row below is a step that had to be redone.",
+                  "| Execution | Cycle | Rule | Target | Attempt | Detail |", "| --- | ---: | --- | --- | ---: | --- |"]
+        for item in recoveries:
+            detail = str(item.get("detail", "")).replace("|", "\\|")
+            lines.append(f"| {str(item['execution_id'])[:8]} | {item.get('cycle', '')} | {item.get('rule', '')} "
+                         f"| {item.get('agent_id') or 'not an agent'} | {item.get('attempt', '')} | {detail} |")
+        lines.append("- Recoveries restore execution only; they never award a grade or approve delivery.")
+    else:
+        lines.append("- None recorded.")
     lines += [
         "",
         "## Coordinator narrative (complete manually)",

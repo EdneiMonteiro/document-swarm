@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Document Swarm · Monitor</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.mjs"></script>
+</head>
+<body>
+<div id="dashboard" class="dashboard">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">ds</span><strong>Document Swarm</strong></div>
+    <div class="top-actions"><span id="connection" class="connection" role="status">Conectando</span><button id="expand" type="button" aria-pressed="false" title="Usar toda a área disponível">Expandir</button></div>
+  </header>
+  <main>
+    <section class="heading">
+      <div class="title-block"><h1 id="title">Acompanhando o swarm</h1><p id="execution-label" class="eyebrow">OBSERVAÇÃO LOCAL</p><p id="subtitle" class="sr-only">Os estados aparecem quando são observados. Nenhuma nota é estimada.</p></div>
+      <details id="context-menu" class="context-menu">
+        <summary>Execução / rodada</summary>
+        <div class="selectors">
+          <label>Execução<select id="execution" aria-label="Selecionar execução"></select></label>
+          <label>Rodada<select id="cycle" aria-label="Selecionar rodada"></select></label>
+          <span id="run-status" class="muted">Preparação</span>
+          <div class="selector-actions"><button id="follow" type="button">Seguir atual</button><button id="reconnect" type="button">Reconectar</button></div>
+        </div>
+      </details>
+    </section>
+    <div id="alert" class="alert" role="alert" hidden></div>
+    <div class="summary">
+      <section class="metrics" aria-label="Resumo da execução">
+        <article title="Agentes declarados nesta execução"><span>Agentes</span><strong id="agent-count" aria-describedby="agent-note">0</strong><span id="agent-note" class="sr-only">Aguardando declarações</span></article>
+        <article title="Agentes em execução, somente quando observados"><span>Ativos</span><strong id="running-count">0</strong></article>
+        <article title="Rodada selecionada e limite da execução"><span>Rodada</span><strong id="cycle-count">Pré-ciclo</strong></article>
+        <article title="Tópicos com nota mínima A ou A+; isso não substitui o gate"><span>≥ A</span><strong id="grade-count" aria-describedby="gate-summary">Pendente</strong><span id="gate-summary" class="sr-only">Gate ainda não confirmado</span></article>
+      </section>
+      <span id="gate-badge" class="badge" role="status">Sem gate registrado</span>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Informações do monitor">
+      <button id="tab-flow" type="button" role="tab" aria-selected="true" aria-controls="view-flow" data-tab="flow">Fluxo</button>
+      <button id="tab-scores" type="button" role="tab" aria-selected="false" aria-controls="view-scores" tabindex="-1" data-tab="scores">Notas</button>
+      <button id="tab-history" type="button" role="tab" aria-selected="false" aria-controls="view-history" tabindex="-1" data-tab="history">Histórico</button>
+      <button id="tab-details" type="button" role="tab" aria-selected="false" aria-controls="view-details" tabindex="-1" data-tab="details">Detalhes</button>
+    </div>
+    <div class="workspace">
+      <section id="view-flow" class="panel graph-panel" role="tabpanel" aria-labelledby="tab-flow">
+        <div class="panel-head graph-toolbar">
+          <nav id="phases" class="phases" aria-label="Fase atual da execução"></nav>
+          <span id="session-status" class="session-state" role="status">Sessão não observada</span>
+          <label class="zoom">Zoom<input id="zoom" type="range" min="65" max="160" value="100" aria-label="Zoom do grafo"></label>
+        </div>
+        <div id="graph-container" class="graph-container" tabindex="0" aria-label="Área rolável do grafo">
+          <svg id="graph" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 704 244" role="group" aria-label="Grafo de agentes e conexões"></svg>
+        </div>
+        <div class="legend"><span><i class="planned-line"></i>Planejada</span><span><i class="observed-line"></i>Registrada</span><span class="muted">Selecione um agente para ver detalhes.</span></div>
+      </section>
+      <section id="view-scores" class="panel score-panel" role="tabpanel" aria-labelledby="tab-scores" hidden>
+        <div class="panel-head"><p id="score-note" class="muted">A nota efetiva é o mínimo, nunca a média.</p></div>
+        <div id="checks" class="checks"></div>
+        <div id="score-container" class="table-scroll" tabindex="0" aria-label="Tabela rolável de avaliações"><p class="empty">As avaliações aparecerão aqui.</p></div>
+        <div id="issues" class="issues" role="status"></div>
+      </section>
+      <section id="view-history" class="panel timeline-panel" role="tabpanel" aria-labelledby="tab-history" hidden>
+        <div class="panel-head"><h2>Eventos da rodada</h2><span class="muted">Até 100 registros recentes</span></div>
+        <ol id="timeline" class="timeline" tabindex="0" aria-label="Eventos registrados"></ol>
+      </section>
+      <section id="view-details" class="panel detail-panel" role="tabpanel" aria-labelledby="tab-details" hidden>
+        <div class="panel-head"><h2 id="detail-title">Detalhes e artefatos</h2><button id="details-back" type="button">Voltar ao fluxo</button></div>
+        <div id="details" class="details" tabindex="0"><p class="empty">Selecione um agente ou tópico. Prompts e raciocínios internos não são coletados.</p></div>
+      </section>
+    </div>
+    <footer id="footer" class="muted">Dados locais. Somente leitura.</footer>
+  </main>
+  <section id="artifact-view" class="artifact-overlay" role="dialog" aria-modal="true" aria-labelledby="artifact-title" hidden>
+    <div class="artifact-window"><div class="panel-head"><h2 id="artifact-title">Artefato</h2><button id="artifact-close" type="button">Fechar</button></div><pre id="artifact-text" tabindex="0"></pre></div>
+  </section>
+</div>
+</body>
+</html>

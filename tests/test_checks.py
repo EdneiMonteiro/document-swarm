@@ -185,6 +185,51 @@ class VerifyTablesTests(WorkTest):
         self.assertEqual(report["failures"], 1)
         self.assertIn("not numeric", report["checks"][0]["mismatches"][0]["error"])
 
+    def test_inventory_rows_match_keys_and_refs_detect_hallucinated_instances(self):
+        document = self.work / "inventory.md"
+        document.write_text(
+            '<!-- check: refs source="inv" column="Ação" pattern="apim-[a-z0-9-]+" -->\n'
+            "| Código | Ação |\n"
+            "| --- | --- |\n"
+            "| P06 | Revisar apim-sinbm-prd e apim-hab-prd |\n\n"
+            '<!-- check: rows id="inv" count=2 key=1 pattern="apim-[a-z0-9-]+" unique=true -->\n'
+            "| Instância | SKU |\n"
+            "| --- | --- |\n"
+            "| 1. apim-sinbm-prd | Premium |\n"
+            "| 2. apim-hab-prd | Premium |\n\n"
+            '<!-- check: match_keys source="inv" column=1 -->\n'
+            "| Instância | Ação |\n"
+            "| --- | --- |\n"
+            "| 1. apim-sinbm-prd | Manter |\n"
+            "| 2. apim-hab-prd | Migrar |\n",
+            encoding="utf-8",
+        )
+        passed = verify_tables.check_file(document)
+        self.assertEqual(passed["failures"], 0)
+        # Now introduce hallucinated instance names in the action plan and a key mismatch in the paired table.
+        bad = self.work / "inventory-bad.md"
+        bad.write_text(
+            '<!-- check: refs source="inv" column="Ação" pattern="apim-[a-z0-9-]+" -->\n'
+            "| Código | Ação |\n"
+            "| --- | --- |\n"
+            "| P08 | Redimensionar apim-sinbm-prd e apim-cartao-prd |\n\n"
+            '<!-- check: rows id="inv" count=2 key=1 pattern="apim-[a-z0-9-]+" unique=true -->\n'
+            "| Instância | SKU |\n"
+            "| --- | --- |\n"
+            "| 1. apim-sinbm-prd | Premium |\n"
+            "| 2. apim-hab-prd | Premium |\n\n"
+            '<!-- check: match_keys source="inv" column=1 -->\n'
+            "| Instância | Ação |\n"
+            "| --- | --- |\n"
+            "| 1. apim-sinbm-prd | Manter |\n"
+            "| 2. apim-fundos-prd | Migrar |\n",
+            encoding="utf-8",
+        )
+        failed = verify_tables.check_file(bad)
+        self.assertEqual(failed["failures"], 2)
+        self.assertEqual(failed["checks"][0]["mismatches"][0]["unknown_refs"], ["apim-cartao-prd"])
+        self.assertEqual(failed["checks"][2]["mismatches"][0]["unknown_keys"], ["apim-fundos-prd"])
+
 
 def review(grade="A", *, cycle=1, maximum=3, critical=False, slides=None, dimensions=None):
     result = {
@@ -345,6 +390,13 @@ class FinalReportTests(WorkTest):
 
 
 class LintAgentsTests(WorkTest):
+    def test_duplicate_frontmatter_fields_cannot_silently_override_contracts(self):
+        for field in ("name", "model", "editorial_guidance_version"):
+            with self.subTest(field=field):
+                text = f"---\n{field}: first\n{field}: second\n---\n"
+                with self.assertRaisesRegex(ValueError, f"duplicate frontmatter field: {field}"):
+                    lint_agents.frontmatter_text(text)
+
     def test_missing_model_and_wrong_swarm(self):
         agents = self.work / "SWARM" / "agents"
         agents.mkdir(parents=True)
@@ -452,7 +504,8 @@ class MemoryTests(WorkTest):
         ]}), encoding="utf-8")
         (swarm / "agents" / "author.md").write_text(
             "---\nname: author\nkind: author\nmodel: model-x\nrole: facts\ncontext_tier: long_context\n"
-            "reasoning_effort: high\nmodel_rationale: evidence work\nderived_from: older-agent\n---\n\n# Mission\nUseful standalone profile.\n",
+            "reasoning_effort: high\nmodel_rationale: evidence work\nderived_from: older-agent\n"
+            "editorial_guidance_version: \"3.2.1\"\n---\n\n# Mission\nUseful standalone profile.\n",
             encoding="utf-8")
         if approved:
             (swarm / "reports" / "cycle-01-review.yaml").write_text(
@@ -474,6 +527,7 @@ class MemoryTests(WorkTest):
         self.assertEqual(len(candidate["profiles"]), 1)
         self.assertIn("Useful standalone profile", candidate["profiles"][0]["summary"])
         self.assertEqual(candidate["profiles"][0]["derived_from"], "older-agent")
+        self.assertEqual(candidate["profiles"][0]["editorial_guidance_version"], "3.2.1")
         reference = update_memory.proposal(FIXTURES / "reference-swarm")
         self.assertTrue(reference["approved"])
         self.assertEqual(len(reference["sources"]), 61)
@@ -514,7 +568,7 @@ class DirectExecutionTests(WorkTest):
     def test_all_cli_help_work_from_arbitrary_cwd(self):
         outside = self.work / "arbitrary-swarm"
         outside.mkdir()
-        for name in ("verify_sources.py", "verify_tables.py", "gate.py", "final_report.py", "lint_agents.py", "update_memory.py"):
+        for name in ("verify_sources.py", "verify_tables.py", "gate.py", "final_report.py", "lint_agents.py", "update_memory.py", "inspect_nomenclature.py"):
             result = subprocess.run(
                 [sys.executable, str(ROOT / "scripts" / "checks" / name), "--help"],
                 cwd=outside, text=True, capture_output=True,
