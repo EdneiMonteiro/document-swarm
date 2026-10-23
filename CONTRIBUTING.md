@@ -22,7 +22,9 @@ changes it must:
 
 1. update `CHANGELOG.md`;
 2. keep `skill_version` semantically correct;
-3. update directly related documentation;
+3. update directly related documentation, enumerating the whole category rather
+   than the places you happen to remember: version strings, script tables,
+   output trees, agent templates, diagrams and contributor invariants;
 4. add or update a deterministic fixture when the changed behavior is
    mechanically testable;
 5. run a small end-to-end fixture swarm before merge.
@@ -33,6 +35,21 @@ changes it must:
 - Run `python3 -m unittest discover -s tests -v`.
 - Scripts assist the coordinator; they must not pretend to replace semantic
   review by authors, reviewers or the rubber duck.
+
+## Documentation
+
+- `tests/test_docs.py` enforces what used to be checked by hand: every internal
+  link and anchor resolves, every fenced block is closed, and every mermaid
+  block declares a known diagram with balanced labels.
+- Anchors follow GitHub's rule, which removes punctuation without collapsing the
+  space it leaves. An em dash therefore produces two hyphens, and renaming a
+  heading breaks every link that pointed at it.
+- These are structural checks. They prove a diagram parses as a diagram; they
+  say nothing about whether it is readable. Render a changed diagram and look at
+  it before merging: a valid flowchart can still be an unreadable column with
+  labels far from the edges they name.
+- Keep the checks honest. Each one ships with a control that plants the defect
+  it claims to catch, and a check that cannot fail is worse than no check.
 
 ## Editorial approval
 
