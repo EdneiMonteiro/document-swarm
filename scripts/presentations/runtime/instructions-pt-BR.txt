@@ -19,8 +19,8 @@ conteúdo e do mesmo plano de composição.
 
 APARÊNCIA DO POWERPOINT
 As fontes utilizadas acompanham a entrega na pasta fonts, com suas licenças.
-Para ver a aparência homologada no arquivo editável, instale essas fontes no
-sistema antes de abrir o arquivo. A instalação é uma ação sua: colocar os
+Para aproximar a tipografia do arquivo editável à renderização avaliada, instale
+essas fontes no sistema antes de abrir o arquivo. A instalação é uma ação sua: colocar os
 arquivos ao lado do PPTX não faz o PowerPoint usá-los. Sem elas, o PowerPoint
 substitui a fonte e as quebras de linha podem mudar. O arquivo fiel preserva a
 aparência por imagens e não depende dessa instalação.
