@@ -1,10 +1,13 @@
-"""Check explicitly marked arithmetic rules in Markdown tables.
+"""Check explicitly marked arithmetic and inventory rules in Markdown tables.
 
 Supported markers immediately above a table are:
 
 ``<!-- check: weighted weights=20,25,55 divisor=5 -->``
 ``<!-- check: weighted pesos=20,25,55 scale=5 -->``
-``<!-- check: sum target=100 -->`` and ``<!-- check: percent -->``.
+``<!-- check: sum target=100 -->`` and ``<!-- check: percent -->``
+``<!-- check: rows id="inventario" count=71 key=1 pattern="apimv?2?-[a-z0-9-]+" unique=true -->``
+``<!-- check: match_keys source="inventario" column=1 -->``
+``<!-- check: refs source="inventario" pattern="apimv?2?-[a-z0-9-]+" -->``.
 
 Only marked tables can fail a run.  Unmarked Total/Soma columns are reported
 as information because their intended formula is unknowable.
@@ -235,10 +238,209 @@ def sum_check(table: dict[str, Any], marker: str) -> dict[str, Any]:
             "column": headers[column], "expected": display(expected), "mismatches": mismatches}
 
 
+def resolve_column(headers: list[str], chosen: str | None, default: int | None = 0) -> int | None:
+    if chosen is None:
+        return default
+    if chosen.isdigit():
+        candidate = int(chosen) - 1
+        return candidate if 0 <= candidate < len(headers) else None
+    return next((i for i, header in enumerate(headers) if header.lower() == chosen.lower()), None)
+
+
+def extract_key(cell: str, pattern: re.Pattern[str] | None) -> str:
+    if pattern is not None:
+        match = pattern.search(cell)
+        return match.group(0).strip() if match else ""
+    return cell.strip()
+
+
+def data_rows(table: dict[str, Any]) -> list[tuple[int, list[str]]]:
+    return [
+        (number, row)
+        for number, row in enumerate(table["rows"], table["line"] + 2)
+        if not (row and re.match(r"\s*(?:total|soma)\b", row[0], re.I))
+    ]
+
+
+def rows_check(table: dict[str, Any], marker: str) -> dict[str, Any]:
+    table_id = marker_option(marker, "id")
+    count_text = marker_option(marker, "count") or marker_option(marker, "expected") or marker_option(marker, "total")
+    expected_count: int | None = None
+    if count_text is not None:
+        if not count_text.isdigit() or int(count_text) < 1:
+            return {"status": "fail", "rule": "rows", "line": table["line"], "error": "invalid row count"}
+        expected_count = int(count_text)
+    key_opt = marker_option(marker, "key") or marker_option(marker, "column") or marker_option(marker, "coluna")
+    key_col = resolve_column(table["headers"], key_opt, default=0)
+    if key_col is None:
+        return {"status": "fail", "rule": "rows", "line": table["line"], "error": f"unknown key column {key_opt!r}"}
+    pattern_text = marker_option(marker, "pattern")
+    compiled_pattern: re.Pattern[str] | None = None
+    if pattern_text is not None:
+        try:
+            compiled_pattern = re.compile(pattern_text)
+        except re.error as exc:
+            return {"status": "fail", "rule": "rows", "line": table["line"], "error": f"invalid pattern: {exc}"}
+    unique_required = (marker_option(marker, "unique") or "true").lower() == "true"
+    components = data_rows(table)
+    mismatches: list[dict[str, Any]] = []
+    keys: list[str] = []
+    seen_keys: set[str] = set()
+    for row_number, row in components:
+        if len(row) != len(table["headers"]):
+            mismatches.append({
+                "line": row_number,
+                "label": row[0] if row else "",
+                "error": f"expected {len(table['headers'])} cells, found {len(row)}",
+            })
+            continue
+        key_val = extract_key(row[key_col], compiled_pattern)
+        if unique_required:
+            if not key_val:
+                mismatches.append({"line": row_number, "label": row[key_col], "error": "empty or unmatched key cell"})
+            elif key_val.lower() in seen_keys:
+                mismatches.append({"line": row_number, "label": key_val, "error": f"duplicate key {key_val!r}"})
+            else:
+                seen_keys.add(key_val.lower())
+                keys.append(key_val)
+        elif key_val:
+            keys.append(key_val)
+    if expected_count is not None and len(components) != expected_count:
+        mismatches.append({
+            "line": table["line"],
+            "calculated_rows": str(len(components)),
+            "expected_rows": str(expected_count),
+        })
+    result: dict[str, Any] = {
+        "status": "fail" if mismatches else "pass",
+        "rule": "rows",
+        "line": table["line"],
+        "rows": len(components),
+        "keys": keys,
+        "mismatches": mismatches,
+    }
+    if table_id:
+        result["id"] = table_id
+    if pattern_text:
+        result["pattern"] = pattern_text
+    return result
+
+
+def match_keys_check(table: dict[str, Any], marker: str, registry: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    source_id = marker_option(marker, "source") or marker_option(marker, "from")
+    if not source_id or source_id not in registry:
+        return {"status": "fail", "rule": "match_keys", "line": table["line"],
+                "error": f"unknown source table id {source_id!r}"}
+    source_entry = registry[source_id]
+    col_opt = marker_option(marker, "column") or marker_option(marker, "coluna") or marker_option(marker, "key")
+    key_col = resolve_column(table["headers"], col_opt, default=0)
+    if key_col is None:
+        return {"status": "fail", "rule": "match_keys", "line": table["line"],
+                "error": f"unknown key column {col_opt!r}"}
+    pattern_text = marker_option(marker, "pattern") or source_entry.get("pattern")
+    compiled_pattern: re.Pattern[str] | None = None
+    if pattern_text is not None:
+        try:
+            compiled_pattern = re.compile(pattern_text)
+        except re.error as exc:
+            return {"status": "fail", "rule": "match_keys", "line": table["line"], "error": f"invalid pattern: {exc}"}
+    order_required = (marker_option(marker, "order") or "true").lower() == "true"
+    components = data_rows(table)
+    mismatches: list[dict[str, Any]] = []
+    actual_keys: list[str] = []
+    for row_number, row in components:
+        if len(row) != len(table["headers"]):
+            mismatches.append({
+                "line": row_number,
+                "label": row[0] if row else "",
+                "error": f"expected {len(table['headers'])} cells, found {len(row)}",
+            })
+            continue
+        key_val = extract_key(row[key_col], compiled_pattern)
+        if not key_val:
+            mismatches.append({"line": row_number, "label": row[key_col], "error": "empty or unmatched key cell"})
+        else:
+            actual_keys.append(key_val)
+    expected_keys: list[str] = source_entry.get("keys", [])
+    expected_lower = [item.lower() for item in expected_keys]
+    actual_lower = [item.lower() for item in actual_keys]
+    expected_set = set(expected_lower)
+    actual_set = set(actual_lower)
+    unknown = [actual_keys[i] for i, key in enumerate(actual_lower) if key not in expected_set]
+    missing = [expected_keys[i] for i, key in enumerate(expected_lower) if key not in actual_set]
+    if unknown:
+        mismatches.append({"line": table["line"], "unknown_keys": unknown})
+    if missing:
+        mismatches.append({"line": table["line"], "missing_keys": missing})
+    if not unknown and not missing and order_required and actual_lower != expected_lower:
+        mismatches.append({"line": table["line"], "error": f"key order differs from source {source_id!r}"})
+    return {
+        "status": "fail" if mismatches else "pass",
+        "rule": "match_keys",
+        "line": table["line"],
+        "source": source_id,
+        "mismatches": mismatches,
+    }
+
+
+def refs_check(table: dict[str, Any], marker: str, registry: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    source_id = marker_option(marker, "source") or marker_option(marker, "from")
+    if not source_id or source_id not in registry:
+        return {"status": "fail", "rule": "refs", "line": table["line"],
+                "error": f"unknown source table id {source_id!r}"}
+    source_entry = registry[source_id]
+    pattern_text = marker_option(marker, "pattern") or source_entry.get("pattern")
+    if not pattern_text:
+        return {"status": "fail", "rule": "refs", "line": table["line"], "error": "missing pattern for refs check"}
+    try:
+        compiled = re.compile(pattern_text)
+    except re.error as exc:
+        return {"status": "fail", "rule": "refs", "line": table["line"], "error": f"invalid pattern: {exc}"}
+    col_opt = marker_option(marker, "column") or marker_option(marker, "coluna")
+    if col_opt and col_opt != "*":
+        col_idx = resolve_column(table["headers"], col_opt, default=None)
+        if col_idx is None:
+            return {"status": "fail", "rule": "refs", "line": table["line"],
+                    "error": f"unknown column {col_opt!r}"}
+        columns = [col_idx]
+    else:
+        columns = list(range(len(table["headers"])))
+    valid_keys = {item.lower() for item in source_entry.get("keys", [])}
+    mismatches: list[dict[str, Any]] = []
+    for row_number, row in enumerate(table["rows"], table["line"] + 2):
+        matched = {
+            match.group(0).strip()
+            for col in columns
+            if col < len(row)
+            for match in compiled.finditer(row[col])
+            if match.group(0).strip()
+        }
+        unknown = sorted(item for item in matched if item.lower() not in valid_keys)
+        if unknown:
+            mismatches.append({"line": row_number, "label": row[0] if row else "", "unknown_refs": unknown})
+    return {
+        "status": "fail" if mismatches else "pass",
+        "rule": "refs",
+        "line": table["line"],
+        "source": source_id,
+        "mismatches": mismatches,
+    }
+
+
 def check_file(path: Path) -> dict[str, Any]:
     """Validate every marked table in a Markdown document."""
     checks: list[dict[str, Any]] = []
-    for table in parse_tables(path.read_text(encoding="utf-8")):
+    tables = parse_tables(path.read_text(encoding="utf-8"))
+    registry: dict[str, dict[str, Any]] = {}
+    precomputed_rows: dict[int, dict[str, Any]] = {}
+    for table in tables:
+        marker = table.get("marker")
+        if not table.get("orphan") and marker and re.search(r"^\s*rows\b", marker, re.I):
+            result = rows_check(table, marker)
+            precomputed_rows[table["line"]] = result
+            if result.get("id") and "keys" in result:
+                registry[result["id"]] = result
+    for table in tables:
         marker = table["marker"]
         if table.get("orphan"):
             checks.append({
@@ -247,6 +449,14 @@ def check_file(path: Path) -> dict[str, Any]:
                 "line": table["line"],
                 "error": "check marker is not followed by a Markdown table",
             })
+        elif marker and re.search(r"^\s*rows\b", marker, re.I):
+            result = dict(precomputed_rows[table["line"]])
+            result.pop("keys", None)
+            checks.append(result)
+        elif marker and re.search(r"^\s*match_keys\b", marker, re.I):
+            checks.append(match_keys_check(table, marker, registry))
+        elif marker and re.search(r"^\s*refs\b", marker, re.I):
+            checks.append(refs_check(table, marker, registry))
         elif marker and re.search(r"\bweighted\b", marker, re.I):
             checks.append(weighted_check(table, marker))
         elif marker and (re.search(r"\b(sum|percent|porcent)", marker, re.I)):

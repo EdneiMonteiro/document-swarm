@@ -59,7 +59,13 @@ No modo evolução, trabalhe sobre a pasta existente. Não crie um swarm novo.
    afirmações.
 7. **Portão duro.** Todo tópico precisa de `A` ou `A+`. Achado crítico do rubber
    duck veta a entrega.
-8. **Sem regressão.** Evoluções reavaliam tópicos antigos e novos.
+8. **Sem regressão.** Evoluções reavaliam tópicos antigos e novos. Em ciclos
+   subsequentes (`N >= 2`), edições autorais são cirúrgicas sobre os bloqueios
+   ativos, preservando seções, números e identificadores já aprovados. Uma nota
+   `>= A` não contestada pelo rubber duck no ciclo `N-1` só pode cair abaixo de `A`
+   no ciclo `N` com prova estruturada (`regression`) de regressão em texto alterado
+   ou contradição factual/cruzada; achados `minor` não derrubam nota para `A-` nem
+   bloqueiam o ciclo.
 9. **Rastreabilidade.** Cada ciclo preserva relatórios humanos e artefatos
    estruturados.
 10. **Escala explícita.** Ao atingir `max_cycles` sem aprovação, pare e informe o
@@ -768,6 +774,43 @@ O JSON do revisor indicado em `brief.editorial_reviewer` também contém um bloc
 O exemplo completo está em [docs/editorial-review.md](docs/editorial-review.md).
 Cada superfície aplicável precisa de A ou A+ e nenhum achado `blocking` pode
 permanecer, mesmo que as notas por tópico ou de diagramação sejam A.
+Quando `editorial.findings` contiver apenas achados `minor` (zero achados
+`blocking`), nenhuma superfície editorial ou tópico avaliado exclusivamente pelo
+revisor editorial pode receber nota abaixo de `A` (`minor` não bloqueia o gate).
+
+### Estabilidade entre ciclos (`regression`)
+
+Quando `cycle > 1` e o mesmo revisor já atribuiu `A` ou `A+` a um tópico ou
+superfície editorial no ciclo `N-1` sem contestação do rubber duck naquele ciclo,
+ele **não pode rebaixar** essa nota abaixo de `A` no ciclo `N` sem incluir o
+objeto `regression` no item rebaixado:
+
+```json
+{
+  "topic": "T04",
+  "grade": "B+",
+  "justification": "A reescrita da seção 8.3 introduziu generalização sem suporte.",
+  "action": "Limitar a afirmação aos recortes medidos no capítulo 6.",
+  "regression": {
+    "cause": "text_changed_regression",
+    "quote": "explicam a quase totalidade das falhas de plano de dados",
+    "previous_quote": "tratam 52,18% dos eventos 5xx de apim-sinbm-prd",
+    "evidence": "O parágrafo foi reescrito no ciclo atual e trocou o percentual medido por generalização."
+  }
+}
+```
+
+Causas válidas verificadas por `gate.py`:
+
+- `text_changed_regression`: exige `quote` presente no texto atual e
+  `previous_quote` do ciclo anterior (vazio apenas para trecho inédito),
+  recusando (`exit 3`) qualquer `quote` que já existisse inalterado em
+  `reports/cycle-0(N-1)-editorial-text.txt`;
+- `factual_or_cross_table_contradiction`: aplicável a tópicos quando houver
+  contradição factual ou entre tabelas/seções (exigindo `conflicting_quote`
+  distinto no texto atual quando apontado pelo revisor editorial). Reaberturas
+  de preferência estilística ou terminológica sobre texto inalterado são
+  recusadas pelo gate.
 
 O gate verifica presença, escopo, ciclo, correspondência com o JSON individual,
 trechos e hashes. Não calcula qualidade da escrita por palavras-chave.
@@ -821,6 +864,32 @@ parâmetros documentados em `verify_tables.py --help` quando a escala mudar.
 
 Use `<!-- check: sum column="Percentual" target=100 -->` (ou `percent`) para
 somar uma coluna. O nome pode ser substituído por índice de coluna baseado em 1.
+
+### Inventários, chaves gêmeas e referências cruzadas
+
+Para tabelas de inventário e planos de ação (evitando linhas perdidas, chaves
+fora de ordem ou nomes de recursos inventados entre ciclos):
+
+```markdown
+<!-- check: rows id="inventario" count=71 key=1 pattern="apimv?2?-[a-z0-9-]+" unique=true -->
+| Instância | SKU | Unidades |
+|---|---|---:|
+
+<!-- check: match_keys source="inventario" column=1 -->
+| Instância | Métricas (30d) | Ação |
+|---|---|---|
+
+<!-- check: refs source="inventario" column="Ação" pattern="apimv?2?-[a-z0-9-]+" -->
+| ID | Ação | Horizonte |
+|---|---|---|
+```
+
+- `rows`: valida contagem de linhas de dados (`count`), número de células por
+  linha e unicidade da chave (`key` + `pattern` opcional), registrando `id`;
+- `match_keys`: garante que outra tabela contenha exatamente as mesmas chaves
+  (e ordem, por padrão `order=true`) da tabela `source`;
+- `refs`: verifica que todo identificador casado por `pattern` na tabela pertença
+  ao conjunto de chaves da tabela `source`.
 
 Tabelas marcadas que não fecham bloqueiam o ciclo. Heurísticas em tabelas não
 marcadas são informativas e nunca substituem uma marcação explícita.
@@ -975,7 +1044,9 @@ Você é o coordenador. Para cada ciclo `N`:
 
 1. **Autores.** Despache autores independentes em paralelo, usando exatamente
    `model`, `reasoning_effort` e `context_tier` confirmados. No ciclo seguinte,
-   envie somente tópicos bloqueados e achados obrigatórios.
+   envie somente tópicos bloqueados e achados obrigatórios; instrua edição
+   cirúrgica restrita aos trechos/células bloqueados, preservando intactos os
+   parágrafos, contagens e identificadores já aprovados.
    No monitor, publique `authors` com o ciclo real e registre cada despacho
    antes de chamar `task`, usando o `task_name` retornado.
 2. **Consolidação.** Monte `output/<doc>.md`, atualize

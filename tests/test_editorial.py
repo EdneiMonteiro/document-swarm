@@ -384,3 +384,98 @@ class EditorialTests(unittest.TestCase):
                     result = gate.evaluate_current(data, self.root)
                     expected = "approved" if gate.GRADE_INDEX[item["grade"]] >= gate.GRADE_INDEX["A"] else "rejected"
                     self.assertEqual(result["outcome"], expected)
+
+    def test_minor_only_findings_cannot_block_surfaces_or_topics(self):
+        data = self.cycle()
+        data["editorial"]["findings"] = [{
+            "severity": "minor",
+            "location": "Seção 8.3",
+            "quote": "Não altere produção sem essa validação.",
+            "reason": "O parágrafo pode ser dividido em frases menores para leitura rápida.",
+            "action": "Dividir o parágrafo em duas frases.",
+        }]
+        data["editorial"]["surfaces"][-1]["grade"] = "A-"
+        data["editorial"]["surfaces"][-1]["action"] = "Dividir o parágrafo."
+        self.save(data)
+        with self.assertRaises(InputError):
+            gate.evaluate_current(data, self.root)
+        # Even if surfaces are A, the editorial reviewer cannot drop a topic to A- with only minor findings.
+        data = self.cycle()
+        data["editorial"]["findings"] = [{
+            "severity": "minor",
+            "location": "Seção 8.3",
+            "quote": "Não altere produção sem essa validação.",
+            "reason": "Sugestão estilística menor.",
+            "action": "Opcionalmente dividir a frase.",
+        }]
+        data["topics"][0]["nota_minima"] = "A-"
+        data["topics"][0]["bloqueia"] = True
+        self.save(data, reviewer=False)
+        report = {
+            "schema_version": 1, "cycle": 1, "reviewer": "reviewer-01-clarity",
+            "topics": [{"topic": "T01", "grade": "A-", "justification": "Densidade menor.", "action": "Dividir frase."}],
+            "editorial": data["editorial"],
+        }
+        (self.root / "reports" / "cycle-01-reviewer-01-clarity.json").write_text(
+            json.dumps(report, ensure_ascii=False), encoding="utf-8"
+        )
+        with self.assertRaises(InputError):
+            gate.evaluate_current(data, self.root)
+
+    def test_unchanged_text_cannot_be_downgraded_from_a_without_valid_regression_proof(self):
+        first = self.cycle(1)
+        self.assertEqual(gate.evaluate_current(first, self.root)["outcome"], "approved")
+        # Cycle 2 keeps the exact same text and tries to lower T01 from A to A- without a regression block.
+        second = self.cycle(2)
+        second["topics"][0]["nota_minima"] = "A-"
+        second["topics"][0]["bloqueia"] = True
+        self.save(second, reviewer=False)
+        report = {
+            "schema_version": 1, "cycle": 2, "reviewer": "reviewer-01-clarity",
+            "topics": [{
+                "topic": "T01", "grade": "A-",
+                "justification": "Releitura passou a rejeitar termo antes aceito.",
+                "action": "Trocar termo.",
+            }],
+            "editorial": second["editorial"],
+        }
+        (self.root / "reports" / "cycle-02-reviewer-01-clarity.json").write_text(
+            json.dumps(report, ensure_ascii=False), encoding="utf-8"
+        )
+        with self.assertRaises(InputError):
+            gate.evaluate_current(second, self.root)
+        # Claiming text_changed_regression on a quote that already existed verbatim in cycle 1 also fails.
+        report["topics"][0]["regression"] = {
+            "cause": "text_changed_regression",
+            "quote": "O estudo compara capacidade alocável",
+            "previous_quote": "Texto diferente",
+            "evidence": "Alega mudança em frase que já existia idêntica no ciclo 1.",
+        }
+        (self.root / "reports" / "cycle-02-reviewer-01-clarity.json").write_text(
+            json.dumps(report, ensure_ascii=False), encoding="utf-8"
+        )
+        with self.assertRaises(InputError):
+            gate.evaluate_current(second, self.root)
+        # When cycle 2 genuinely introduces a new problematic sentence, text_changed_regression succeeds and rejects cleanly.
+        document = self.root / "output" / "document.md"
+        frozen = self.root / "reports" / "cycle-02-editorial-text.txt"
+        mutated = document.read_text(encoding="utf-8") + "\nDesvios pontuais explicam a quase totalidade das falhas.\n"
+        document.write_text(mutated, encoding="utf-8")
+        frozen.write_text(mutated, encoding="utf-8")
+        second["editorial"]["text"] = self.descriptor(frozen)
+        second["editorial"]["artifacts"] = [self.descriptor(document)]
+        report["editorial"] = second["editorial"]
+        report["topics"][0]["regression"] = {
+            "cause": "text_changed_regression",
+            "quote": "Desvios pontuais explicam a quase totalidade das falhas.",
+            "previous_quote": "Não altere produção sem essa validação.",
+            "evidence": "O parágrafo novo no ciclo 2 generaliza sem respaldo nas medições.",
+        }
+        self.save(second, reviewer=False)
+        (self.root / "reports" / "cycle-02-reviewer-01-clarity.json").write_text(
+            json.dumps(report, ensure_ascii=False), encoding="utf-8"
+        )
+        result = gate.evaluate_current(second, self.root)
+        self.assertEqual(result["outcome"], "rejected")
+        self.assertEqual(result["blocked"][0]["name"], "T01")
+

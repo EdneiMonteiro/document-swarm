@@ -7,8 +7,24 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
 ## [Unreleased]
 
+### Added
+
+- Cross-cycle grade stability in `gate.py`: lowering a topic or editorial
+  surface that the same reviewer already graded `A` or `A+` in cycle `N-1`
+  (without a rubber-duck challenge in cycle `N-1`) now requires a verified
+  `regression` block (`text_changed_regression` or
+  `factual_or_cross_table_contradiction`) proving either that the cited quote
+  changed in cycle `N` or that a factual/cross-table contradiction exists.
+- Deterministic inventory and reference checks in `verify_tables.py`:
+  `rows`, `match_keys` and `refs` validate row counts, primary-key uniqueness,
+  key-sequence parity across paired tables and canonical entity references in
+  action plans before reviewers are dispatched.
+
 ### Fixed
 
+- Reject (`exit 3`) incoherent editorial reviews that record only `minor`
+  findings (zero `blocking` findings) while assigning blocking grades (`< A`)
+  to editorial surfaces or topics.
 - Preserve native Space activation on focused presentation controls, scope the
   position counter to support pages, and prevent delayed dialog-close events
   from undoing subsequent navigation.

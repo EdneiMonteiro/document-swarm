@@ -258,7 +258,15 @@ Achados não resolvidos também entram em `findings`:
 ```
 
 Um achado `blocking` impede aprovação mesmo que alguém tenha deixado notas A
-nas superfícies. Melhorias genuinamente menores usam `severity: minor`.
+nas superfícies. Melhorias genuinamente menores usam `severity: minor` e não
+podem reduzir a nota de uma superfície ou tópico para abaixo de `A`: quando
+todos os achados de `findings` forem `minor`, atribuir `A-` ou menos é inválido
+(`exit 3`). Da mesma forma, no ciclo `N > 1`, rebaixar um tópico ou superfície
+que já tinha `A`/`A+` do mesmo revisor no ciclo `N-1` (sem contestação do
+rubber duck) exige o bloco `regression` com `cause`
+(`text_changed_regression` ou `factual_or_cross_table_contradiction`), `quote`,
+`previous_quote` (ou `conflicting_quote`) e `evidence`. Reabrir texto inalterado
+por preferência estilística ou terminológica é recusado pelo gate.
 A nota editorial deve refletir redação; cor, fonte, margem e alinhamento são
 assuntos da avaliação visual.
 
