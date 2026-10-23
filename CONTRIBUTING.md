@@ -113,3 +113,27 @@ See [the presentation guide](./docs/presentations.md).
   destinations or replace unrelated user directories.
 
 See [monitor architecture and development](./docs/monitor.md).
+
+## Execution watchdog
+
+- Stall detection belongs to the extension process, outside the agent loop; a
+  wedged loop would never run a scheduled prompt, so nothing inside the session
+  can be the only detector.
+- The age of the newest observation decides the state; the session label only
+  explains it. Never report `active` because the label says `processing`.
+- An absent measurement is reported as not observed. Do not substitute a
+  plausible value, and do not trust a `health.json` the extension stopped
+  refreshing.
+- `health.py` and `resume.py` are stdlib-only projections that must never write
+  into the swarm, assign a grade, close a cycle or approve delivery.
+- Recovery ceilings are enforced by the extension, not by prose: two per agent
+  per cycle and six per execution. Exceeding one must be an explicit error.
+- Every recovery is journaled and surfaced in `final-report.md`. A resumed
+  execution must never look like a clean execution.
+- `resume.py` follows the cycle contract in `SKILL.md`. Changing that contract
+  requires changing `resume.py`, and `MONITOR_PHASES` must keep matching the
+  extension's `PHASES`.
+- Run `python -m unittest tests.test_watchdog -v`, including the stall fixtures,
+  the ceiling cases and the negative controls.
+
+See [execution health and resume](./docs/monitor.md#saúde-da-execução-e-retomada).

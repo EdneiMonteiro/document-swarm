@@ -293,6 +293,8 @@ biblioteca padrão do Python.
 | `lint_agents.py` | Valida frontmatter, modelo declarado e swarm do agente. |
 | `gate.py` | Aplica a régua, o veto crítico, o limite de ciclos e o contrato editorial da entrega. |
 | `progress.py` | Projeta os artefatos para o monitor, sem modificá-los ou aprovar conteúdo. |
+| `health.py` | Compõe a tabela de saúde da execução a partir de medições; diz "não observado" em vez de inventar. |
+| `resume.py` | Projeta o próximo passo determinístico e grava `resume.json` vinculado a hashes. |
 | `inspect_nomenclature.py` | Lista candidatos a siglas/códigos e suas ocorrências, sem avaliar significado ou dar nota. |
 | `final_report.py` | Deriva os fatos do relatório final dos artefatos estruturados. |
 | `update_memory.py` | Propõe e, após aprovação explícita, atualiza a memória. |
@@ -305,6 +307,7 @@ Detalhes operacionais, formatos e exit codes:
 - [Evidência e cache](./SKILL.md#7-evidência-e-cache-de-fontes)
 - [Tabelas auditáveis](./SKILL.md#8-tabelas-auditáveis)
 - [Loop determinístico](./SKILL.md#fase-3--loop-determinístico-por-ciclo)
+- [Vigia de saúde e retomada](./SKILL.md#26-vigia-de-saúde-e-retomada)
 - [Referência dos scripts](./SKILL.md#14-referência-dos-scripts-determinísticos)
 
 ## Estrutura de uma execução
@@ -323,6 +326,10 @@ Detalhes operacionais, formatos e exit codes:
 │  ├─ cycle-0N-gate.json
 │  ├─ cycle-0N-tables-check.json
 │  ├─ progress/<execution_id>/
+│  │  ├─ snapshot.json
+│  │  ├─ events.jsonl
+│  │  └─ health.json
+│  ├─ resume.json
 │  └─ final-report.md
 ├─ sources/
 │  ├─ sources-index.md
