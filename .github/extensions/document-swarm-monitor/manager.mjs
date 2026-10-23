@@ -4,7 +4,7 @@ import { watch, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { RunStore, assertText, history, readHistorical } from "./state.mjs";
+import { RunStore, INACTIVITY_THRESHOLD, assertText, history, readHistorical } from "./state.mjs";
 import { createMonitorServer } from "./server.mjs";
 import { canvasWindowTitle, createCanvasWindow } from "./window.mjs";
 
@@ -71,12 +71,15 @@ export async function openBrowser(url) {
 }
 
 export class MonitorManager {
-    constructor({ getSession, log, reader = readEvidence, browser = openBrowser, windowFactory = createCanvasWindow }) {
+    constructor({ getSession, log, reader = readEvidence, browser = openBrowser, windowFactory = createCanvasWindow,
+                  threshold = INACTIVITY_THRESHOLD, heartbeat = 15000 }) {
         this.getSession = getSession;
         this.log = log;
         this.reader = reader;
         this.browser = browser;
         this.windowFactory = windowFactory;
+        this.threshold = threshold;
+        this.heartbeat = heartbeat;
         this.runs = new Map();
         this.starting = new Map();
         this.runtimeQueue = Promise.resolve();
@@ -106,7 +109,9 @@ export class MonitorManager {
             session_activity: state.session_activity ?? null,
             closure: state.closure ?? null,
             connected: entry.server.connected, surface: entry.surface, historical: entry.readOnly || TERMINAL.has(state.status),
-            warnings: [...state.evidence.warnings, ...(state.health_error ? [state.health_error] : [])],
+            health: state.health ?? null,
+            recoveries: (state.recoveries ?? []).map(item => ({ rule: item.rule, agent_id: item.agent_id, cycle: item.cycle, attempt: item.attempt })),
+            warnings: [...state.evidence.warnings, ...(state.reader_error ? [state.reader_error] : [])],
         };
     }
 
@@ -144,7 +149,7 @@ export class MonitorManager {
             store.publicState = store.state;
         } else {
             store = await RunStore.create(root, { sessionId, evidence, executionId: id });
-            store.on("health", error => this.warn(`store:${store.state.execution_id}:${error}`, `Monitor: ${error}. O fluxo documental pode continuar no terminal.`));
+            store.on("reader", error => this.warn(`store:${store.state.execution_id}:${error}`, `Monitor: ${error}. O fluxo documental pode continuar no terminal.`));
         }
         let server;
         try {
@@ -157,7 +162,7 @@ export class MonitorManager {
             store, server, readOnly, instanceId: `run-${store.state.execution_id}`,
             canvasTitle: canvasWindowTitle(store.state.title, store.state.execution_id),
             canvasUrl: null,
-            watcher: null, refreshTimer: null, refreshing: null, refreshQueued: false, surface: "not_opened",
+            watcher: null, refreshTimer: null, healthTimer: null, refreshing: null, refreshQueued: false, surface: "not_opened",
             openAttempted: false, browserOpened: false, viewerClosed: false,
         };
         this.runs.set(store.state.execution_id, entry);
@@ -185,14 +190,31 @@ export class MonitorManager {
                 }
             }
             await this.reconcile();
+            await this.beat(entry);
         }
         if (autoOpen) await this.present(entry, "auto");
         return this.info(entry);
     }
 
+    beat(entry) {
+        if (entry.readOnly || entry.healthTimer) return;
+        const publish = () => entry.store.publishHealth({ threshold: this.threshold })
+            .catch(error => this.warn(`health:${error.message}`, `Monitor: não foi possível publicar a saúde da execução: ${error.message}`));
+        entry.healthTimer = setInterval(() => {
+            if (this.stopping || TERMINAL.has(entry.store.state.status)) {
+                clearInterval(entry.healthTimer);
+                entry.healthTimer = null;
+                return;
+            }
+            publish();
+        }, this.heartbeat);
+        entry.healthTimer.unref?.();
+        return publish();
+    }
+
     reportReadError(entry, error) {
-        entry.store.healthError = error.message;
-        entry.store.emit("health", error.message);
+        entry.store.readerError = error.message;
+        entry.store.emit("reader", error.message);
         this.warn(`read:${entry.store.state.execution_id}:${error.message}`, `Monitor: dados indisponíveis ou desatualizados (${error.message}).`);
     }
 
@@ -206,10 +228,10 @@ export class MonitorManager {
                 const evidence = await this.reader(entry.store.root);
                 if (this.stopping || TERMINAL.has(entry.store.state.status)) return;
                 await entry.store.updateEvidence(evidence);
-                if (entry.store.healthError) {
+                if (entry.store.readerError) {
                     await entry.store.repairSnapshot();
-                    entry.store.healthError = null;
-                    entry.store.emit("health", null);
+                    entry.store.readerError = null;
+                    entry.store.emit("reader", null);
                 }
                 if (!entry.refreshQueued) break;
             }
@@ -236,7 +258,10 @@ export class MonitorManager {
                     await entry.store.observe(event);
                     if (TERMINAL.has(entry.store.state.status)) {
                         clearTimeout(entry.refreshTimer);
+                        clearInterval(entry.healthTimer);
+                        entry.healthTimer = null;
                         entry.watcher?.close();
+                        await entry.store.publishHealth({ threshold: this.threshold }).catch(() => {});
                     }
                     if (event.type === "tool.execution_complete" && event.data?.success === false) {
                         await entry.store.record("runtime", state => {
@@ -354,7 +379,14 @@ export class MonitorManager {
             await this.present(entry, args.surface ?? "auto", true);
             return this.info(entry);
         }
-        if (args.operation === "status") return this.info(entry);
+        if (args.operation === "status") {
+            // The watchdog asks for status; an answer up to one heartbeat old would hide a fresh stall.
+            if (!entry.readOnly && !TERMINAL.has(entry.store.state.status)) {
+                await entry.store.publishHealth({ threshold: this.threshold })
+                    .catch(error => this.warn(`health:${error.message}`, `Monitor: não foi possível medir a saúde da execução: ${error.message}`));
+            }
+            return this.info(entry);
+        }
         if (entry.readOnly || TERMINAL.has(entry.store.state.status)) throw new Error("Execução histórica: apenas consulta e abertura são permitidas.");
         if (args.operation === "refresh") await this.refresh(entry);
         else if (args.operation === "phase") {
@@ -369,6 +401,12 @@ export class MonitorManager {
                 from: assertText(args.from, "from"), to: assertText(args.to, "to"),
                 label: assertText(args.label, "label", 500), cycle: entry.store.state.cycle,
             });
+        } else if (args.operation === "recovery") {
+            await entry.store.record("recovery", {
+                rule: args.rule, agent_id: args.agent_id ? assertText(args.agent_id, "agent_id") : null,
+                cycle: Number.isSafeInteger(args.cycle) ? args.cycle : entry.store.state.cycle,
+                detail: assertText(args.detail, "detail", 500),
+            });
         } else if (args.operation === "finish") {
             await this.refresh(entry);
             await entry.store.record("finish", { status: args.status, await_runtime_idle: true });
@@ -381,6 +419,8 @@ export class MonitorManager {
         await this.runtimeQueue;
         for (const entry of this.runs.values()) {
             clearTimeout(entry.refreshTimer);
+            clearInterval(entry.healthTimer);
+            entry.healthTimer = null;
             entry.watcher?.close();
             try {
                 if (entry.refreshing) await entry.refreshing;

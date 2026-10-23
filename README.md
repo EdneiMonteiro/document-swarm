@@ -14,7 +14,7 @@ de notas e relatório final.
 
 > **Fonte da verdade:** [`SKILL.md`](./SKILL.md)
 >
-> **Versão atual:** `3.4.0`
+> **Versão atual:** `3.5.0`
 >
 > **Histórico:** [`CHANGELOG.md`](./CHANGELOG.md)
 
@@ -150,6 +150,33 @@ pelo coordenador aguarda a confirmação de ociosidade da sessão.
 Use `monitor: false` no brief ou peça uma execução sem monitor para não abrir o
 painel. Falhas da interface são avisadas e não alteram os critérios de qualidade.
 Veja [uso, arquitetura, segurança e diagnóstico](./docs/monitor.md).
+
+## Vigia de saúde e retomada
+
+Uma execução pode parar sem aviso. A extensão mede continuamente a idade da
+observação mais recente, fora do laço do agente, e publica
+`reports/progress/<id>/health.json`. Um terminal congelado reportando
+"processando" é classificado como parado, porque a medida decide e o rótulo
+apenas explica.
+
+```powershell
+python .\scripts\checks\health.py <pasta-do-swarm> --threshold 180
+python .\scripts\checks\resume.py <pasta-do-swarm> --check reports\resume.json
+```
+
+`health.py` publica a tabela no terminal; `resume.py` projeta o próximo passo
+determinístico e grava um registro durável com os hashes que o sustentam. Em uma
+sessão nova, um artefato alterado força recálculo em vez de confiança no registro.
+
+O coordenador arma um prompt agendado a cada 5 minutos, que imprime a tabela e,
+só quando o estado é `stalled`, executa uma recuperação do catálogo R1–R5. Cada
+recuperação é registrada e aparece no relatório final. Tetos: uma ação por tique,
+duas por agente por ciclo, seis por execução.
+
+O vigia recupera execução, nunca qualidade: não atribui nota, não pula revisor ou
+rubber duck e não aprova entrega. Se o laço do agente estiver travado, nenhum
+prompt agendado executa; a detecção continua e a retomada acontece na sessão
+seguinte. Detalhes no [guia do monitor](./docs/monitor.md#saúde-da-execução-e-retomada).
 
 ## PDFs profissionais
 

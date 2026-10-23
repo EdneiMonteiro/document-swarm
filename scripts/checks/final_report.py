@@ -50,6 +50,24 @@ def collect_json(paths: list[Path], artifact_name: str) -> list[dict[str, Any]]:
     return items
 
 
+def watchdog_recoveries(swarm: Path) -> list[dict[str, Any]]:
+    """Collect every recovery the watchdog recorded, so a resumed run never looks clean."""
+    found: list[dict[str, Any]] = []
+    for path in sorted((swarm / "reports" / "progress").glob("*/snapshot.json")):
+        try:
+            if path.stat().st_size > 16 * 1024 * 1024:
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError):
+            continue
+        if not isinstance(data, dict) or data.get("schema_version") != 1:
+            continue
+        for item in data.get("recoveries") or []:
+            if isinstance(item, dict):
+                found.append({**item, "execution_id": data.get("execution_id", path.parent.name)})
+    return sorted(found, key=lambda item: (str(item.get("at", "")), str(item.get("id", ""))))
+
+
 def render(swarm: Path) -> str:
     """Derive the non-narrative portion of a final report deterministically."""
     reports = swarm / "reports"
@@ -216,6 +234,18 @@ def render(swarm: Path) -> str:
                          + (f" — {result['error']}" if "error" in result else ""))
     else:
         lines.append("- No structured gate artifact found.")
+    recoveries = watchdog_recoveries(swarm)
+    lines += ["", "### Watchdog recoveries"]
+    if recoveries:
+        lines += ["- A resumed execution is not a clean execution; each row below is a step that had to be redone.",
+                  "| Execution | Cycle | Rule | Target | Attempt | Detail |", "| --- | ---: | --- | --- | ---: | --- |"]
+        for item in recoveries:
+            detail = str(item.get("detail", "")).replace("|", "\\|")
+            lines.append(f"| {str(item['execution_id'])[:8]} | {item.get('cycle', '')} | {item.get('rule', '')} "
+                         f"| {item.get('agent_id') or 'not an agent'} | {item.get('attempt', '')} | {detail} |")
+        lines.append("- Recoveries restore execution only; they never award a grade or approve delivery.")
+    else:
+        lines.append("- None recorded.")
     lines += [
         "",
         "## Coordinator narrative (complete manually)",

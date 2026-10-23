@@ -4,12 +4,12 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { RunStore, history, readHistorical } from "../state.mjs";
+import { RunStore, history, readHistorical, vitality } from "../state.mjs";
 import { createMonitorServer, readArtifact } from "../server.mjs";
 import { MonitorManager, readEvidence } from "../manager.mjs";
 import { yieldsToProject } from "../ownership.mjs";
 import { canvasWindowTitle, createCanvasWindow } from "../window.mjs";
-import { AGENT_STATUS, archived, agentStatus, dispatchStatus, sessionLabel } from "../ui/app.mjs";
+import { AGENT_STATUS, archived, agentStatus, dispatchStatus, healthLabel, sessionLabel } from "../ui/app.mjs";
 
 const digest = value => createHash("sha256").update(value).digest("hex");
 async function fixture(t) {
@@ -130,7 +130,7 @@ test("a failed snapshot publication cannot reuse sequence numbers or lose its jo
     const before = store.state.sequence;
     await assert.rejects(store.phase("authors", 1));
     assert.equal(store.state.sequence, before + 1);
-    assert.ok(store.healthError);
+    assert.ok(store.readerError);
     await fs.rmdir(file);
     await store.repairSnapshot();
     await store.phase("reviews", 1);
@@ -504,4 +504,138 @@ test("legacy finish records stay historical and stale idle events cannot settle 
     const before = new Date(Date.parse(store.state.closure.requested_at) - 1).toISOString();
     await store.observe(native("session.idle", {}, { agentId: null, at: before }));
     assert.equal(store.state.status, "closing");
+});
+
+
+test("a session frozen on processing is measured as stalled, not as activity", async t => {
+    const f = await fixture(t);
+    const store = await RunStore.create(f.root, { sessionId: "session", evidence: f.evidence });
+    f.resources.push(store);
+    await spawned(store);
+    await store.observe(native("assistant.turn_start", {}, { agentId: null }));
+    const at = Date.parse(store.state.updated_at);
+    assert.equal(vitality(store.state, { threshold: 180, at: at + 60000 }).state, "active");
+    const running = vitality(store.state, { threshold: 180, at: at + 400000 });
+    assert.equal(running.state, "active", "a dispatch still running earns grace inside three thresholds");
+    const wedged = vitality(store.state, { threshold: 180, at: at + 900000 });
+    assert.equal(wedged.state, "stalled");
+    assert.equal(wedged.session_activity.status, "processing");
+    assert.ok(wedged.inactive_seconds > 540);
+    assert.ok(wedged.reason.includes("triplo"));
+});
+
+test("a registered dispatch that was never called is stalled once the threshold passes", async t => {
+    const f = await fixture(t);
+    const store = await RunStore.create(f.root, { sessionId: "session", evidence: f.evidence });
+    f.resources.push(store);
+    await store.phase("authors", 1);
+    await store.prepareDispatch("author-01", 1);
+    const at = Date.parse(store.state.updated_at);
+    assert.equal(vitality(store.state, { threshold: 180, at: at + 60000 }).state, "waiting");
+    const stalled = vitality(store.state, { threshold: 180, at: at + 300000 });
+    assert.equal(stalled.state, "stalled");
+    assert.equal(stalled.dispatches.queued, 1);
+    assert.equal(stalled.dispatches.running, 0);
+    assert.ok(stalled.last_progress_signal.includes("author-01"));
+});
+
+test("a lost connection is never published as activity and health reaches disk", async t => {
+    const f = await fixture(t);
+    const store = await RunStore.create(f.root, { sessionId: "session", evidence: f.evidence });
+    f.resources.push(store);
+    await spawned(store);
+    const published = await store.publishHealth({ threshold: 180 });
+    assert.equal(published.schema_version, 1);
+    assert.equal(published.state, "waiting");
+    const file = JSON.parse(await fs.readFile(path.join(store.directory, "health.json"), "utf8"));
+    assert.deepEqual(file, published);
+    assert.equal(store.publicState.health.state, "waiting");
+    await store.record("connection", { connection: "disconnected" }, "observer");
+    const lost = vitality(store.state, { threshold: 180 });
+    assert.equal(lost.state, "unobserved");
+    assert.notEqual(lost.state, "active");
+});
+
+test("the heartbeat keeps publishing health outside the agent loop and stops at closure", async t => {
+    const f = await fixture(t);
+    const session = { getEvents: async () => [], rpc: { tasks: { list: async () => ({ tasks: [] }) } } };
+    const manager = new MonitorManager({
+        getSession: () => session, reader: async () => f.evidence, log: () => {},
+        browser: async () => {}, heartbeat: 20, threshold: 180,
+    });
+    t.after(() => manager.shutdown());
+    const info = await manager.start(f.root, { sessionId: "session", autoOpen: false });
+    assert.equal(info.health.state, "waiting", "a fresh execution with no session signal is waiting, not active");
+    const entry = manager.entry(info.execution_id);
+    const file = path.join(entry.store.directory, "health.json");
+    const first = JSON.parse(await fs.readFile(file, "utf8"));
+    await entry.store.observe(native("assistant.turn_start", {}, { agentId: null }));
+    for (let attempt = 0; attempt < 100 && JSON.parse(await fs.readFile(file, "utf8")).state === first.state; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(JSON.parse(await fs.readFile(file, "utf8")).state, "active", "the heartbeat republishes without any agent turn");
+    await entry.store.record("finish", { status: "completed" }, "coordinator");
+    for (let attempt = 0; attempt < 100 && entry.healthTimer; attempt++) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(entry.healthTimer, null, "the heartbeat stops itself once the execution is terminal");
+    assert.equal((await entry.store.publishHealth({ threshold: 180 })).state, "closed");
+});
+
+
+test("the panel shows a stall instead of a comfortable session label", async t => {
+    const base = {
+        status: "active", connection: "connected", cycle: 1, phase: "reviews",
+        session_activity: { status: "processing", observed_at: new Date().toISOString(), stale: false },
+        evidence: { cycles: [] }, dispatches: [], agents: [],
+    };
+    assert.equal(healthLabel(base, 1, true), null);
+    assert.equal(sessionLabel(base, 1, true), "Sessão processando");
+    const stalled = { ...base, health: { state: "stalled", reason: "nada observado há 900 s" } };
+    assert.equal(healthLabel(stalled, 1, true).title, "Execução parada");
+    assert.ok(healthLabel(stalled, 1, true).detail.includes("900 s"));
+    assert.equal(sessionLabel(stalled, 1, true), "Sessão processando", "the raw label stays raw; the stall is reported beside it");
+    assert.equal(healthLabel(stalled, 1, false), null, "a disconnected panel claims nothing about the session");
+    assert.equal(healthLabel({ ...base, health: { state: "active", reason: "ok" } }, 1, true), null);
+});
+
+test("a recovery is journaled, capped per agent and capped per execution", async t => {
+    const f = await fixture(t);
+    const store = await RunStore.create(f.root, { sessionId: "session", evidence: f.evidence });
+    f.resources.push(store);
+    await spawned(store);
+    await store.record("recovery", { rule: "R1", agent_id: "author-01", cycle: 1, detail: "despacho sem chamada real" });
+    await store.record("recovery", { rule: "R1", agent_id: "author-01", cycle: 1, detail: "segunda tentativa" });
+    assert.deepEqual(store.state.recoveries.map(item => item.attempt), [1, 2]);
+    await assert.rejects(store.record("recovery", { rule: "R1", agent_id: "author-01", cycle: 1, detail: "terceira" }),
+        /ceiling reached for author-01/);
+    await assert.rejects(store.record("recovery", { rule: "R9", agent_id: "author-01", cycle: 1, detail: "regra inventada" }),
+        /Unknown recovery rule/);
+    await assert.rejects(store.record("recovery", { rule: "R1", agent_id: "ghost", cycle: 1, detail: "agente inexistente" }),
+        /not a declared agent/);
+    for (let extra = 0; extra < 4; extra++) {
+        await store.record("recovery", { rule: "R4", agent_id: null, cycle: 1, detail: `check ${extra}` });
+    }
+    assert.equal(store.state.recoveries.length, 6);
+    await assert.rejects(store.record("recovery", { rule: "R4", agent_id: null, cycle: 1, detail: "sétima" }),
+        /ceiling reached for this execution/);
+    const journal = await fs.readFile(path.join(store.directory, "events.jsonl"), "utf8");
+    assert.equal(journal.split("\n").filter(line => line.includes('"type":"recovery"')).length, 6);
+    assert.ok(!journal.includes("sétima"));
+});
+
+
+test("status measures health at the moment it is asked, not at the last heartbeat", async t => {
+    const f = await fixture(t);
+    const session = { getEvents: async () => [], rpc: { tasks: { list: async () => ({ tasks: [] }) } } };
+    const manager = new MonitorManager({
+        getSession: () => session, reader: async () => f.evidence, log: () => {},
+        browser: async () => {}, heartbeat: 3600000, threshold: 180,
+    });
+    t.after(() => manager.shutdown());
+    const started = await manager.start(f.root, { sessionId: "session", autoOpen: false });
+    const entry = manager.entry(started.execution_id);
+    await entry.store.record("connection", { connection: "disconnected" }, "observer");
+    assert.equal(entry.store.health.state, "waiting", "the stored value is still the one from the single heartbeat");
+    const asked = await manager.action({ operation: "status", execution_id: started.execution_id }, "session");
+    assert.equal(asked.health.state, "unobserved");
+    assert.equal(JSON.parse(await fs.readFile(path.join(entry.store.directory, "health.json"), "utf8")).state, "unobserved");
 });

@@ -7,6 +7,37 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-10-05
+
+### Added
+
+- Execution health measured outside the agent loop: the monitor extension tracks
+  the age of the newest observation and publishes `health.json` per execution,
+  so a wedged session that keeps reporting `processing` is still seen as stalled.
+- `health.py`: stdlib health table composed from artifacts, the resume projection
+  and the extension record; prints "not observed" instead of a plausible value.
+- `resume.py`: stdlib projection of the next deterministic step of the cycle
+  contract plus a durable `reports/resume.json` bound to artifact hashes, so a
+  fresh session can continue and a changed artifact forces a recomputation.
+- Watchdog protocol in `SKILL.md` section 2.6: a five-minute scheduled prompt
+  that prints the table, a recovery catalogue R1 to R5, forbidden actions and
+  ceilings of one action per tick, two per agent per cycle and six per execution.
+- `docswarm_monitor` operation `recovery`, journaled per event and capped by the
+  extension, plus a recovery section in `final-report.md` so a resumed execution
+  never looks clean.
+- Stall and lost-observation indicators in the monitor panel.
+
+### Changed
+
+- The health classification no longer trusts the session label over the
+  measurement: `processing` beyond the threshold with no running agent is
+  reported as stalled, and a running agent earns grace only up to three
+  thresholds.
+- A health file the extension stopped refreshing is discarded in favour of
+  artifact ages, and the report says so.
+- The monitor's internal read failure channel was renamed from `health_error`
+  to `reader_error`, to separate it from execution health.
+
 ## [3.4.0] - 2026-10-05
 
 ### Added

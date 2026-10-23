@@ -12,7 +12,7 @@ const manager = new MonitorManager({ getSession: () => session, log });
 const parameters = {
     type: "object", additionalProperties: false, required: ["operation"],
     properties: {
-        operation: { type: "string", enum: ["start", "phase", "dispatch", "handoff", "refresh", "finish", "open", "status"] },
+        operation: { type: "string", enum: ["start", "phase", "dispatch", "handoff", "refresh", "finish", "open", "status", "recovery"] },
         swarm_path: { type: "string", description: "Absolute path to the explicitly selected swarm folder." },
         execution_id: { type: "string" },
         auto_open: { type: "boolean", description: "Defaults to true; false is useful for an explicit headless observation." },
@@ -21,6 +21,8 @@ const parameters = {
         agent_id: { type: "string", description: "Exact declared agent name, never a guessed runtime task id." },
         task_id: { type: "string", description: "Previously observed runtime task id, only for a follow-up." },
         from: { type: "string" }, to: { type: "string" }, label: { type: "string" },
+        rule: { type: "string", enum: ["R1", "R2", "R3", "R4", "R5"], description: "Recovery rule applied by the watchdog, per SKILL.md section 2.6." },
+        detail: { type: "string", description: "What was measured and what was redone; never a grade or an approval." },
         status: { type: "string", enum: ["completed", "escalated", "aborted"] },
         surface: { type: "string", enum: ["auto", "browser"] },
     },
@@ -42,7 +44,7 @@ session = await sdk.joinSession({
     ...(active && canvases.length ? { canvases } : {}),
     tools: active ? [{
         name: "docswarm_monitor",
-        description: "Observe document-swarm, never execute or control its agents. Start after brief creation (auto-opens canvas/browser). Register each dispatch first, then use its exact task_name on the real task tool; task_id is only for observed follow-ups. Publish real phase/cycle and artifact handoffs. Refresh reads artifacts; finish only records coordinator closure. No prompts, secrets or inferred grades. If unavailable, explicitly warn and continue document production in the terminal.",
+        description: "Observe document-swarm, never execute or control its agents. Start after brief creation (auto-opens canvas/browser). Register each dispatch first, then use its exact task_name on the real task tool; task_id is only for observed follow-ups. Publish real phase/cycle and artifact handoffs. Record every watchdog recovery with operation recovery, so a resumed execution never looks clean. Refresh reads artifacts; finish only records coordinator closure. No prompts, secrets or inferred grades. If unavailable, explicitly warn and continue document production in the terminal.",
         parameters,
         handler: async (args, invocation) => {
             try {
