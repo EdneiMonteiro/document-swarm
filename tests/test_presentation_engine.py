@@ -86,6 +86,28 @@ class EngineFixture(unittest.TestCase):
 class DetectorTests(EngineFixture):
     """Each detector must accept the valid delivery and accuse a specific defect."""
 
+    def test_index_labels_have_visible_ink_not_only_text_in_the_dom(self):
+        import io
+        from PIL import Image
+        from scripts.presentations import capture
+
+        def ink(button):
+            image = Image.open(io.BytesIO(button.screenshot())).convert("L")
+            inner = image.crop((8, 4, image.width - 8, image.height - 8))
+            return sum(count for value, count in enumerate(inner.histogram()) if value < 150)
+
+        with capture.browser() as (_, browser):
+            with capture.opened(browser, self.candidate / "index.html", width=1440, height=900) as (page, _, _):
+                labels = page.locator(".page:not([hidden]) .entry")
+                self.assertGreater(labels.count(), 0)
+                for index in range(labels.count()):
+                    button = labels.nth(index)
+                    with self.subTest(index=index):
+                        self.assertGreater(ink(button), 5)
+                        button.evaluate("(node) => { node.style.color = '#ffffff'; }")
+                        self.assertEqual(ink(button), 0, "Positive control must detect invisible labels")
+                        button.evaluate("(node) => { node.style.removeProperty('color'); }")
+
     def test_the_untouched_candidate_passes_every_check(self):
         for check in self.result["checks"]:
             with self.subTest(check=check["check_id"]):

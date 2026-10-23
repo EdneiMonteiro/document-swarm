@@ -83,7 +83,8 @@ class Renderer:
         record = self.navigation.get((page_id, action_id))
         if record is None:
             raise InputError(f"control {action_id} on {page_id} has no planned destination")
-        name = self.rule(f"{self.geometry(element['box'])};{self.typography('control')}")
+        token = "body" if element.get("type") == "index-entry" else "control"
+        name = self.rule(f"{self.geometry(element['box'])};{self.typography(token)}")
         attributes = (f'id="{name}" class="element control {classes}" '
                       f'data-block-id="{esc(element["block_id"], attribute=True)}" '
                       f'data-action-id="{esc(action_id, attribute=True)}"')
