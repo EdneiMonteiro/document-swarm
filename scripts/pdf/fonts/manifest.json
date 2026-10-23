@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "revision": "9710da1eacb3be272583c3224dcb70f9da6eadbb",
+  "files": [
+    {
+      "file": "Carlito-Regular.ttf",
+      "family": "carlito",
+      "url": "https://raw.githubusercontent.com/google/fonts/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/carlito/Carlito-Regular.ttf",
+      "sha256": "f6418f708baede9789daef5d458c0f53d2a888af9820e8062934e504fedc6595",
+      "bytes": 628032
+    },
+    {
+      "file": "Carlito-Bold.ttf",
+      "family": "carlito",
+      "url": "https://raw.githubusercontent.com/google/fonts/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/carlito/Carlito-Bold.ttf",
+      "sha256": "bb5d20f79b82599ec72983597437373a80f2d2085fa91fc144fd74e876a594db",
+      "bytes": 682468
+    },
+    {
+      "file": "Carlito-Italic.ttf",
+      "family": "carlito",
+      "url": "https://raw.githubusercontent.com/google/fonts/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/carlito/Carlito-Italic.ttf",
+      "sha256": "0b019225e58d702bfedcbd35c21696769f8ee115cb6343f84c2f240312450d1c",
+      "bytes": 615236
+    },
+    {
+      "file": "Carlito-BoldItalic.ttf",
+      "family": "carlito",
+      "url": "https://raw.githubusercontent.com/google/fonts/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/carlito/Carlito-BoldItalic.ttf",
+      "sha256": "b32928186c119599e03ca6a1ffc680fdcb7fac95772f4b95d989cf6cd3861517",
+      "bytes": 808508
+    },
+    {
+      "file": "carlito-OFL.txt",
+      "family": "carlito",
+      "url": "https://raw.githubusercontent.com/google/fonts/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/carlito/OFL.txt",
+      "sha256": "58402f82a7c332a700294988fe7554fbb0a63a8d27ccc1ee3bbc640311990a00",
+      "bytes": 4424
+    },
+    {
+      "file": "IBMPlexSerif-Regular.ttf",
+      "family": "ibmplexserif",
+      "url": "https://raw.githubusercontent.com/google/fonts/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/ibmplexserif/IBMPlexSerif-Regular.ttf",
+      "sha256": "e882efa9c41949a528ac2369079ec5ef050c1c996bbd0bacce3c3326d44cf80d",
+      "bytes": 163068
+    },
+    {
+      "file": "IBMPlexSerif-Bold.ttf",
+      "family": "ibmplexserif",
+      "url": "https://raw.githubusercontent.com/google/fonts/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/ibmplexserif/IBMPlexSerif-Bold.ttf",
+      "sha256": "534c02c295999dd86e770457ece1d43db0de9256dd98bf741426f63ae904209e",
+      "bytes": 163800
+    },
+    {
+      "file": "ibmplexserif-OFL.txt",
+      "family": "ibmplexserif",
+      "url": "https://raw.githubusercontent.com/google/fonts/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/ibmplexserif/OFL.txt",
+      "sha256": "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da",
+      "bytes": 4456
+    },
+    {
+      "file": "IBMPlexMono-Regular.ttf",
+      "family": "ibmplexmono",
+      "url": "https://raw.githubusercontent.com/google/fonts/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/ibmplexmono/IBMPlexMono-Regular.ttf",
+      "sha256": "6a3412f058c7d8dfd9170c41e85ade48e5156ecb89356110ca57a0a27734af46",
+      "bytes": 135580
+    },
+    {
+      "file": "ibmplexmono-OFL.txt",
+      "family": "ibmplexmono",
+      "url": "https://raw.githubusercontent.com/google/fonts/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/ibmplexmono/OFL.txt",
+      "sha256": "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da",
+      "bytes": 4456
+    },
+    {
+      "file": "NotoSansMath-Regular.ttf",
+      "family": "notosansmath",
+      "url": "https://raw.githubusercontent.com/google/fonts/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/notosansmath/NotoSansMath-Regular.ttf",
+      "sha256": "3f495fe933c06786e4d5f6d86b8ee70b6753a68ee3b9d87528726de0f6e2c47d",
+      "bytes": 1015396
+    },
+    {
+      "file": "notosansmath-OFL.txt",
+      "family": "notosansmath",
+      "url": "https://raw.githubusercontent.com/google/fonts/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/notosansmath/OFL.txt",
+      "sha256": "403a95275b469061b7d4371c328e0ada3bc7d63328abe2e88aad5cd243b2fe21",
+      "bytes": 4380
+    }
+  ]
+}

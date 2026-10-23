@@ -23,6 +23,26 @@ Antes de abrir uma issue:
 
 ## Nível de suporte
 
+Para o monitor visual, inclua também:
+
+- versão do Copilot CLI, Node.js e Python;
+- canvas ou navegador utilizado;
+- fase/ciclo afetados e se o problema ocorre em uma fixture sintética;
+- diagnóstico da extensão `document-swarm-monitor` e mensagem de erro relevante.
+
+Não publique URLs do monitor contendo credenciais temporárias, prompts, tokens,
+dados de clientes ou um dump completo da sessão. Prefira mensagens mínimas e
+capturas sem informações sensíveis. O [guia do monitor](./docs/monitor.md#diagnóstico)
+descreve falhas conhecidas e a continuidade pelo terminal.
+
+Para composição ou inspeção PDF, inclua perfil/idioma, versões do Python e das
+dependências opcionais, código de erro de `inspection.json` e uma fonte sintética
+mínima. O relatório pode conter trechos integrais do documento; não o publique
+sem remover dados confidenciais. Consulte os [limites e comandos PDF](./docs/pdf.md).
+Uma inspeção mecânica aprovada não atesta qualidade editorial ou correção técnica.
+
+## Limites de suporte
+
 Este projeto:
 
 - Não possui SLA

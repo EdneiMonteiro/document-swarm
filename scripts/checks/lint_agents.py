@@ -16,10 +16,20 @@ from scripts.checks.common import InputError, parse_yaml
 
 def frontmatter(path: Path) -> dict:
     """Read the initial ``---`` YAML block from an agent Markdown file."""
-    text = path.read_text(encoding="utf-8")
+    return frontmatter_text(path.read_text(encoding="utf-8"))
+
+
+def frontmatter_text(text: str) -> dict:
+    """Decode captured frontmatter without reopening its source file."""
     match = re.match(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|$)", text, re.S)
     if not match:
         raise InputError("missing YAML frontmatter")
+    seen = set()
+    for key in re.findall(r"(?m)^([^\s:#][^:\r\n]*):", match.group(1)):
+        key = key.strip()
+        if key in seen:
+            raise InputError(f"duplicate frontmatter field: {key}")
+        seen.add(key)
     data = parse_yaml(match.group(1))
     if not isinstance(data, dict):
         raise InputError("frontmatter must be a mapping")

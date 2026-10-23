@@ -345,6 +345,13 @@ class FinalReportTests(WorkTest):
 
 
 class LintAgentsTests(WorkTest):
+    def test_duplicate_frontmatter_fields_cannot_silently_override_contracts(self):
+        for field in ("name", "model", "editorial_guidance_version"):
+            with self.subTest(field=field):
+                text = f"---\n{field}: first\n{field}: second\n---\n"
+                with self.assertRaisesRegex(ValueError, f"duplicate frontmatter field: {field}"):
+                    lint_agents.frontmatter_text(text)
+
     def test_missing_model_and_wrong_swarm(self):
         agents = self.work / "SWARM" / "agents"
         agents.mkdir(parents=True)
@@ -452,7 +459,8 @@ class MemoryTests(WorkTest):
         ]}), encoding="utf-8")
         (swarm / "agents" / "author.md").write_text(
             "---\nname: author\nkind: author\nmodel: model-x\nrole: facts\ncontext_tier: long_context\n"
-            "reasoning_effort: high\nmodel_rationale: evidence work\nderived_from: older-agent\n---\n\n# Mission\nUseful standalone profile.\n",
+            "reasoning_effort: high\nmodel_rationale: evidence work\nderived_from: older-agent\n"
+            "editorial_guidance_version: \"3.2.1\"\n---\n\n# Mission\nUseful standalone profile.\n",
             encoding="utf-8")
         if approved:
             (swarm / "reports" / "cycle-01-review.yaml").write_text(
@@ -474,6 +482,7 @@ class MemoryTests(WorkTest):
         self.assertEqual(len(candidate["profiles"]), 1)
         self.assertIn("Useful standalone profile", candidate["profiles"][0]["summary"])
         self.assertEqual(candidate["profiles"][0]["derived_from"], "older-agent")
+        self.assertEqual(candidate["profiles"][0]["editorial_guidance_version"], "3.2.1")
         reference = update_memory.proposal(FIXTURES / "reference-swarm")
         self.assertTrue(reference["approved"])
         self.assertEqual(len(reference["sources"]), 61)
@@ -514,7 +523,7 @@ class DirectExecutionTests(WorkTest):
     def test_all_cli_help_work_from_arbitrary_cwd(self):
         outside = self.work / "arbitrary-swarm"
         outside.mkdir()
-        for name in ("verify_sources.py", "verify_tables.py", "gate.py", "final_report.py", "lint_agents.py", "update_memory.py"):
+        for name in ("verify_sources.py", "verify_tables.py", "gate.py", "final_report.py", "lint_agents.py", "update_memory.py", "inspect_nomenclature.py"):
             result = subprocess.run(
                 [sys.executable, str(ROOT / "scripts" / "checks" / name), "--help"],
                 cwd=outside, text=True, capture_output=True,

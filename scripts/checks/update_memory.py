@@ -20,7 +20,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.checks.common import InputError, load_data, write_json
-from scripts.checks.gate import evaluate
+from scripts.checks.gate import evaluate_current, requires_editorial
 from scripts.checks.lint_agents import frontmatter
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -118,9 +118,12 @@ def approved(swarm: Path) -> bool:
                if (swarm / "reports").exists() else [])
     if reviews:
         try:
-            return evaluate(load_data(reviews[-1]))["outcome"] == "approved"
-        except (InputError, OSError):
+            return evaluate_current(load_data(reviews[-1]), swarm)["outcome"] == "approved"
+        except (InputError, OSError, UnicodeError, json.JSONDecodeError):
             return False
+    brief = swarm / "brief.md"
+    if brief.exists() and requires_editorial(frontmatter(brief)):
+        return False
     final = swarm / "reports" / "final-report.md"
     return bool(final.exists() and re.search(
         r"(?im)^\s*(?:[-*]\s*)?\*\*(?:aprovado|approved)\b", final.read_text(encoding="utf-8")
@@ -147,7 +150,7 @@ def profile_summary(path: Path, swarm_name: str) -> dict[str, Any] | None:
         "origin_swarm": swarm_name,
         "origin_agent": str(path.relative_to(path.parents[next(i for i, p in enumerate(path.parents) if p.name == "agents")])),
     }
-    for field in ("context_tier", "reasoning_effort", "model_status", "model_rationale", "derived_from"):
+    for field in ("context_tier", "reasoning_effort", "model_status", "model_rationale", "derived_from", "editorial_guidance_version"):
         if metadata.get(field) is not None:
             profile[field] = metadata[field]
     return profile
