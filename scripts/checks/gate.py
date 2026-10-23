@@ -507,6 +507,12 @@ def evaluate(data: Any, *, require_editorial: bool = False) -> dict[str, Any]:
     # Historical deck reviews must retain their original blocking criteria.
     blocked.extend(items_below(value(data, "slides", "slide_reviews"), ("slide", "name", "titulo", "title")))
     blocked.extend(items_below(value(data, "deck_dimensions", "deckDimensions"), ("dimension", "dimensao", "name")))
+    skipped_reason = duck.get("skipped_reason")
+    if skipped_reason is not None:
+        if skipped_reason != "matrix_rejected":
+            raise InputError("rubberduck skipped_reason must be matrix_rejected when present")
+        if not blocked:
+            raise InputError("rubberduck audit cannot be skipped when the reviewer matrix has no blockers")
     outcome = "approved" if not blocked else "escalate" if cycle >= maximum else "rejected"
     return {"schema_version": 1, "cycle": cycle, "max_cycles": maximum, "outcome": outcome, "blocked": blocked}
 

@@ -148,7 +148,20 @@ class Projection:
         if not (self.exists(f"reports/{tag}-review.yaml") or self.exists(f"reports/{tag}-review.yml")):
             return "reviews", [step("compose", "review.yaml",
                                     "a matriz consolidada do ciclo não foi gravada", cycle=cycle)]
-        if not self.exists(f"reports/{tag}-rubberduck.md"):
+        review_path = self.reports / f"{tag}-review.yaml"
+        if not review_path.is_file():
+            review_path = self.reports / f"{tag}-review.yml"
+        duck_skipped = False
+        try:
+            from scripts.checks.common import load_data
+            review_obj = load_data(review_path)
+            if isinstance(review_obj, dict):
+                duck_obj = review_obj.get("rubberduck") or review_obj.get("rubber_duck") or {}
+                if isinstance(duck_obj, dict) and duck_obj.get("skipped_reason") == "matrix_rejected":
+                    duck_skipped = any(t.get("blocks") for t in recorded.get("topics", []))
+        except Exception:
+            duck_skipped = False
+        if not duck_skipped and not self.exists(f"reports/{tag}-rubberduck.md"):
             return "rubber-duck", [step("dispatch", "rubber-duck",
                                         "a auditoria independente do ciclo não foi registrada", cycle=cycle)]
         gate = recorded.get("gate", {"status": "not_recorded"})

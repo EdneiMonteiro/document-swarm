@@ -1043,24 +1043,33 @@ Corrija qualquer erro antes do primeiro despacho.
 Você é o coordenador. Para cada ciclo `N`:
 
 1. **Autores.** Despache autores independentes em paralelo, usando exatamente
-   `model`, `reasoning_effort` e `context_tier` confirmados. No ciclo seguinte,
-   envie somente tópicos bloqueados e achados obrigatórios; instrua edição
-   cirúrgica restrita aos trechos/células bloqueados, preservando intactos os
-   parágrafos, contagens e identificadores já aprovados.
+   `model`, `reasoning_effort` e `context_tier` confirmados. No ciclo `N >= 2`,
+   despache **somente os autores responsáveis por tópicos ou superfícies com
+   bloqueios ativos** do ciclo `N-1` (dispense autores cujos tópicos já atingiram
+   `>= A` nas três dimensões) e prefira `write_agent` (reutilizando o `task_id`
+   observado na sessão) para evitar recarregar todo o contexto do zero. Instrua
+   edição cirúrgica restrita aos trechos/células bloqueados, preservando intactos
+   os parágrafos, contagens e identificadores já aprovados.
    No monitor, publique `authors` com o ciclo real e registre cada despacho
-   antes de chamar `task`, usando o `task_name` retornado.
-2. **Consolidação.** Monte `output/<doc>.md`, atualize
+   antes de chamar `task`/`write_agent`, usando o `task_name` retornado.
+2. **Consolidação e diff determinístico.** Monte `output/<doc>.md`, atualize
    `sources/sources-index.md` e grave `reports/cycle-0N-authors.md`. Uniformize
    voz, terminologia e profundidade antes da revisão; divergências de conteúdo
    voltam aos autores, não são resolvidas apenas por edição de estilo.
    Converta orientações internas em critérios de aplicação, limitações ou
    consequências para o leitor. Preserve fatos, lógica, escopo e ressalvas;
    isso não congela uma redação coloquial ou ambígua.
-   Monte os formatos finais pedidos antes da revisão. Preserve um texto UTF-8
-   integral para cotejo, por exemplo `reports/cycle-0N-editorial-text.txt`,
-   fiel à redação efetivamente entregue. Se houver PDF, extraia e confira seu
-   texto e inspecione sua renderização; não avalie somente o gerador.
-   Execute a composição/inspeção da seção 2.4 antes de despachar revisores.
+   Monte os formatos finais pedidos antes da revisão. Execute a composição/inspeção
+   da seção 2.4 antes de despachar revisores e rode a montagem e o diff
+   determinístico do ciclo:
+
+   ```bash
+   python3 "<DOCSWARM>/scripts/checks/cycle_artifacts.py" assemble . --cycle N
+   ```
+
+   O comando preserva `reports/cycle-0N-editorial-text.txt` e, para `N >= 2`,
+   gera `reports/cycle-0N-diff.json` e `reports/cycle-0N-diff.md` (seções/linhas
+   modificadas, `changed_topics`, `unchanged_topics` e `changed_pages` do PDF).
    Se houver falha mecânica, corrija a fonte ou o compositor e gere outro bundle,
    preservando o anterior; não reduza o conteúdo nem masque operadores para passar.
    Inspecione candidatos de nomenclatura no texto integral:
@@ -1087,31 +1096,48 @@ Você é o coordenador. Para cada ciclo `N`:
    ```
 
    Corrija qualquer falha marcada antes dos revisores.
-5. **Revisores.** Colete nota e ação por tópico e consolide
-   `reports/cycle-0N-review.md`, incluindo a aderência editorial nas dimensões
-   atribuídas. Correções voltam aos autores e são reavaliadas; não faça uma
-   reescrita de conteúdo depois do portão sem nova revisão.
-   Colete também o JSON individual de cada revisor e mantenha IDs consistentes.
+5. **Revisores.** Despache os revisores em paralelo (preferindo `write_agent`
+   quando a sessão do revisor estiver ativa). Cada revisor entrega seu
+   `reports/cycle-0N-<name>.json` estruturado; nos ciclos `N >= 2`, forneça
+   `reports/cycle-0N-diff.md` para que revisores `fact` e `decision` reavaliem
+   os tópicos bloqueados ou alterados (`changed_topics`) e preservem (`carry_forward`)
+   as notas `>= A` não contestadas dos tópicos inalterados (`unchanged_topics`).
    Registre os despachos e as passagens efetivas de artefatos; notas pendentes
    continuam pendentes na interface.
-   O revisor editorial lê toda a redação final do ciclo, preenche `editorial`
+   O revisor editorial lê a redação final do ciclo, preenche `editorial`
    e fundamenta as notas com trechos. A revisão visual não pode aprovar essa
    dimensão por procuração.
-   Para PDF, os revisores abrem as prévias PNG de todas as páginas e conferem
-   capa, justificação, sumário, tabelas, fórmulas, código, links e diagramas.
-   Registrem achados visuais com página/alvo, separados dos julgamentos de redação.
+   Para PDF, no Ciclo 1 e na candidata final à aprovação, os revisores conferem
+   as prévias PNG de todas as páginas; nos ciclos intermediários (`N >= 2` com
+   diff localizado), abrem prioritariamente as páginas listadas em `changed_pages`
+   e as páginas com tabelas/figuras tocadas. Registrem achados visuais com
+   página/alvo, separados dos julgamentos de redação.
    Exija análise da linguagem, referentes, tom e autonomia; adequação decisória
    isolada não sustenta a nota editorial.
    Confira a nomenclatura inclusive no primeiro uso e em elementos que possam
    ser lidos isoladamente. Registre achados no bloco editorial existente;
    o relatório lexical é apoio, não prova de que os termos foram explicados.
-6. **Matriz estruturada inicial.** Grave `reports/cycle-0N-review.yaml` com as
-   notas mínimas.
-   Inclua `pdf_inspections` com os hashes reais de fonte, PDF, manifesto e
-   inspeção para cada entrega PDF. Não use relatório de um bundle anterior.
-7. **Rubber duck.** Audite autores, revisores, coordenador, resultados dos
-   scripts e consistência `.md` ↔ `.yaml`; grave
-   `reports/cycle-0N-rubberduck.md`.
+6. **Consolidação determinística da revisão.** Em vez de escrever manualmente os
+   Markdowns e a matriz YAML no LLM, execute:
+
+   ```bash
+   python3 "<DOCSWARM>/scripts/checks/cycle_artifacts.py" consolidate . --cycle N
+   ```
+
+   O script propaga notas `>= A` inalteradas (`carry_forward`), injeta os hashes
+   SHA-256 reais (`editorial.text`, `editorial.artifacts` e `pdf_inspections`),
+   gera `reports/cycle-0N-<name>.md` para cada revisor e grava
+   `reports/cycle-0N-review.md` e `reports/cycle-0N-review.yaml`.
+7. **Rubber duck (sob demanda na candidata à aprovação ou conflito).**
+   - Se `cycle-0N-review.yaml` **já tiver bloqueios** (`bloqueia: true` ou
+     bloqueio editorial), `cycle_artifacts.py consolidate` registra
+     `rubberduck.skipped_reason: "matrix_rejected"` e grava o resumo em
+     `reports/cycle-0N-rubberduck.md`; pule o despacho do agente `rubber-duck` e
+     vá direto ao passo 9 (`gate.py`).
+   - Quando a matriz consolidada atingir **zero bloqueios** (candidata à
+     aprovação, ou quando houver conflito explícito entre revisores), despache o
+     agente `rubber-duck` para auditar autores, revisores, coordenador, resultados
+     dos scripts e consistência; grave `reports/cycle-0N-rubberduck.md`.
    Confira se slogans, títulos genéricos, antíteses decorativas e metatexto
    foram realmente avaliados em todas as superfícies. Conteste A sustentado
    somente por layout ou pela aprovação de um ciclo anterior.
@@ -1120,7 +1146,9 @@ Você é o coordenador. Para cada ciclo `N`:
    motivo; não edite sua nota em silêncio.
    Confira códigos sem definição, significados conflitantes e legendas
    dependentes de glossário distante. Exija fonte quando se alegar padrão externo.
-8. **Atualize o YAML.** Registre `rubberduck.critico` e os achados.
+8. **Atualize o YAML (quando o Rubber Duck rodar).** Registre `rubberduck.critico`
+   e os achados (removendo qualquer `skipped_reason`). `gate.py` recusa (`exit 3`)
+   aprovar um ciclo com `skipped_reason` presente.
 9. **Portão por exit code.**
 
    ```bash
@@ -1575,7 +1603,8 @@ Todos usam somente Python stdlib. Consulte `--help` para opções exatas.
 | Script | Função | Bloqueia quando |
 |---|---|---|
 | `verify_sources.py` | testa URLs e mantém cache auditável | há fonte `fail` |
-| `verify_tables.py` | recalcula tabelas marcadas | conta marcada não fecha |
+| `verify_tables.py` | recalcula tabelas marcadas e valida inventários/chaves (`rows`, `match_keys`, `refs`) | conta ou chave marcada não fecha |
+| `cycle_artifacts.py` | monta seções (`assemble`), gera diff de texto/páginas (`diff`) e consolida JSONs dos revisores em `.md` e `review.yaml` com hashes SHA-256 (`consolidate`) | artefato ausente ou inválido (exit `3`) |
 | `lint_agents.py` | valida frontmatter e swarm dos agentes | agente está inválido |
 | `gate.py` | aplica régua, crítico, `max_cycles` e contrato editorial atual | retorna exit `1`, `2` ou `3` |
 | `pdf_contract.py` | verifica os registros e hashes das inspeções PDF no gate | inspeção falhou, está ausente ou não corresponde aos artefatos atuais |

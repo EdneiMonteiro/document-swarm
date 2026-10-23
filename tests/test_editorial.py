@@ -479,3 +479,103 @@ class EditorialTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "rejected")
         self.assertEqual(result["blocked"][0]["name"], "T01")
 
+    def test_cycle_artifacts_consolidate_and_conditional_rubberduck(self):
+        from scripts.checks import cycle_artifacts, resume
+        # Setup 2 topics in brief.md and two sections in output/sections/
+        (self.root / "brief.md").write_text(
+            "---\nswarm_id: editorial-swarm\nskill_version: \"3.5.0\"\nmode: document\n"
+            "max_cycles: 3\nquality_contract: editorial-v1\neditorial_reviewer: reviewer-01-clarity\n"
+            "deliverables:\n  - output/document.md\ntopics:\n  T01: Arquitetura\n  T02: Operacao\n---\n# Fixture\n",
+            encoding="utf-8",
+        )
+        sections = self.root / "output" / "sections"
+        sections.mkdir(parents=True, exist_ok=True)
+        (sections / "01-arquitetura.md").write_text(
+            "# 1. Arquitetura\n\nDimensionamento dos node pools do AKS.\n\n"
+            "O estudo compara capacidade alocável, requests dos pods e condições de manutenção.\n",
+            encoding="utf-8",
+        )
+        (sections / "02-operacao.md").write_text(
+            "# 2. Operacao\n\nOs requests dos pods são comparados à capacidade alocável.\n\n"
+            "Figura 1. Capacidade alocável e soma dos requests, medidas na mesma janela.\n\n"
+            "## Condições para adoção\n\nNão altere produção sem essa validação.\n",
+            encoding="utf-8",
+        )
+        assembled_c1 = cycle_artifacts.assemble(self.root, 1, from_sections=True)
+        self.assertTrue((self.root / "output" / "document.md").is_file())
+        self.assertEqual(assembled_c1["diff"]["changed_topics"], ["T01", "T02"])
+
+        # Cycle 1: T01 is A, T02 is B+ (rejected matrix -> rubberduck skipped automatically)
+        quotes = [
+            "Dimensionamento dos node pools do AKS",
+            "O estudo compara capacidade alocável",
+            "Os requests dos pods são comparados à capacidade alocável.",
+            "Capacidade alocável e soma dos requests",
+            "Não altere produção sem essa validação.",
+        ]
+        surfaces_c1 = [{
+            "surface": surface, "grade": "A", "location": f"sec {i+1}", "quote": q,
+            "justification": "Adequado.", "action": "",
+        } for i, (surface, q) in enumerate(zip(gate.EDITORIAL_SURFACES, quotes))]
+        report_c1 = {
+            "schema_version": 1, "cycle": 1, "reviewer": "reviewer-01-clarity",
+            "topics": [
+                {"topic": "T01", "grade": "A", "justification": "T01 completo.", "action": ""},
+                {"topic": "T02", "grade": "B+", "justification": "Falta critério em Operacao.", "action": "Detalhar Operacao."},
+            ],
+            "editorial": {
+                "schema_version": 1, "cycle": 1, "reviewer": "reviewer-01-clarity",
+                "scope": "full_document", "text": {"path": "reports/cycle-01-editorial-text.txt", "sha256": "0" * 64},
+                "artifacts": [], "surfaces": surfaces_c1, "findings": [],
+            },
+        }
+        (self.root / "reports" / "cycle-01-reviewer-01-clarity.json").write_text(
+            json.dumps(report_c1, ensure_ascii=False), encoding="utf-8"
+        )
+        consolidated_c1 = cycle_artifacts.consolidate(self.root, 1)
+        self.assertEqual(consolidated_c1["rubberduck"]["skipped_reason"], "matrix_rejected")
+        self.assertTrue((self.root / "reports" / "cycle-01-reviewer-01-clarity.md").is_file())
+        self.assertTrue((self.root / "reports" / "cycle-01-review.md").is_file())
+        self.assertTrue((self.root / "reports" / "cycle-01-rubberduck.md").is_file())
+        res_c1 = gate.evaluate_current(consolidated_c1, self.root)
+        self.assertEqual(res_c1["outcome"], "rejected")
+        # Attempting to approve while skipped_reason is present must fail closed (InputError).
+        tampered = copy.deepcopy(consolidated_c1)
+        tampered["topics"][1]["nota_minima"] = "A"
+        tampered["topics"][1]["bloqueia"] = False
+        with self.assertRaises(InputError):
+            gate.evaluate(tampered)
+
+        # Cycle 2: only 02-operacao.md changes; T01 is unchanged and carried forward automatically!
+        (sections / "02-operacao.md").write_text(
+            "# 2. Operacao\n\nOs requests dos pods são comparados à capacidade alocável com folga de N+1.\n\n"
+            "Figura 1. Capacidade alocável e soma dos requests, medidas na mesma janela.\n\n"
+            "## Condições para adoção\n\nNão altere produção sem essa validação.\n",
+            encoding="utf-8",
+        )
+        assembled_c2 = cycle_artifacts.assemble(self.root, 2, from_sections=True)
+        self.assertIn("T01", assembled_c2["diff"]["unchanged_topics"])
+        self.assertIn("T02", assembled_c2["diff"]["changed_topics"])
+        surfaces_c2 = copy.deepcopy(surfaces_c1)
+        surfaces_c2[2]["quote"] = "Os requests dos pods são comparados à capacidade alocável com folga de N+1."
+        report_c2 = {
+            "schema_version": 1, "cycle": 2, "reviewer": "reviewer-01-clarity",
+            "topics": [
+                {"topic": "T01", "carry_forward": True},
+                {"topic": "T02", "grade": "A", "justification": "Folga N+1 documentada.", "action": ""},
+            ],
+            "editorial": {
+                "schema_version": 1, "cycle": 2, "reviewer": "reviewer-01-clarity",
+                "scope": "full_document", "text": {"path": "reports/cycle-02-editorial-text.txt", "sha256": "0" * 64},
+                "artifacts": [], "surfaces": surfaces_c2, "findings": [],
+            },
+        }
+        (self.root / "reports" / "cycle-02-reviewer-01-clarity.json").write_text(
+            json.dumps(report_c2, ensure_ascii=False), encoding="utf-8"
+        )
+        consolidated_c2 = cycle_artifacts.consolidate(self.root, 2)
+        self.assertNotIn("skipped_reason", consolidated_c2["rubberduck"])
+        self.assertFalse((self.root / "reports" / "cycle-02-rubberduck.md").is_file())
+        self.assertEqual(gate.evaluate_current(consolidated_c2, self.root)["outcome"], "approved")
+
+

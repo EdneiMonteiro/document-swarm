@@ -9,6 +9,16 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
 ### Added
 
+- `cycle_artifacts.py` (`assemble`, `diff` and `consolidate`): deterministic
+  section assembly, cross-cycle text/PDF-page diffing (`cycle-0N-diff.json` and
+  `cycle-0N-diff.md`), automatic carry-forward of uncontested `>= A` grades on
+  unchanged topics, automatic SHA-256 descriptor binding (`editorial` and
+  `pdf_inspections`), and zero-token generation of `cycle-0N-<reviewer>.md`,
+  `cycle-0N-review.md` and `cycle-0N-review.yaml`.
+- Conditional rubber-duck cadence: cycles already rejected by the reviewer
+  matrix record `rubberduck.skipped_reason: "matrix_rejected"` without
+  dispatching the `rubber-duck` LLM agent, while `gate.py` strictly requires a
+  real rubber-duck audit before any `approved` outcome (`exit 0`).
 - Cross-cycle grade stability in `gate.py`: lowering a topic or editorial
   surface that the same reviewer already graded `A` or `A+` in cycle `N-1`
   (without a rubber-duck challenge in cycle `N-1`) now requires a verified

@@ -179,8 +179,17 @@ arquivo final. Os hashes devem ser calculados sobre os bytes reais.
 ## Registro do revisor
 
 O arquivo `reports/cycle-01-reviewer-03-clarity.json` mantém seus campos de
-notas por tópico e acrescenta `editorial`. O coordenador copia o bloco, sem
-alterá-lo, para `reports/cycle-01-review.yaml`.
+notas por tópico e acrescenta `editorial`. O comando
+`python .\scripts\checks\cycle_artifacts.py consolidate <swarm> --cycle 1`
+injeta automaticamente os hashes SHA-256 reais (`text`, `artifacts` e
+`pdf_inspections`), gera os relatórios `.md` individuais e copia o bloco
+`editorial`, sem alterá-lo, para `reports/cycle-01-review.yaml`. Nos ciclos
+intermediários (`N >= 2`), `cycle_artifacts.py assemble <swarm> --cycle N`
+produz `reports/cycle-0N-diff.json` e `reports/cycle-0N-diff.md` (incluindo
+`changed_pages` do PDF), permitindo que a inspeção visual de PNGs foque nas
+páginas alteradas até a candidata final à aprovação e que o despacho do
+`rubber-duck` ocorra apenas quando a matriz dos revisores atingir zero bloqueios
+(`skipped_reason: "matrix_rejected"` nos ciclos já reprovados pela matriz).
 
 Exemplo de forma do bloco; substitua os caminhos, hashes e avaliações pelos
 registros reais. Os trechos abaixo são ilustrativos, não notas de uma entrega:
