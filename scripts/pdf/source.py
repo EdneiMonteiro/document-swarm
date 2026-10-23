@@ -97,7 +97,7 @@ def directive(state, start, end, silent):
     annotation = MARKER.fullmatch(line)
     if annotation:
         words = annotation[1].split()
-        if not words or words[0].lower() not in {"weighted", "sum", "percent"}:
+        if not words or words[0].lower() not in {"weighted", "sum", "percent", "porcent", "rows", "match_keys", "refs"}:
             raise InputError(f"line {start + 1}: unsupported table-check annotation")
         if not silent:
             state.line = start + 1
@@ -248,7 +248,7 @@ def read_source(path: Path) -> Document:
             if any(run.text.lstrip().startswith(":::") for run in runs):
                 raise InputError(f"line {line}: unsupported or malformed document directive")
             kind = "cover-body" if on_cover else "list" if list_stack else "quote" if quote_depth else "paragraph"
-            add(Block(identifier, kind, runs, spec={"marker": list_marker}, line=line))
+            add(Block(identifier, kind, runs, spec={"marker": list_marker, "depth": len(list_stack)}, line=line))
             list_marker = None
             index += 2
         elif token.type in {"bullet_list_open", "ordered_list_open"}:

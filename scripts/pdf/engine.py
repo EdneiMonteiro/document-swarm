@@ -55,7 +55,15 @@ def render(source: Path, destination: Path, profile: str = "textbook", language:
         # The owned bundle is published only after composition and inspection finish.
         if destination.exists():
             raise InputError("destination appeared while rendering; refusing to replace it")
-        os.rename(temporary, destination)
+        for attempt in range(10):
+            try:
+                os.rename(temporary, destination)
+                break
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                import time
+                time.sleep(0.2 * (attempt + 1))
         committed = True
         return {
             "destination": str(destination), "pdf": str(destination / "document.pdf"),

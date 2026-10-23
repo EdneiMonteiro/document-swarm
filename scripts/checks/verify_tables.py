@@ -44,10 +44,14 @@ def is_separator(line: str) -> bool:
 
 
 def as_number(value: str) -> Decimal | None:
-    value = value.strip().replace(" ", "")
+    value = value.strip().replace(" ", "").rstrip("%")
+    if re.fullmatch(r"-?\d{1,3}(?:\.\d{3})+(?:,\d+)?", value):
+        return Decimal(value.replace(".", "").replace(",", "."))
+    if re.fullmatch(r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?", value):
+        return Decimal(value.replace(",", ""))
     if not NUMBER.fullmatch(value):
         return None
-    return Decimal(value.rstrip("%").replace(",", "."))
+    return Decimal(value.replace(",", "."))
 
 
 def display(value: Decimal) -> str:

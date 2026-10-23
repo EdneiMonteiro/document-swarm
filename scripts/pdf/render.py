@@ -289,7 +289,10 @@ class VectorFigure(Flowable):
             for index, (label, value, display) in enumerate(zip(spec["labels"], spec["values"], spec["display_values"])):
                 y = self.height - 16 - index * 42
                 self.label(f"{self.block.id}-label-{index}", label, 12, y, 140, 35)
-                c.setFillColor([BLUE, TEAL, ORANGE][index % 3])
+                if "60%" in (spec.get("caption", "") + " " + spec.get("unit", "")):
+                    c.setFillColor(ORANGE if value > 60 else BLUE)
+                else:
+                    c.setFillColor([BLUE, TEAL, ORANGE][index % 3])
                 width = bar_width * value / maximum
                 c.rect(bar_x, y - 23, width, 19, stroke=0, fill=1)
                 if width > 0:
@@ -328,6 +331,20 @@ class VectorFigure(Flowable):
 
 
 class TrackedTable(LongTable):
+    def split(self, availWidth, availHeight):
+        parts = super().split(availWidth, availHeight)
+        if len(parts) == 2 and self._nrows > 3:
+            repeat = self.repeatRows if isinstance(self.repeatRows, int) else len(self.repeatRows or ())
+            second_data_rows = parts[1]._nrows - repeat
+            first_data_rows = parts[0]._nrows - repeat
+            if second_data_rows == 1 and first_data_rows >= 2 and len(self._argH) >= parts[0]._nrows:
+                last_first_row_h = self._argH[parts[0]._nrows - 1] or 20
+                if availHeight > last_first_row_h + 10:
+                    reduced = super().split(availWidth, availHeight - last_first_row_h - 1)
+                    if len(reduced) == 2 and (reduced[1]._nrows - repeat) >= 2:
+                        return reduced
+        return parts
+
     def draw(self):
         record(self.canv, "table-layout", "table", self._width, self._height)
         super().draw()
@@ -435,21 +452,49 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                 raise InputError(f"figure {block.id} is too tall for a page")
             story.append(figure)
         elif block.kind == "table":
+            ncols = len(block.rows[0])
+            font_sz = 8.4 if ncols >= 7 else 9.0 if ncols >= 5 else 9.6
+            lead_sz = round(font_sz * 1.35, 1)
+            pad_h = 5 if ncols >= 6 else 7
+            cell_style = ParagraphStyle(f"tc-{block.id}", parent=style["table-cell"], fontSize=font_sz, leading=lead_sz)
+            hdr_style = ParagraphStyle(f"th-{block.id}", parent=style["table-header"], fontSize=font_sz, leading=lead_sz)
             cells = []
             for r, row in enumerate(block.rows):
                 cells.append([TrackedParagraph(markup(runs, "DSBold" if r == 0 else "DSBody"),
-                                               style["table-header" if r == 0 else "table-cell"],
+                                               hdr_style if r == 0 else cell_style,
                                                element_id=f"{block.id}-r{r}-c{c}", element_kind="table-cell",
                                                parent_id=block.id)
                               for c, runs in enumerate(row)])
-            width = CONTENT_WIDTH / len(cells[0])
-            table = TrackedTable(cells, colWidths=[width] * len(cells[0]), repeatRows=1, hAlign="LEFT", splitByRow=1, splitInRow=1)
+            col_weights = []
+            col_mins = []
+            for c in range(ncols):
+                max_len = 1
+                longest_tok_w = 0.0
+                for r, row in enumerate(block.rows):
+                    txt = "".join(run.text for run in row[c]).strip()
+                    max_len = max(max_len, len(txt))
+                    has_code = any(run.code for run in row[c])
+                    fname = "DSMono" if has_code else ("DSBold" if r == 0 else "DSBody")
+                    for tok in txt.split():
+                        longest_tok_w = max(longest_tok_w, pdfmetrics.stringWidth(tok, fname, font_sz))
+                col_mins.append(min(CONTENT_WIDTH * 0.42, longest_tok_w + 2 * pad_h + 4.0))
+                col_weights.append(max(max_len, 4) ** 0.55)
+            total_min = sum(col_mins)
+            if total_min >= CONTENT_WIDTH:
+                col_widths = [CONTENT_WIDTH * m / total_min for m in col_mins]
+            else:
+                col_widths = list(col_mins)
+                rem = CONTENT_WIDTH - total_min
+                total_w = sum(col_weights)
+                for c in range(ncols):
+                    col_widths[c] += rem * (col_weights[c] / total_w)
+            table = TrackedTable(cells, colWidths=col_widths, repeatRows=1, hAlign="LEFT", splitByRow=1, splitInRow=1)
             table.setStyle(TableStyle([
                 ("BACKGROUND", (0, 0), (-1, 0), BLUE),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT]),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-                ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("LEFTPADDING", (0, 0), (-1, -1), pad_h), ("RIGHTPADDING", (0, 0), (-1, -1), pad_h),
+                ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
             ]))
             story.extend([table, Spacer(1, 13)])
         elif block.kind == "rule":
@@ -459,6 +504,11 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
             if key == "heading":
                 key = "heading" if block.level == 1 else "subheading" if block.level == 2 else "small-heading"
             current = style[key]
+            if block.kind == "list":
+                depth = max(1, int(block.spec.get("depth") or 1))
+                if depth > 1:
+                    indent = 14 + (depth - 1) * 14
+                    current = ParagraphStyle(f"list-d{depth}-{block.id}", parent=current, leftIndent=indent, bulletIndent=indent - 10)
             if block.kind == "heading" and block.level == 1 and story and not isinstance(story[-1], PageBreak):
                 story.append(PageBreak())
             paragraph = TrackedParagraph(markup(block.runs, current.fontName), current,

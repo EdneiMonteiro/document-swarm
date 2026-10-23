@@ -33,7 +33,7 @@ def digest(path: Path) -> str:
 
 def normalized(text: str) -> str:
     # Compatibility normalization would erase distinctions in literal math/code.
-    return re.sub(r"\s+", "", unicodedata.normalize("NFC", text))
+    return re.sub(r"\s+", "", unicodedata.normalize("NFC", text.replace("\u0002", "-")))
 
 
 def rectangle(value):
