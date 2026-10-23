@@ -1,7 +1,7 @@
 ---
 name: document-swarm
-skill_version: "3.3.0"
-description: "Use when the user asks for a substantial document (playbook, whitepaper, report, RFC, policy, technical guide, comparison) or wants to evolve an existing document produced by a swarm. The skill frames the request, creates declarative specialist agents with session-validated model provenance, runs evidence-based improvement cycles, executes deterministic source/table/quality gates, and stops only when every evaluated topic reaches at least A or the work is explicitly escalated. Do not use for presentations, slide decks, PPTX, or short text such as a paragraph or email."
+skill_version: "3.4.0"
+description: "Use when the user asks for a substantial document (playbook, whitepaper, report, RFC, policy, technical guide, comparison), for a presentation delivered as offline HTML plus a faithful and an editable PowerPoint file, or wants to evolve an artefact an earlier swarm produced. The skill frames the request, creates declarative specialist agents with session-validated model provenance, runs evidence-based improvement cycles, executes deterministic source/table/composition/quality gates, and stops only when every evaluated topic reaches at least A or the work is explicitly escalated. Do not use for short text such as a paragraph or email."
 ---
 
 # Document Swarm Skill
@@ -21,8 +21,8 @@ Use esta skill para:
   e mais de um ciclo de melhoria.
 
 Não use para e-mail, parágrafo, resposta curta ou edição trivial.
-Criação ou evolução de apresentações, slides, decks e arquivos PPTX está fora
-do escopo desta skill.
+Apresentações são um tipo de entrega opcional desta versão, descrito na
+seção 2.5; o modo documento continua sendo o padrão.
 
 ### Modo documento
 
@@ -406,6 +406,73 @@ Documentos anteriores à 3.3 mantêm a leitura histórica do contrato original.
 Novas evoluções com PDF usam este fluxo. A sintaxe suportada, os limites e os
 comandos completos estão em [docs/pdf.md](docs/pdf.md).
 
+### 2.5. Apresentações como tipo de entrega
+
+Apresentações são opcionais e não alteram o caminho documental. Use-as apenas
+quando o usuário pedir a entrega em slides; um pedido de documento continua sem
+qualquer dependência nova. O escopo desta versão é Windows com Microsoft
+PowerPoint instalado.
+
+Uma fonte estruturada única, o DeckSpec em JSON, produz **três formatos
+obrigatórios** da mesma composição: `index.html` navegável e offline,
+`deck-faithful.pptx` por imagens e `deck-editable.pptx` com texto, tabelas,
+formas e conectores nativos. Um não substitui o outro. O compositor não escreve
+títulos, rótulos, legendas, notas ou recomendações: tudo isso pertence à fonte.
+
+No enquadramento, confirme que serão produzidos os três formatos, que a
+aparência do arquivo editável depende de fontes instaladas no destinatário e que
+as notas do apresentador acompanham a entrega. Registre no brief:
+
+```yaml
+artifact_type: presentation
+presentation:
+  schema_version: 1
+  capability: presentation-v1
+  deck_path: output/presentation-cycle-01/deck.json
+  profile: windows-powerpoint-v1
+  required_formats: [html-offline, pptx-faithful, pptx-editable]
+```
+
+Sem `artifact_type: presentation`, uma entrada histórica continua documental.
+Bloco novo sem tipo, capacidade desconhecida, formatos divergentes ou combinação
+com os campos legados de slides são rejeitados, não interpretados por aproximação.
+
+O fluxo, pela raiz da skill com o Python do ambiente de apresentações:
+
+```bash
+python -m scripts.presentations preflight --swarm <swarm> --profile windows-powerpoint-v1 --isolation <evidência>
+python -m scripts.presentations build --swarm <swarm> --deck <deck.json> --destination output/presentation-cycle-01 --profile windows-powerpoint-v1 --cycle 1
+python -m scripts.presentations inspect --destination <swarm>/output/presentation-cycle-01
+python -m scripts.presentations publish --swarm <swarm> --cycle 1 --destination <pasta nova>
+```
+
+O `preflight` qualifica implementação e ambiente em material sintético, nunca na
+candidata; sem perfil completo e aprovado não há entrega aprovada. O `build` exige
+destino inédito e inspeciona os arquivos salvos. Código 0 significa que tudo que
+foi executado passou; 1, falha executada; 2, erro de entrada ou dependência.
+
+Despache os revisores somente depois de uma composição inspecionada. O catálogo
+de dimensões é fechado e cada posição recebe uma nota: `factual` e `decision` por
+tópico; `legibility` e `interaction` por página lógica em cada um dos três
+formatos; `editability` por página do arquivo editável. Nenhuma delas aceita
+`not_applicable`. A revisão `editorial-v1` continua obrigatória, sobre o texto
+integral entregue, e é independente dessas notas.
+
+No consolidado, registre `presentation` com ciclo, perfil, capacidade e os
+descritores `inputs`, `manifest` e `inspections` por caminho e SHA-256, além de
+uma linha por posição avaliada. O portão reconstrói páginas, materializações de
+apoio, grafo de navegação e domínio de revisão **a partir do deck**: um manifesto
+que repita a omissão de um exportador não reduz a cobertura exigida. Estados
+`pending`, `not_evaluated`, `unsupported` e `stale` nunca aprovam.
+
+Qualquer alteração em conteúdo, ativo, fonte, layout, arquivo ou revisão invalida
+o aceite corrente. O histórico permanece; a nova edição exige nova composição,
+inspeção pertinente e leitura editorial integral. Inspeção mecânica aprovada não
+atesta legibilidade nem redação: os revisores abrem as páginas nos três formatos.
+
+Sintaxe do DeckSpec, temas, limites, qualificação do ambiente, evidência de
+isolamento e publicação estão em [docs/presentations.md](docs/presentations.md).
+
 ## 3. Convenções de caminho e versão
 
 - Todos os caminhos lógicos desta skill usam `/`.
@@ -481,6 +548,40 @@ por data: `<YYYY-MM-DD>-SWARM-<XX>`.
 A pasta `pdf-cycle-0N/` só é criada quando o PDF integra a entrega. Cada
 recomposição usa um destino novo, conforme a seção 2.4, preservando os anteriores.
 
+### Apresentação
+
+Uma apresentação acrescenta uma pasta de candidata por ciclo e quatro registros
+em `reports/`. Tudo o mais permanece como no modo documento.
+
+```text
+<OUTPUT_ROOT>/<swarm_id>/
+├─ reports/
+│  ├─ implementation.json
+│  ├─ implementation-evidence.json
+│  ├─ profile.json
+│  ├─ profile-evidence.json
+│  ├─ cycle-0N-inputs.json
+│  ├─ cycle-0N-presentation-manifest.json
+│  ├─ cycle-0N-presentation-inspections.json
+│  ├─ cycle-0N-editorial-text.txt
+│  └─ cycle-0N-acceptance.json
+└─ output/
+   └─ presentation-cycle-0N/
+      ├─ deck.json
+      ├─ layout.json
+      ├─ theme.json
+      ├─ index.html
+      ├─ runtime/
+      ├─ assets/
+      ├─ fonts/
+      ├─ deck-faithful.pptx
+      ├─ deck-editable.pptx
+      └─ LEIA-ME.txt
+```
+
+O aceite só é gravado depois de um portão aprovado e vinculado aos bytes da
+revisão. A publicação copia exatamente esse conjunto para um destino novo.
+
 ## 6. Régua e matriz computável
 
 Escala canônica:
@@ -499,7 +600,7 @@ Além do relatório Markdown, cada ciclo deve gerar
 
 ```yaml
 schema_version: 1
-skill_version: "3.3.0"
+skill_version: "3.4.0"
 quality_contract: editorial-v1
 mode: document
 cycle: 2
@@ -680,6 +781,7 @@ entram se o portão estiver aprovado.
 Use `ask_user` antes de gerar agentes. Cubra:
 
 - objetivo;
+- tipo de entrega: documento, padrão, ou apresentação conforme a seção 2.5;
 - público e senioridade;
 - perfil editorial, propondo `principal-cloud-solution-architect` para
   arquitetura de nuvem e ajustando a linguagem ao público;
@@ -705,7 +807,7 @@ No modo evolução, pergunte somente o que mudou.
 ```yaml
 ---
 swarm_id: <swarm_id>
-skill_version: "3.3.0"
+skill_version: "3.4.0"
 mode: document
 max_cycles: 5
 editorial_profile: <perfil definido no enquadramento>
@@ -737,6 +839,10 @@ deliverables:
    clareza/aderência ao público e completude decisória nos papéis existentes.
    Materialize no revisor editorial a rubrica de redação e o contrato de saída,
    separados de eventuais critérios de apresentação visual.
+   Numa apresentação, cubra também `legibility`, `interaction` e `editability`
+   com revisores de forma existentes, conforme a seção 2.5. Nenhum revisor
+   aprova a própria autoria, e o revisor visual não responde pela dimensão
+   editorial.
 4. Gere coordenador e rubber duck.
 5. Escolha e valide modelos contra a sessão.
 6. Grave `reports/agent-models.md` com `Status` e `Substituído de`.
@@ -916,6 +1022,11 @@ Quando a evolução entregar PDF, registre `pdf_engine: reportlab-v1`, perfil e
 idioma; adapte explicitamente os agentes reutilizados ao fluxo de composição,
 inspeção e revisão das prévias da seção 2.4. Não migre nem reescreva PDFs de ciclos
 históricos apenas para preencher o novo contrato.
+Numa apresentação, a evolução reutiliza a pasta do swarm e o mesmo DeckSpec,
+preservando `deck_id`, identificadores de slide, apoio e bloco. Cada ciclo
+compõe uma candidata nova em `output/presentation-cycle-0N/`; a anterior
+permanece como está. Edições feitas diretamente no PowerPoint não voltam à
+fonte: transponha-as para o DeckSpec e gere outro ciclo.
 Na adoção de `editorial-v1`, atualize o brief com o revisor designado e as
 entregas reais. Leia integralmente a nova edição: a aprovação de uma abertura
 em um ciclo antigo não substitui essa revisão.
@@ -939,7 +1050,7 @@ revisores. O YAML e o portão incluem tópicos antigos e novos.
 
 Gere novamente o relatório derivado e registre o delta da evolução na narrativa.
 
-## 13. Templates — documento
+## 13. Templates — agentes
 
 ### Autor
 
@@ -1235,6 +1346,9 @@ Auditar autores, revisores e coordenador.
   correspondam aos arquivos finais entregues;
 - PDF aprovado apenas por existência ou por ausência de erro de composição;
   confronte inspeção, prévias e revisão visual/editorial da edição corrente;
+- apresentação com página, formato ou dimensão sem nota, inspeção em estado não
+  terminal apresentada como aprovação, ou cobertura reduzida ao que o manifesto
+  declarou em vez do que o DeckSpec exige;
 - aplicação correta do portão e de `max_cycles`.
 
 ## Saída
@@ -1245,6 +1359,27 @@ justificativa insuficiente e a análise faltante. Devolva a avaliação para
 reexame e mantenha o aceite bloqueado enquanto a insuficiência persistir.
 Não substitua a nota do revisor silenciosamente.
 ```
+
+### Adaptação para apresentações
+
+Apresentações não criam tipos novos de agente: usam `author` e `reviewer`, com
+as mesmas regras de modelo, fontes e saída estruturada. Ajuste as declarações
+existentes conforme a missão.
+
+| Papel | Acréscimo na declaração |
+|---|---|
+| Autor de conteúdo | Escreve títulos, afirmações, apoios, rótulos de controle e notas publicáveis no DeckSpec. Um autor responde pelo encadeamento entre slides. |
+| Autor de composição visual | Define tema, áreas, densidade e diagramas tipados. Não produz uma segunda redação no HTML nem no PowerPoint. |
+| Revisor de fatos | Inalterado: confere afirmações, referências e a distinção entre fato, premissa e estimativa. |
+| Revisor editorial | Lê o texto integral entregue, inclusive rótulos, apoios e notas, e preenche `editorial` como sempre. |
+| Revisor decisório | Confere objetivo, argumentos, alternativas e limites para o público. |
+| Revisor visual e funcional | Avalia `legibility`, `interaction` e `editability` página a página, nos formatos de sua atribuição, abrindo os arquivos entregues. |
+| Coordenador | Mantém o DeckSpec e os identificadores, executa preflight, composição e inspeção antes dos revisores e consolida o bloco `presentation`. |
+| Rubber duck | Contesta cobertura ausente, evidência insuficiente e nota apoiada apenas em inspeção mecânica. |
+
+Um revisor pode acumular dimensões, desde que isso esteja explícito e ele não
+avalie a própria autoria. Não crie um agente por slide nem por formato. A
+inspeção mecânica é insumo da revisão, nunca a nota.
 
 ## 14. Referência dos scripts determinísticos
 
@@ -1257,6 +1392,7 @@ Todos usam somente Python stdlib. Consulte `--help` para opções exatas.
 | `lint_agents.py` | valida frontmatter e swarm dos agentes | agente está inválido |
 | `gate.py` | aplica régua, crítico, `max_cycles` e contrato editorial atual | retorna exit `1`, `2` ou `3` |
 | `pdf_contract.py` | verifica os registros e hashes das inspeções PDF no gate | inspeção falhou, está ausente ou não corresponde aos artefatos atuais |
+| `presentation_contract.py` | reconstrói páginas, navegação e cobertura de uma apresentação e confere seus registros | contrato, evidência ou cobertura não correspondem à entrega atual |
 | `progress.py` | projeta artefatos para observação local, sem modificá-los | não é um portão; problemas de leitura são explícitos |
 | `inspect_nomenclature.py` | lista candidatos lexicais e suas ocorrências | não dá nota; erros de leitura são explícitos |
 | `final_report.py` | deriva fatos do relatório final | artefatos estão ausentes/inválidos |
@@ -1283,6 +1419,10 @@ no gate usando apenas a biblioteca padrão.
       nenhum texto autoral foi acrescentado pelo gerador depois dela.
 - [ ] Se houver PDF, composição e inspeção passaram antes dos revisores;
       todas as páginas foram revistas e `pdf_inspections` corresponde aos arquivos.
+- [ ] Se a entrega for apresentação, `artifact_type`, capacidade e perfil estão
+      no brief; preflight, composição e inspeção passaram antes dos revisores;
+      todas as páginas foram avaliadas nos três formatos e o bloco `presentation`
+      corresponde aos arquivos entregues.
 - [ ] Siglas/códigos necessários estão explicados no primeiro uso e em legendas
       autônomas; convenções locais são distintas de padrões referenciados.
 - [ ] Resultado do gate foi registrado e corresponde à revisão corrente.
@@ -1307,3 +1447,19 @@ Versão da skill: <skill_version>
 Ciclos: <N> | Tópicos: <k>/<k> ≥ A | Gate: aprovado
 Fontes: <ok> ok, <warn> warn, 0 fail
 ```
+
+Para uma apresentação, informe os três arquivos e o perfil usado:
+
+```markdown
+Swarm concluído: `<OUTPUT_ROOT>/<swarm_id>/`
+
+Apresentação: `output/presentation-cycle-0N/`
+  index.html | deck-faithful.pptx | deck-editable.pptx
+Relatório: `reports/final-report.md`
+Versão da skill: <skill_version> | Perfil: <perfil homologado>
+Ciclos: <N> | Posições avaliadas: <k>/<k> ≥ A | Gate: aprovado
+Inspeções: <aprovadas>/<total>
+```
+
+Diga ao usuário que a aparência do arquivo editável depende das fontes
+instaladas no destino e que as notas do apresentador acompanham a entrega.

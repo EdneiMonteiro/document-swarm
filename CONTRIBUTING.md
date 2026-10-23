@@ -78,6 +78,25 @@ See the [editorial review format](./docs/editorial-review.md).
   a substitute for visual/editorial review.
 - Existing customer artifacts are reference inputs, never test output destinations.
 
+## Optional presentation engine
+
+- Keep `scripts/presentations` and `requirements-presentations.txt` outside the
+  stdlib checks; `scripts/checks/presentation_contract.py` must never import a
+  browser, Office or python-pptx.
+- Rebuild the expected pages, navigation and review coverage from the deck. A
+  manifest or an exporter map is evidence of intent, never of what was delivered.
+- Inspect the saved files: parse the delivered markup and open the PPTX package.
+  Add a detector only with a control that fails on the specific defect.
+- Run `python -m unittest tests.test_presentation_contract -v` with the default
+  interpreter and `tests.test_presentation_engine` in the optional environment.
+- Office rehearsals run only on an interactive Windows session, on copies, and
+  never close a PowerPoint the operator owns. Report `not_evaluated` honestly
+  when the network isolation of the station cannot be demonstrated.
+- Keep `pending`, `not_evaluated`, `unsupported` and `stale` outside the set of
+  states that can approve anything.
+
+See [the presentation guide](./docs/presentations.md).
+
 ## Visual monitor
 
 - The extension uses the Copilot-provided SDK and Node.js 20+ built-ins; the UI

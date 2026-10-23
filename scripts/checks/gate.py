@@ -15,12 +15,13 @@ from typing import Any
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.checks.common import InputError, load_data, parse_data, write_json_atomic
+from scripts.checks.common import (
+    GRADE_INDEX, InputError, SCALE, load_data, normalize_grade, parse_data, write_json_atomic,
+)
 from scripts.checks.lint_agents import frontmatter_text
 from scripts.checks.pdf_contract import verify_pdf_inspections
+from scripts.checks.presentation_contract import verify_presentation
 
-SCALE = ("D-", "D", "D+", "C-", "C", "C+", "B-", "B", "B+", "A-", "A", "A+")
-GRADE_INDEX = {grade: index for index, grade in enumerate(SCALE)}
 EDITORIAL_SURFACES = ("titles", "openings", "body", "captions", "conclusions")
 
 
@@ -182,8 +183,11 @@ def evaluate_current(data: Any, swarm: Path | None) -> dict[str, Any]:
         verify_editorial_artifacts(data, swarm, brief)
     if "pdf_inspections" in data and (swarm is None or not brief):
         raise InputError("PDF validation requires the swarm brief and artifacts")
+    if "presentation" in data and (swarm is None or not brief):
+        raise InputError("presentation validation requires the swarm brief and artifacts")
     if swarm is not None:
         result["blocked"].extend(verify_pdf_inspections(data, swarm, brief))
+        result["blocked"].extend(verify_presentation(data, swarm, brief))
         if result["blocked"]:
             result["outcome"] = "escalate" if result["cycle"] >= result["max_cycles"] else "rejected"
     return result
@@ -194,12 +198,6 @@ def value(item: dict[str, Any], *names: str) -> Any:
         if name in item:
             return item[name]
     return None
-
-
-def normalize_grade(grade: Any) -> str:
-    if not isinstance(grade, str) or grade.strip().upper() not in GRADE_INDEX:
-        raise InputError(f"invalid grade: {grade!r}; expected one of {', '.join(SCALE)}")
-    return grade.strip().upper()
 
 
 def items_below(section: Any, labels: tuple[str, ...]) -> list[dict[str, str]]:
