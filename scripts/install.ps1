@@ -29,8 +29,12 @@ $PythonExe = $null
 foreach ($candidate in @('python3', 'python')) {
   $command = Get-Command $candidate -ErrorAction SilentlyContinue
   if (-not $command) { continue }
-  & $command.Source -c 'import sys; raise SystemExit(sys.version_info.major != 3)' 2>$null
-  if ($LASTEXITCODE -eq 0) { $PythonExe = $command.Source; break }
+  try {
+    & $command.Source -c 'import sys; raise SystemExit(sys.version_info.major != 3)' *> $null
+    if ($LASTEXITCODE -eq 0) { $PythonExe = $command.Source; break }
+  } catch {
+    continue
+  }
 }
 if (-not $PythonExe) { throw 'Python 3 é obrigatório para os checks determinísticos.' }
 

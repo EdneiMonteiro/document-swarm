@@ -9,7 +9,7 @@ import { createMonitorServer, readArtifact } from "../server.mjs";
 import { MonitorManager, readEvidence } from "../manager.mjs";
 import { yieldsToProject } from "../ownership.mjs";
 import { canvasWindowTitle, createCanvasWindow } from "../window.mjs";
-import { AGENT_STATUS, archived, agentStatus, dispatchStatus, healthLabel, sessionLabel } from "../ui/app.mjs";
+import { AGENT_STATUS, agentTokenUsage, archived, agentStatus, cycleTokenUsage, dispatchStatus, formatCompactTokens, healthLabel, sessionLabel, totalTokenUsage } from "../ui/app.mjs";
 
 const digest = value => createHash("sha256").update(value).digest("hex");
 async function fixture(t) {
@@ -639,3 +639,57 @@ test("status measures health at the moment it is asked, not at the last heartbea
     assert.equal(asked.health.state, "unobserved");
     assert.equal(JSON.parse(await fs.readFile(path.join(entry.store.directory, "health.json"), "utf8")).state, "unobserved");
 });
+
+test("real-time token usage is tracked per agent, per round and cumulatively across rounds", async t => {
+    const f = await fixture(t);
+    const store = await RunStore.create(f.root, { sessionId: "session", evidence: f.evidence });
+    f.resources.push(store);
+    const { call } = await spawned(store, 1);
+
+    // Unrelated subagent usage must be ignored
+    await store.observe(native("session.usage_record", {
+        usage: { inputTokens: 99999, outputTokens: 1111, cacheReadTokens: 0, cacheWriteTokens: 0, parentToolCallId: "unrelated-call" },
+    }, { agentId: "foreign-agent" }));
+    assert.equal(totalTokenUsage(store.publicState).total_tokens, 0);
+
+    // Real-time subagent turn 1 in cycle 1
+    await store.observe(native("session.usage_record", {
+        usage: { inputTokens: 33500, outputTokens: 500, cacheReadTokens: 30000, cacheWriteTokens: 3500, parentToolCallId: call },
+    }));
+    // Coordinator turn in cycle 1 (no agentId)
+    await store.observe(native("session.usage_record", {
+        usage: { inputTokens: 12000, outputTokens: 300, cacheReadTokens: 10000, cacheWriteTokens: 2000 },
+    }, { agentId: null }));
+
+    const authorC1 = agentTokenUsage(store.publicState, "author-01", 1);
+    assert.equal(authorC1.cycle.total_tokens, 34000);
+    assert.equal(authorC1.cycle.input_tokens, 33500);
+    assert.equal(authorC1.cycle.output_tokens, 500);
+    assert.equal(authorC1.cycle.cache_read_tokens, 30000);
+    assert.equal(authorC1.cycle.cache_write_tokens, 3500);
+
+    const coordC1 = agentTokenUsage(store.publicState, "coordinator", 1);
+    assert.equal(coordC1.cycle.total_tokens, 12300);
+
+    const round1 = cycleTokenUsage(store.publicState, 1);
+    assert.equal(round1.total_tokens, 46300);
+    assert.equal(round1.input_tokens, 45500);
+    assert.equal(round1.output_tokens, 800);
+    assert.equal(round1.cache_read_tokens, 40000);
+    assert.equal(round1.cache_write_tokens, 5500);
+
+    // Cycle 2 adds another dispatch and reconciles subagent.completed totalTokens
+    const second = await spawned(store, 2);
+    await store.observe(native("subagent.completed", {
+        toolCallId: second.call,
+        totalTokens: 120000,
+    }, { agentId: "native-agent-2" }));
+
+    const round2 = cycleTokenUsage(store.publicState, 2);
+    assert.equal(round2.total_tokens, 120000);
+    const cumulative = totalTokenUsage(store.publicState);
+    assert.equal(cumulative.total_tokens, 166300);
+    assert.equal(formatCompactTokens(46300), "46,3k");
+    assert.equal(formatCompactTokens(1608370), "1,61M");
+});
+

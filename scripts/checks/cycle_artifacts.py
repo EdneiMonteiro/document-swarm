@@ -238,7 +238,11 @@ def assemble(swarm: Path, cycle: int, *, from_sections: bool = False) -> dict[st
     primary.parent.mkdir(parents=True, exist_ok=True)
     sections_dir = root / "output" / "sections"
     section_files = sorted(sections_dir.glob("*.md")) if sections_dir.is_dir() else []
-    if section_files and (from_sections or not primary.is_file()):
+    if section_files and (
+        from_sections
+        or not primary.is_file()
+        or any(p.stat().st_mtime > primary.stat().st_mtime for p in section_files)
+    ):
         parts = [path.read_text(encoding="utf-8").strip() for path in section_files if path.is_file()]
         primary.write_text("\n\n".join(part for part in parts if part) + "\n", encoding="utf-8")
     if not primary.is_file():
@@ -559,7 +563,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, UnicodeError, InputError, ValueError) as exc:
         print(f"INVALID: {exc}", file=sys.stderr)
         return 3
-    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    print(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True))
     return 0
 
 

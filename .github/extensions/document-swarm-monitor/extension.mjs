@@ -61,7 +61,7 @@ if (active) {
     for (const type of [
         "tool.execution_start", "tool.execution_complete", "subagent.started", "subagent.configured",
         "subagent.completed", "subagent.failed", "session.background_tasks_changed",
-        "assistant.turn_start", "assistant.idle", "session.idle", "session.task_complete",
+        "session.usage_record", "assistant.turn_start", "assistant.idle", "session.idle", "session.task_complete",
     ]) {
         session.on(type, event => manager.native(event));
     }

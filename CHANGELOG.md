@@ -9,6 +9,15 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
 ### Added
 
+- `check_update.py`: checks whether the installed `<DOCSWARM>` clone is behind
+  `origin/main` at the start of Phase 0 and, upon explicit user approval via
+  `ask_user`, fast-forwards the clone (`--apply`) and reloads extensions
+  in-place via `extensions_reload`.
+- Real-time token accounting in `document-swarm-monitor`: listens to
+  `session.usage_record` (and reconciles `subagent.completed`), displaying live
+  per-agent token counters on graph cards and in the Details tab, plus round and
+  cumulative token totals (`Input / Output / Cache`) in the top summary bar,
+  and adapts the canvas layout vertically when resizing the window height.
 - `cycle_artifacts.py` (`assemble`, `diff` and `consolidate`): deterministic
   section assembly, cross-cycle text/PDF-page diffing (`cycle-0N-diff.json` and
   `cycle-0N-diff.md`), automatic carry-forward of uncontested `>= A` grades on
@@ -65,6 +74,10 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
 ### Changed
 
+- Restrict `SKILL.md` frontmatter trigger description to explicit swarm
+  requests and add a mandatory Phase 0 opt-in prompt (`ask_user`) whenever the
+  skill is loaded on a general document review/modification request without an
+  explicit `"swarm"` / `"document-swarm"` mention.
 - The health classification no longer trusts the session label over the
   measurement: `processing` beyond the threshold with no running agent is
   reported as stalled, and a running agent earns grace only up to three

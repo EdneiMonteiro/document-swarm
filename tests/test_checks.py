@@ -230,6 +230,109 @@ class VerifyTablesTests(WorkTest):
         self.assertEqual(failed["checks"][0]["mismatches"][0]["unknown_refs"], ["apim-cartao-prd"])
         self.assertEqual(failed["checks"][2]["mismatches"][0]["unknown_keys"], ["apim-fundos-prd"])
 
+    def test_external_json_validates_inventory_counts_against_raw_json(self):
+        raw_json = self.work / "services-analysis.json"
+        raw_json.write_text(
+            json.dumps([
+                {
+                    "name": "apim-siacx-des",
+                    "backends": [{"id": i} for i in range(13)],
+                    "namedValues": [{"secret": True}] * 2,
+                },
+                {
+                    "name": "apim-sinbm-prd",
+                    "backends": [],
+                    "namedValues": [{"secret": True}] * 4 + [{"secret": False}] * 5,
+                },
+            ]),
+            encoding="utf-8",
+        )
+        good_doc = self.work / "good-ext.md"
+        good_doc.write_text(
+            '<!-- check: external_json file="services-analysis.json" key=1 json_key="name" pattern="apim-[a-z0-9-]+" map="objetos Backend:len(backends);Named Values secretos:count(namedValues,secret=true)" -->\n'
+            "| Instância | Ação |\n"
+            "| --- | --- |\n"
+            "| 44. apim-siacx-des | Implantar circuitBreaker nos 13 objetos Backend |\n"
+            "| 60. apim-sinbm-prd | Migrar 4 Named Values secretos para Key Vault |\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(verify_tables.check_file(good_doc)["failures"], 0)
+
+        bad_doc = self.work / "bad-ext.md"
+        bad_doc.write_text(
+            '<!-- check: external_json file="services-analysis.json" key=1 json_key="name" pattern="apim-[a-z0-9-]+" map="objetos Backend:len(backends);Named Values secretos:count(namedValues,secret=true)" -->\n'
+            "| Instância | Ação |\n"
+            "| --- | --- |\n"
+            "| 44. apim-siacx-des | Implantar circuitBreaker nos 5 objetos Backend |\n"
+            "| 60. apim-sinbm-prd | Migrar 6 Named Values secretos para Key Vault |\n",
+            encoding="utf-8",
+        )
+        bad_report = verify_tables.check_file(bad_doc)
+        self.assertEqual(bad_report["failures"], 1)
+        mismatches = bad_report["checks"][0]["mismatches"]
+        self.assertEqual(len(mismatches), 2)
+        self.assertEqual((mismatches[0]["declared"], mismatches[0]["expected"]), ("5", "13"))
+        self.assertEqual((mismatches[1]["declared"], mismatches[1]["expected"]), ("6", "4"))
+
+
+class CheckUpdateTests(unittest.TestCase):
+    def _git(self, cwd: Path, *args: str) -> None:
+        subprocess.run(
+            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", *args],
+            cwd=str(cwd),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_detects_remote_update_refuses_dirty_tree_and_applies_fast_forward(self):
+        import tempfile
+        from scripts.checks import check_update
+        from scripts.checks.common import InputError
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            work = Path(tmp)
+            upstream = work / "upstream"
+            upstream.mkdir()
+            self._git(upstream, "init", "-b", "main")
+            (upstream / "SKILL.md").write_text('---\nname: document-swarm\nskill_version: "3.5.0"\n---\n# Skill\n', encoding="utf-8")
+            self._git(upstream, "add", "SKILL.md")
+            self._git(upstream, "commit", "-m", "initial 3.5.0")
+
+            clone = work / "clone"
+            self._git(work, "clone", str(upstream), str(clone))
+
+            initial = check_update.check(clone, timeout=5)
+            self.assertEqual(initial["status"], "up_to_date")
+            self.assertFalse(initial["update_available"])
+            self.assertEqual(initial["local_version"], "3.5.0")
+
+            # Advance upstream to 3.6.0
+            (upstream / "SKILL.md").write_text('---\nname: document-swarm\nskill_version: "3.6.0"\n---\n# Skill v3.6\n', encoding="utf-8")
+            self._git(upstream, "add", "SKILL.md")
+            self._git(upstream, "commit", "-m", "release 3.6.0")
+
+            available = check_update.check(clone, timeout=5)
+            self.assertEqual(available["status"], "update_available")
+            self.assertTrue(available["update_available"])
+            self.assertTrue(available["can_fast_forward"])
+            self.assertEqual(available["behind"], 1)
+            self.assertEqual(available["local_version"], "3.5.0")
+            self.assertEqual(available["remote_version"], "3.6.0")
+
+            # Dirty working tree in clone must block --apply
+            (clone / "SKILL.md").write_text("dirty local edit\n", encoding="utf-8")
+            with self.assertRaises(InputError):
+                check_update.apply_update(clone, timeout=5)
+
+            # Restore clean working tree and apply fast-forward update
+            self._git(clone, "checkout", "--", "SKILL.md")
+            updated = check_update.apply_update(clone, timeout=5)
+            self.assertEqual(updated["status"], "updated")
+            self.assertTrue(updated["applied"])
+            self.assertEqual(updated["local_version"], "3.6.0")
+            self.assertEqual(updated["behind"], 0)
+
 
 def review(grade="A", *, cycle=1, maximum=3, critical=False, slides=None, dimensions=None):
     result = {

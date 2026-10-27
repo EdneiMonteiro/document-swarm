@@ -48,6 +48,37 @@ export async function atomicJson(destination, data) {
 export const RECOVERY_RULES = new Set(["R1", "R2", "R3", "R4", "R5"]);
 export const RECOVERY_LIMITS = { perAgentCycle: 2, perExecution: 6 };
 
+export function emptyUsage() {
+    return { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, total_tokens: 0, calls: 0 };
+}
+
+export function addUsage(current = emptyUsage(), delta = {}) {
+    const input = Math.max(0, Math.round(Number(delta.input_tokens) || 0));
+    const output = Math.max(0, Math.round(Number(delta.output_tokens) || 0));
+    const cacheRead = Math.max(0, Math.round(Number(delta.cache_read_tokens) || 0));
+    const cacheWrite = Math.max(0, Math.round(Number(delta.cache_write_tokens) || 0));
+    const deltaTotal = Number.isFinite(delta.total_tokens) && delta.total_tokens >= 0
+        ? Math.round(delta.total_tokens)
+        : Math.max(input, cacheRead + cacheWrite) + output;
+    return {
+        input_tokens: (current?.input_tokens ?? 0) + input,
+        output_tokens: (current?.output_tokens ?? 0) + output,
+        cache_read_tokens: (current?.cache_read_tokens ?? 0) + cacheRead,
+        cache_write_tokens: (current?.cache_write_tokens ?? 0) + cacheWrite,
+        total_tokens: (current?.total_tokens ?? 0) + deltaTotal,
+        calls: (current?.calls ?? 0) + (delta.calls === 0 ? 0 : 1),
+    };
+}
+
+function ensureTokenUsage(state) {
+    state.token_usage ??= { total: emptyUsage(), by_cycle: {}, by_agent: {}, by_agent_cycle: {} };
+    state.token_usage.total ??= emptyUsage();
+    state.token_usage.by_cycle ??= {};
+    state.token_usage.by_agent ??= {};
+    state.token_usage.by_agent_cycle ??= {};
+    return state.token_usage;
+}
+
 export function initialState({ executionId, sessionId, evidence }) {
     return {
         schema_version: 1, execution_id: executionId, session_id: sessionId,
@@ -55,6 +86,7 @@ export function initialState({ executionId, sessionId, evidence }) {
         cycle: 0, phase: "setup", status: "observing", connection: "connected",
         created_at: now(), updated_at: now(), sequence: 0,
         agents: evidence.agents, dispatches: [], edges: [], events: [], recoveries: [],
+        token_usage: { total: emptyUsage(), by_cycle: {}, by_agent: {}, by_agent_cycle: {} },
         session_activity: { status: "unknown", observed_at: null, stale: true },
         closure: null,
         seen_ids: [], evidence,
@@ -182,10 +214,45 @@ export function reduce(state, event) {
             update.status = "completed";
         }
         Object.assign(dispatch, update);
+        if (Number.isSafeInteger(data.reported_total_tokens) && data.reported_total_tokens > 0) {
+            const currentTotal = dispatch.token_usage?.total_tokens ?? 0;
+            if (data.reported_total_tokens > currentTotal) {
+                const diff = data.reported_total_tokens - currentTotal;
+                const delta = { input_tokens: diff, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, total_tokens: diff, calls: currentTotal > 0 ? 0 : 1 };
+                dispatch.token_usage = addUsage(dispatch.token_usage, delta);
+                const storeUsage = ensureTokenUsage(next);
+                const cycleKey = String(dispatch.cycle ?? next.cycle ?? 0);
+                storeUsage.total = addUsage(storeUsage.total, delta);
+                storeUsage.by_cycle[cycleKey] = addUsage(storeUsage.by_cycle[cycleKey], delta);
+                if (dispatch.agent_id) {
+                    storeUsage.by_agent[dispatch.agent_id] = addUsage(storeUsage.by_agent[dispatch.agent_id], delta);
+                    storeUsage.by_agent_cycle[`${dispatch.agent_id}:${cycleKey}`] = addUsage(storeUsage.by_agent_cycle[`${dispatch.agent_id}:${cycleKey}`], delta);
+                }
+            }
+        }
         if (event.source === "runtime") Object.assign(dispatch, {
             observed_at: dispatch.observed_at && dispatch.observed_at > event.at ? dispatch.observed_at : event.at,
             observation_stale: false,
         });
+    } else if (event.type === "usage") {
+        const storeUsage = ensureTokenUsage(next);
+        const cycleKey = String(Number.isSafeInteger(data.cycle) ? data.cycle : next.cycle ?? 0);
+        const agentId = typeof data.agent_id === "string" && data.agent_id ? data.agent_id : null;
+        if (data.dispatch_id) {
+            const dispatch = next.dispatches.find(item => item.id === data.dispatch_id);
+            if (!dispatch) return state;
+            dispatch.token_usage = addUsage(dispatch.token_usage, data);
+            if (event.source === "runtime") {
+                dispatch.observed_at = dispatch.observed_at && dispatch.observed_at > event.at ? dispatch.observed_at : event.at;
+                dispatch.observation_stale = false;
+            }
+        }
+        storeUsage.total = addUsage(storeUsage.total, data);
+        storeUsage.by_cycle[cycleKey] = addUsage(storeUsage.by_cycle[cycleKey], data);
+        if (agentId) {
+            storeUsage.by_agent[agentId] = addUsage(storeUsage.by_agent[agentId], data);
+            storeUsage.by_agent_cycle[`${agentId}:${cycleKey}`] = addUsage(storeUsage.by_agent_cycle[`${agentId}:${cycleKey}`], data);
+        }
     } else if (event.type === "session") {
         if (!["processing", "waiting", "idle", "completion_declared"].includes(data.status)) throw new Error("Invalid session activity");
         if (next.session_activity?.observed_at && event.at < next.session_activity.observed_at) return state;
@@ -445,6 +512,46 @@ export class RunStore extends EventEmitter {
             }, "runtime", { id: event.id, at });
             return;
         }
+        if (event.type === "session.usage_record") {
+            if (at < this.state.created_at) return;
+            const usage = data.usage;
+            if (!usage || typeof usage !== "object") return;
+            const inputTokens = Number.isFinite(usage.inputTokens) && usage.inputTokens >= 0 ? Math.round(usage.inputTokens) : 0;
+            const outputTokens = Number.isFinite(usage.outputTokens) && usage.outputTokens >= 0 ? Math.round(usage.outputTokens) : 0;
+            const cacheReadTokens = Number.isFinite(usage.cacheReadTokens) && usage.cacheReadTokens >= 0 ? Math.round(usage.cacheReadTokens) : 0;
+            const cacheWriteTokens = Number.isFinite(usage.cacheWriteTokens) && usage.cacheWriteTokens >= 0 ? Math.round(usage.cacheWriteTokens) : 0;
+            if (inputTokens === 0 && outputTokens === 0 && cacheReadTokens === 0 && cacheWriteTokens === 0) return;
+            await this.record("usage", state => {
+                if (event.agentId || typeof usage.parentToolCallId === "string") {
+                    const dispatch = runtimeDispatch(state, {
+                        agentId: event.agentId,
+                        toolCallId: usage.parentToolCallId,
+                        at,
+                    });
+                    if (!dispatch) return null;
+                    return {
+                        dispatch_id: dispatch.id,
+                        agent_id: dispatch.agent_id,
+                        cycle: dispatch.cycle,
+                        input_tokens: inputTokens,
+                        output_tokens: outputTokens,
+                        cache_read_tokens: cacheReadTokens,
+                        cache_write_tokens: cacheWriteTokens,
+                    };
+                }
+                const coordinator = state.agents.find(item => item.kind === "coordinator")?.id ?? "coordinator";
+                return {
+                    dispatch_id: null,
+                    agent_id: coordinator,
+                    cycle: state.cycle,
+                    input_tokens: inputTokens,
+                    output_tokens: outputTokens,
+                    cache_read_tokens: cacheReadTokens,
+                    cache_write_tokens: cacheWriteTokens,
+                };
+            }, "runtime", { id: event.id, at });
+            return;
+        }
         if (!["subagent.started", "subagent.completed", "subagent.failed"].includes(event.type)) return;
         await this.record("runtime", state => {
             const dispatch = runtimeDispatch(state, {
@@ -460,6 +567,9 @@ export class RunStore extends EventEmitter {
                 started_at: dispatch.started_at ?? (status === "running" ? at : null),
                 lifecycle: true,
             };
+            if (Number.isFinite(data.totalTokens) && data.totalTokens > 0) {
+                update.reported_total_tokens = Math.round(data.totalTokens);
+            }
             const model = data.firstDispatchedModel ?? data.model;
             if (typeof model === "string" && model !== "auto") {
                 update.observed_model = model;

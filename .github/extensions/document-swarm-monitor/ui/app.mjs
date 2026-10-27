@@ -50,6 +50,66 @@ export function healthLabel(state, cycle, connected) {
     return { state: health.state, title, detail: `${title}: ${health.reason}` };
 }
 
+function zeroUsage() {
+    return { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, total_tokens: 0, calls: 0 };
+}
+
+function sumUsageList(items) {
+    const acc = zeroUsage();
+    for (const item of items) {
+        if (!item) continue;
+        acc.input_tokens += item.input_tokens ?? 0;
+        acc.output_tokens += item.output_tokens ?? 0;
+        acc.cache_read_tokens += item.cache_read_tokens ?? 0;
+        acc.cache_write_tokens += item.cache_write_tokens ?? 0;
+        acc.total_tokens += item.total_tokens ?? ((item.input_tokens ?? 0) + (item.output_tokens ?? 0));
+        acc.calls += item.calls ?? 0;
+    }
+    return acc;
+}
+
+export function formatCompactTokens(value) {
+    const count = Math.max(0, Math.round(Number(value) || 0));
+    if (count === 0) return "0";
+    if (count < 1000) return String(count);
+    if (count < 1_000_000) {
+        const k = count / 1000;
+        return `${(k >= 100 ? k.toFixed(0) : k.toFixed(1).replace(/\.0$/, "")).replace(".", ",")}k`;
+    }
+    const m = count / 1_000_000;
+    return `${(m >= 100 ? m.toFixed(0) : m.toFixed(2).replace(/\.?0+$/, "")).replace(".", ",")}M`;
+}
+
+export function formatExactTokens(value) {
+    return Math.max(0, Math.round(Number(value) || 0)).toLocaleString("pt-BR");
+}
+
+export function cycleTokenUsage(state, cycle) {
+    const recorded = state?.token_usage?.by_cycle?.[String(cycle)];
+    if (recorded) return { ...zeroUsage(), ...recorded };
+    const dispatches = (state?.dispatches ?? []).filter(item => item.cycle === cycle && item.token_usage);
+    return sumUsageList(dispatches.map(item => item.token_usage));
+}
+
+export function totalTokenUsage(state) {
+    const recorded = state?.token_usage?.total;
+    if (recorded) return { ...zeroUsage(), ...recorded };
+    const dispatches = (state?.dispatches ?? []).filter(item => item.token_usage);
+    return sumUsageList(dispatches.map(item => item.token_usage));
+}
+
+export function agentTokenUsage(state, agentId, cycle) {
+    const cycleKey = `${agentId}:${cycle}`;
+    const byAgentCycle = state?.token_usage?.by_agent_cycle?.[cycleKey];
+    const byAgentTotal = state?.token_usage?.by_agent?.[agentId];
+    const agentDispatches = (state?.dispatches ?? []).filter(item => item.agent_id === agentId && item.token_usage);
+    const cycleDispatches = agentDispatches.filter(item => item.cycle === cycle);
+    return {
+        cycle: byAgentCycle ? { ...zeroUsage(), ...byAgentCycle } : sumUsageList(cycleDispatches.map(item => item.token_usage)),
+        total: byAgentTotal ? { ...zeroUsage(), ...byAgentTotal } : sumUsageList(agentDispatches.map(item => item.token_usage)),
+    };
+}
+
 async function startInterface() {
     const $ = id => document.getElementById(id);
     const token = new URLSearchParams(location.hash.slice(1)).get("token");
@@ -236,6 +296,24 @@ async function startInterface() {
         $("grade-count").textContent = cycle?.consistent === false ? "Divergente"
             : cycle?.topics.length ? `${cycle.topics.filter(topic => scale.indexOf(topic.grade) >= a).length} / ${cycle.topics.length}` : "Pendente";
         for (const id of ["agent-count", "running-count", "cycle-count", "grade-count"]) $(id).title = $(id).textContent;
+        const roundTokens = cycleTokenUsage(data, selectedCycle);
+        const cumTokens = totalTokenUsage(data);
+        const roundCache = roundTokens.cache_read_tokens + roundTokens.cache_write_tokens;
+        const cumCache = cumTokens.cache_read_tokens + cumTokens.cache_write_tokens;
+        if ($("cycle-tokens")) {
+            $("cycle-tokens").textContent = formatCompactTokens(roundTokens.total_tokens);
+            $("cycle-tokens-meta").textContent = `E:${formatCompactTokens(roundTokens.input_tokens)} · S:${formatCompactTokens(roundTokens.output_tokens)} · C:${formatCompactTokens(roundCache)}`;
+            const roundTip = `Rodada ${selectedCycle || "Pré-ciclo"}: ${formatExactTokens(roundTokens.total_tokens)} tokens | Entrada: ${formatExactTokens(roundTokens.input_tokens)} · Saída: ${formatExactTokens(roundTokens.output_tokens)} · Cache: ${formatExactTokens(roundCache)} (leitura: ${formatExactTokens(roundTokens.cache_read_tokens)} / escrita: ${formatExactTokens(roundTokens.cache_write_tokens)})`;
+            $("cycle-tokens-card").title = roundTip;
+            $("cycle-tokens").title = roundTip;
+        }
+        if ($("total-tokens")) {
+            $("total-tokens").textContent = formatCompactTokens(cumTokens.total_tokens);
+            $("total-tokens-meta").textContent = `E:${formatCompactTokens(cumTokens.input_tokens)} · S:${formatCompactTokens(cumTokens.output_tokens)} · C:${formatCompactTokens(cumCache)}`;
+            const cumTip = `Acumulado total: ${formatExactTokens(cumTokens.total_tokens)} tokens | Entrada: ${formatExactTokens(cumTokens.input_tokens)} · Saída: ${formatExactTokens(cumTokens.output_tokens)} · Cache: ${formatExactTokens(cumCache)} (leitura: ${formatExactTokens(cumTokens.cache_read_tokens)} / escrita: ${formatExactTokens(cumTokens.cache_write_tokens)})`;
+            $("total-tokens-card").title = cumTip;
+            $("total-tokens").title = cumTip;
+        }
         $("phases").replaceChildren(...Object.entries(PHASES).map(([key, label]) => element("span", label, `phase${data.phase === key ? " active" : ""}`)));
         if (activeTab !== "flow") seenEdges = new Set(data.edges.map(edge => edge.id));
         renderGraph();
@@ -260,6 +338,11 @@ async function startInterface() {
         const roster = shownState.agents.filter(agent => !agent.declaration_missing || dispatchFor(agent.id));
         const groups = columns.map(kind => roster.filter(agent => (dispatchFor(agent.id)?.agent_kind ?? agent.kind) === kind));
         const rows = Math.max(1, ...groups.map(group => group.length));
+        const containerHeight = $("graph-container")?.clientHeight ?? 0;
+        const minGraphHeight = rows * layout.row + layout.margin;
+        if (containerHeight > minGraphHeight + 12) {
+            layout.row = Math.min(compact ? 110 : 180, Math.floor((containerHeight - layout.margin) / rows));
+        }
         const height = Math.max(compact ? 180 : 300, rows * layout.row + layout.margin);
         const positions = new Map();
         const labels = [];
@@ -331,8 +414,14 @@ async function startInterface() {
             if (!compact) group.append(label({ x: 14, y: 68, class: "agent-role" }, dispatch?.observed_model ?? dispatch?.declared_model ?? agent.declared_model, layout.cardWidth - 28));
             group.append(svg("circle", { cx: compact ? 12 : 18, cy: compact ? 48 : 87, r: compact ? 3 : 3.5, class: "status-dot" }));
             const stateX = compact ? 20 : 28;
-            group.append(label({ x: stateX, y: compact ? 52 : 91, class: "agent-state" }, STATUS[status], layout.cardWidth - stateX - 8));
-            group.append(svg("title", {}, `${agent.id}\n${role}\n${STATUS[status]}`));
+            const usage = agentTokenUsage(shownState, agent.id, selectedCycle);
+            const activeTokens = usage.cycle.total_tokens || (agent.kind === "coordinator" ? usage.total.total_tokens : 0);
+            const stateText = activeTokens > 0 ? `${STATUS[status]} · ${formatCompactTokens(activeTokens)} tok` : STATUS[status];
+            group.append(label({ x: stateX, y: compact ? 52 : 91, class: "agent-state" }, stateText, layout.cardWidth - stateX - 8));
+            const tokenTitle = activeTokens > 0 || usage.total.total_tokens > 0
+                ? `\nTokens rodada: ${formatExactTokens(usage.cycle.total_tokens)} (E: ${formatExactTokens(usage.cycle.input_tokens)} · S: ${formatExactTokens(usage.cycle.output_tokens)} · Cache: ${formatExactTokens(usage.cycle.cache_read_tokens + usage.cycle.cache_write_tokens)})\nTokens total: ${formatExactTokens(usage.total.total_tokens)}`
+                : "";
+            group.append(svg("title", {}, `${agent.id}\n${role}\n${STATUS[status]}${tokenTitle}`));
             children.push(group);
         }
         if (!shownState.agents.length) children.push(svg("text", { x: 20, y: 100, class: "agent-role" }, "Aguardando a criação dos agentes."));
@@ -449,6 +538,10 @@ async function startInterface() {
             if (!agent) { selection = null; return renderDetails(); }
             const dispatch = dispatchFor(agent.id);
             const principal = !dispatch && agent.kind === "coordinator";
+            const usage = agentTokenUsage(shownState, agent.id, selectedCycle);
+            const fmtUsage = u => u.total_tokens > 0
+                ? `${formatExactTokens(u.total_tokens)} (entrada: ${formatExactTokens(u.input_tokens)} · saída: ${formatExactTokens(u.output_tokens)} · cache leitura: ${formatExactTokens(u.cache_read_tokens)} · cache escrita: ${formatExactTokens(u.cache_write_tokens)})`
+                : "0 (nenhum consumo observado)";
             container.append(element("h3", agent.id), element("p", dispatch?.role ?? agent.role));
             const list = element("dl");
             for (const [label, value] of [
@@ -456,6 +549,8 @@ async function startInterface() {
                 ["Modelo declarado", dispatch?.declared_model ?? agent.declared_model],
                 ["Modelo observado", dispatch?.observed_model ?? "Não informado pelo runtime"],
                 ["Origem do modelo", dispatch?.model_source === "first_dispatched" ? "Primeiro modelo despachado" : dispatch?.observed_model ? "Seleção do runtime" : "Não registrada"],
+                ["Tokens (rodada)", fmtUsage(usage.cycle)],
+                ["Tokens (acumulado)", fmtUsage(usage.total)],
                 ["Tarefa", principal ? "Agente principal da sessão" : dispatch?.task_id ?? "Não correlacionada"],
                 ["Última observação", principal && shownState.session_activity?.observed_at ? date(shownState.session_activity.observed_at) : dispatch?.observed_at ? date(dispatch.observed_at) : "Não registrada"],
                 ["Disponibilidade", STATUS[dispatch?.task_status] ?? "Não registrada"],
@@ -501,6 +596,7 @@ async function startInterface() {
                 : event.type === "dispatch" ? `${data.agent_id}: despacho registrado; aguardando observação`
                 : event.type === "binding" ? `${dispatch?.agent_id ?? "Agente"}: chamada correlacionada`
                 : event.type === "runtime" ? `${dispatch?.agent_id ?? "Agente"}: ${STATUS[data.status] ?? "metadados atualizados"}`
+                : event.type === "usage" ? `${data.agent_id ?? dispatch?.agent_id ?? "Agente"}: +${formatExactTokens((data.input_tokens ?? 0) + (data.output_tokens ?? 0))} tokens (E: ${formatExactTokens(data.input_tokens)} · S: ${formatExactTokens(data.output_tokens)} · C: ${formatExactTokens((data.cache_read_tokens ?? 0) + (data.cache_write_tokens ?? 0))})`
                 : event.type === "handoff" ? `${data.from} → ${data.to}: ${data.label}`
                 : event.type === "evidence" ? `Artefatos atualizados: ${data.agents} agentes, ${data.cycles} rodadas`
                 : event.type === "finish" ? `Encerramento solicitado: ${data.status}`
@@ -659,6 +755,10 @@ async function startInterface() {
         cancelAnimationFrame(resizeFrame);
         resizeFrame = requestAnimationFrame(() => { if (shownState) renderGraph(); });
     }).observe($("dashboard"));
+    window.addEventListener("resize", () => {
+        cancelAnimationFrame(resizeFrame);
+        resizeFrame = requestAnimationFrame(() => { if (shownState) renderGraph(); });
+    });
     $("artifact-view").addEventListener("keydown", event => {
         if (event.key === "Escape") closeArtifact();
         if (event.key === "Tab") {
