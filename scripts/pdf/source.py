@@ -58,14 +58,35 @@ def nonempty(value: Any, name: str) -> str:
     return value
 
 
-def figure_spec(data: Any, name: str) -> dict[str, Any]:
+def figure_spec(data: Any, name: str, source_dir: Path | None = None) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise InputError(f"figure {name}: JSON object required")
+    if data.get("kind") == "image":
+        allowed_img = {"kind", "title", "caption", "src", "max_height"}
+        if set(data) - allowed_img:
+            raise InputError(f"figure {name}: unsupported fields {sorted(set(data) - allowed_img)}")
+        for key in ("title", "caption", "src"):
+            nonempty(data.get(key), f"figure {name} {key}")
+        raw_src = str(data["src"]).replace("\\", "/")
+        candidates = []
+        if source_dir is not None:
+            candidates.append((source_dir / raw_src).resolve())
+            candidates.append((source_dir.parent / raw_src).resolve())
+        resolved = next((p for p in candidates if p.is_file()), None)
+        if resolved is None or resolved.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+            raise InputError(f"figure {name}: image file not found or unsupported format: {data['src']}")
+        max_h = data.get("max_height", 240)
+        if type(max_h) not in (int, float) or not (40 <= float(max_h) <= 520):
+            raise InputError(f"figure {name}: max_height must be between 40 and 520")
+        out = dict(data)
+        out["resolved_src"] = str(resolved)
+        out["labels"] = []
+        return out
     allowed = {"kind", "title", "caption", "labels", "values", "display_values", "unit"}
     if set(data) - allowed:
         raise InputError(f"figure {name}: unsupported fields {sorted(set(data) - allowed)}")
     if data.get("kind") not in ("flow", "layers", "bars"):
-        raise InputError(f"figure {name}: kind must be flow, layers or bars")
+        raise InputError(f"figure {name}: kind must be flow, layers, bars or image")
     for key in ("title", "caption"):
         nonempty(data.get(key), f"figure {name} {key}")
     labels = data.get("labels")
@@ -97,7 +118,7 @@ def directive(state, start, end, silent):
     annotation = MARKER.fullmatch(line)
     if annotation:
         words = annotation[1].split()
-        if not words or words[0].lower() not in {"weighted", "sum", "percent", "porcent", "rows", "match_keys", "refs"}:
+        if not words or words[0].lower() not in {"weighted", "sum", "percent", "porcent", "rows", "match_keys", "refs", "external_json"}:
             raise InputError(f"line {start + 1}: unsupported table-check annotation")
         if not silent:
             state.line = start + 1
@@ -207,7 +228,7 @@ def read_source(path: Path) -> Document:
                 except json.JSONDecodeError as exc:
                     raise InputError(f"line {line}: {kind} requires valid JSON: {exc}") from exc
                 if kind == "figure":
-                    spec = figure_spec(spec, name)
+                    spec = figure_spec(spec, name, source_dir=path.resolve().parent)
                     add(Block(f"{identifier}-title", "figure-title", [Inline(spec["title"])], line=line))
                     add(Block(identifier, "figure", spec=spec, line=line))
                     add(Block(f"{identifier}-caption", "caption", [Inline(spec["caption"])], line=line))

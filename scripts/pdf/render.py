@@ -106,7 +106,7 @@ def font_text(text: str, preferred: str) -> str:
 def markup(runs: list[Inline], default_font="DSBody") -> str:
     output = []
     for run in runs:
-        family = "DSMono" if run.code else "DSBoldItalic" if run.bold and run.italic else "DSBold" if run.bold else "DSItalic" if run.italic else default_font
+        family = "DSBoldItalic" if run.bold and run.italic else "DSBold" if run.bold else "DSItalic" if run.italic else "DSMono" if run.code else default_font
         text = font_text(run.text, family)
         if run.link:
             target = unquote(run.link) if run.link.startswith("#") else run.link
@@ -186,14 +186,21 @@ class CodeBlock(Flowable):
 class CoverArt(Flowable):
     """Original line artwork reused from the reference book; contains no labels."""
 
-    def __init__(self, identifier):
+    def __init__(self, identifier, *, compact: bool = False):
         super().__init__()
         self.identifier = identifier
-        self.width, self.height = CONTENT_WIDTH, 244
+        self.compact = compact
+        self.width, self.height = (96, 16) if compact else (CONTENT_WIDTH, 244)
 
     def draw(self):
         c = self.canv
         record(c, self.identifier, "cover-art", self.width, self.height, expected_ink=True)
+        if self.compact:
+            c.saveState()
+            c.setFillColor(colors.HexColor("#007F89"))
+            c.rect(0, 6, 47, 2.5, stroke=0, fill=1)
+            c.restoreState()
+            return
         c.saveState()
         c.translate(-16, 0)
         c.setStrokeColor(INK)
@@ -248,8 +255,19 @@ class VectorFigure(Flowable):
         super().__init__()
         self.block = block
         self.width = CONTENT_WIDTH
-        count = len(block.spec["labels"])
-        self.height = 50 + count * 42 if block.spec["kind"] == "bars" else 35 + count * 36 if block.spec["kind"] == "layers" else 24 + math.ceil(count / 3) * 92
+        if block.spec["kind"] == "image":
+            from PIL import Image as PilImage
+            with PilImage.open(block.spec["resolved_src"]) as im:
+                iw, ih = im.size
+            max_w = self.width - 16.0
+            max_h = float(block.spec.get("max_height") or 240.0)
+            scale = min(max_w / max(iw, 1), max_h / max(ih, 1))
+            self.draw_w = iw * scale
+            self.draw_h = ih * scale
+            self.height = self.draw_h + 16.0
+        else:
+            count = len(block.spec["labels"])
+            self.height = 50 + count * 42 if block.spec["kind"] == "bars" else 35 + count * 36 if block.spec["kind"] == "layers" else 24 + math.ceil(count / 3) * 92
         self.spaceAfter = 5
 
     def label(self, identifier, text, x, y_top, width, available, *, size=10, centered=False):
@@ -283,7 +301,13 @@ class VectorFigure(Flowable):
         c.saveState()
         c.setFillColor(colors.HexColor("#f7fafc"))
         c.roundRect(0, 0, self.width, self.height, 8, stroke=0, fill=1)
-        if spec["kind"] == "bars":
+        if spec["kind"] == "image":
+            c.setStrokeColor(colors.HexColor("#b8cfdd"))
+            c.setLineWidth(0.8)
+            c.roundRect(1.5, 1.5, self.width - 3.0, self.height - 3.0, 6, stroke=1, fill=1)
+            x_off = (self.width - self.draw_w) / 2.0
+            c.drawImage(spec["resolved_src"], x_off, 8.0, width=self.draw_w, height=self.draw_h, preserveAspectRatio=True, mask="auto")
+        elif spec["kind"] == "bars":
             bar_x, bar_width = 165, self.width - 260
             maximum = max(spec["values"])
             for index, (label, value, display) in enumerate(zip(spec["labels"], spec["values"], spec["display_values"])):
@@ -373,11 +397,12 @@ def styles(profile: Profile):
 
 
 class BookDocument(BaseDocTemplate):
-    def __init__(self, destination, title, profile, language):
+    def __init__(self, destination, title, profile, language, *, corporate_cover: bool = False):
         super().__init__(str(destination), pagesize=A4, title=title, author="", leftMargin=MARGIN,
                          rightMargin=MARGIN, topMargin=62, bottomMargin=51, allowSplitting=True,
                          pageCompression=1, invariant=1)
         self.profile, self.language = profile, language
+        self.corporate_cover = corporate_cover
         self.current_heading = title
         self.placements = []
         frame = Frame(MARGIN, 51, CONTENT_WIDTH, HEIGHT - 113, id="body", leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
@@ -392,10 +417,21 @@ class BookDocument(BaseDocTemplate):
     def background(self, canvas, doc):
         if doc.page == 1:
             canvas.saveState()
-            canvas.setFillColor(colors.HexColor("#fcfaf4"))
-            canvas.rect(0, 0, WIDTH, HEIGHT, stroke=0, fill=1)
-            canvas.setFillColor(TEAL)
-            canvas.rect(0, 0, WIDTH, 10, stroke=0, fill=1)
+            if self.corporate_cover:
+                canvas.setFillColor(colors.white)
+                canvas.rect(0, 0, WIDTH, HEIGHT, stroke=0, fill=1)
+                canvas.setFillColor(colors.HexColor("#F2F6F7"))
+                canvas.rect(0, HEIGHT - 102.79, WIDTH, 102.79, stroke=0, fill=1)
+                logo_path = Path(__file__).resolve().parent / "ms_logo.png"
+                if logo_path.is_file():
+                    canvas.drawImage(str(logo_path), MARGIN, HEIGHT - 68.79, width=154.0, height=32.8)
+                canvas.setFillColor(colors.HexColor("#007F89"))
+                canvas.rect(0, 0, WIDTH, 7, stroke=0, fill=1)
+            else:
+                canvas.setFillColor(colors.HexColor("#fcfaf4"))
+                canvas.rect(0, 0, WIDTH, HEIGHT, stroke=0, fill=1)
+                canvas.setFillColor(TEAL)
+                canvas.rect(0, 0, WIDTH, 10, stroke=0, fill=1)
             canvas.restoreState()
 
     def chrome(self, canvas, doc):
@@ -435,14 +471,19 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
     style = styles(profile)
     story = []
     headings = []
+    corporate_cover = any(b.kind == "cover-art" and i > 0 for i, b in enumerate(document.blocks))
+    if corporate_cover:
+        story.append(Spacer(1, 102))
+    seen_cover_title = False
+    post_cover_art_body_idx = 0
     for position, block in enumerate(document.blocks):
         if block.kind == "pagebreak":
             story.append(PageBreak())
         elif block.kind == "cover-art":
-            story.extend([CoverArt(block.id), Spacer(1, 24)])
+            story.extend([CoverArt(block.id, compact=corporate_cover), Spacer(1, 24)])
         elif block.kind == "toc":
             toc = TableOfContents()
-            toc.levelStyles = [ParagraphStyle("toc", fontName="DSBody", fontSize=11.3, leading=17.5, textColor=INK, spaceBefore=7, spaceAfter=5)]
+            toc.levelStyles = [ParagraphStyle("toc", fontName="DSBody", fontSize=11.3, leading=17.5, textColor=INK, rightIndent=28, spaceBefore=7, spaceAfter=5)]
             story.extend([toc, PageBreak()])
         elif block.kind == "code":
             story.append(CodeBlock(block))
@@ -453,9 +494,9 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
             story.append(figure)
         elif block.kind == "table":
             ncols = len(block.rows[0])
-            font_sz = 8.4 if ncols >= 7 else 9.0 if ncols >= 5 else 9.6
+            font_sz = 7.8 if ncols >= 8 else 8.1 if ncols >= 7 else 9.0 if ncols >= 5 else 9.6
             lead_sz = round(font_sz * 1.35, 1)
-            pad_h = 5 if ncols >= 6 else 7
+            pad_h = 4 if ncols >= 7 else 5 if ncols >= 6 else 7
             cell_style = ParagraphStyle(f"tc-{block.id}", parent=style["table-cell"], fontSize=font_sz, leading=lead_sz)
             hdr_style = ParagraphStyle(f"th-{block.id}", parent=style["table-header"], fontSize=font_sz, leading=lead_sz)
             cells = []
@@ -477,25 +518,40 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                     fname = "DSMono" if has_code else ("DSBold" if r == 0 else "DSBody")
                     for tok in txt.split():
                         longest_tok_w = max(longest_tok_w, pdfmetrics.stringWidth(tok, fname, font_sz))
-                col_mins.append(min(CONTENT_WIDTH * 0.42, longest_tok_w + 2 * pad_h + 4.0))
+                cap_frac = 0.34 if ncols >= 7 else 0.42
+                col_mins.append(min(CONTENT_WIDTH * cap_frac, longest_tok_w + 2 * pad_h + 4.0))
                 col_weights.append(max(max_len, 4) ** 0.55)
             total_min = sum(col_mins)
             if total_min >= CONTENT_WIDTH:
-                col_widths = [CONTENT_WIDTH * m / total_min for m in col_mins]
+                fixed = [i for i, m in enumerate(col_mins) if m <= 68.0]
+                flex = [i for i, m in enumerate(col_mins) if m > 68.0]
+                fixed_sum = sum(col_mins[i] for i in fixed)
+                flex_sum = sum(col_mins[i] for i in flex)
+                if flex and fixed_sum < CONTENT_WIDTH * 0.65 and flex_sum > 0:
+                    rem_w = CONTENT_WIDTH - fixed_sum
+                    col_widths = [
+                        col_mins[i] if i in fixed else rem_w * (col_mins[i] / flex_sum)
+                        for i in range(ncols)
+                    ]
+                else:
+                    col_widths = [CONTENT_WIDTH * m / total_min for m in col_mins]
             else:
                 col_widths = list(col_mins)
                 rem = CONTENT_WIDTH - total_min
                 total_w = sum(col_weights)
                 for c in range(ncols):
                     col_widths[c] += rem * (col_weights[c] / total_w)
-            table = TrackedTable(cells, colWidths=col_widths, repeatRows=1, hAlign="LEFT", splitByRow=1, splitInRow=1)
-            table.setStyle(TableStyle([
+            table = TrackedTable(cells, colWidths=col_widths, repeatRows=1, hAlign="LEFT", splitByRow=1, splitInRow=0)
+            table_rules = [
                 ("BACKGROUND", (0, 0), (-1, 0), BLUE),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT]),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("LEFTPADDING", (0, 0), (-1, -1), pad_h), ("RIGHTPADDING", (0, 0), (-1, -1), pad_h),
                 ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ]))
+            ]
+            if len(cells) >= 4:
+                table_rules.append(("NOSPLIT", (0, -2), (-1, -1)))
+            table.setStyle(TableStyle(table_rules))
             story.extend([table, Spacer(1, 13)])
         elif block.kind == "rule":
             story.append(Spacer(1, 9))
@@ -504,6 +560,35 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
             if key == "heading":
                 key = "heading" if block.level == 1 else "subheading" if block.level == 2 else "small-heading"
             current = style[key]
+            if corporate_cover and block.kind in {"cover-title", "cover-subtitle", "cover-body"}:
+                if block.kind == "cover-title":
+                    seen_cover_title = True
+                    current = ParagraphStyle(f"corp-title-{block.id}", fontName="DSBold", fontSize=27.5, leading=35.5,
+                                             textColor=colors.HexColor("#193A59"), alignment=TA_LEFT, spaceAfter=30, keepWithNext=True)
+                elif block.kind == "cover-subtitle":
+                    current = ParagraphStyle(f"corp-sub-{block.id}", fontName="DSBody", fontSize=13.0, leading=18.5,
+                                             textColor=colors.HexColor("#536477"), alignment=TA_LEFT, spaceAfter=48, keepWithNext=True)
+                elif not seen_cover_title:
+                    current = ParagraphStyle(f"corp-kicker-{block.id}", fontName="DSBold", fontSize=13.0, leading=17.0,
+                                             textColor=colors.HexColor("#007F89"), alignment=TA_LEFT, spaceAfter=52, keepWithNext=True)
+                else:
+                    post_cover_art_body_idx += 1
+                    txt_clean = block.text.strip()
+                    if post_cover_art_body_idx == 1:
+                        current = ParagraphStyle(f"corp-auth1-{block.id}", fontName="DSBold", fontSize=21.0, leading=26.0,
+                                                 textColor=colors.HexColor("#193A59"), alignment=TA_LEFT, spaceAfter=4)
+                    elif "@" in txt_clean and len(txt_clean) <= 60:
+                        current = ParagraphStyle(f"corp-email-{block.id}", fontName="DSBody", fontSize=11.5, leading=15.5,
+                                                 textColor=colors.HexColor("#007F89"), alignment=TA_LEFT, spaceAfter=8)
+                    elif txt_clean.isupper() and len(txt_clean) <= 30:
+                        current = ParagraphStyle(f"corp-auth3-{block.id}", fontName="DSBold", fontSize=11.0, leading=15.0,
+                                                 textColor=colors.HexColor("#536477"), alignment=TA_LEFT, spaceAfter=72)
+                    elif len(txt_clean) <= 45:
+                        current = ParagraphStyle(f"corp-auth2-{block.id}", fontName="DSBody", fontSize=13.0, leading=17.0,
+                                                 textColor=colors.HexColor("#193A59"), alignment=TA_LEFT, spaceAfter=8)
+                    else:
+                        current = ParagraphStyle(f"corp-meta-{block.id}", fontName="DSBody", fontSize=10.8, leading=15.2,
+                                                 textColor=colors.HexColor("#536477"), alignment=TA_LEFT, spaceAfter=10)
             if block.kind == "list":
                 depth = max(1, int(block.spec.get("depth") or 1))
                 if depth > 1:
@@ -527,7 +612,7 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                     if pdfmetrics.stringWidth(line, "DSMath", current.fontSize) > CONTENT_WIDTH:
                         raise InputError(f"line {block.line}: formula is too wide; provide authored line breaks")
             story.append(paragraph)
-    doc = BookDocument(destination, document.title, profile, language)
+    doc = BookDocument(destination, document.title, profile, language, corporate_cover=corporate_cover)
     try:
         doc.multiBuild(story, maxPasses=8)
     except LayoutError as exc:

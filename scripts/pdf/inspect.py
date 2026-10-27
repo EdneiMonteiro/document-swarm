@@ -180,12 +180,25 @@ def inspect_pdf(document: Document, pdf: Path, layout: dict, previews: Path) -> 
                                                     "raster_signal": signal, "vector_paths": path_count})
                     if placement["kind"] == "paragraph":
                         text_page.count_rects()
-                        line_boxes = []
+                        raw_rects = []
                         for rect_index in range(text_page.count_rects()):
                             left, bottom, right, top = text_page.get_rect(rect_index)
                             current = [left, height - top, right, height - bottom]
-                            if contains(box, current, 2.5) and right - left > (x1 - x0) * .65:
-                                line_boxes.append(current)
+                            if contains(box, current, 2.5):
+                                raw_rects.append(current)
+                        raw_rects.sort(key=lambda item: (round(item[1] / 4.0), item[0]))
+                        merged_rects = []
+                        for current in raw_rects:
+                            if merged_rects and abs(((current[1] + current[3]) / 2) - ((merged_rects[-1][1] + merged_rects[-1][3]) / 2)) <= 4.0:
+                                merged_rects[-1] = [
+                                    min(merged_rects[-1][0], current[0]),
+                                    min(merged_rects[-1][1], current[1]),
+                                    max(merged_rects[-1][2], current[2]),
+                                    max(merged_rects[-1][3], current[3]),
+                                ]
+                            else:
+                                merged_rects.append(list(current))
+                        line_boxes = [item for item in merged_rects if item[2] - item[0] > (x1 - x0) * .65]
                         line_boxes.sort(key=lambda item: item[1])
                         for current, following in zip(line_boxes, line_boxes[1:]):
                             if 6 < following[1] - current[1] < layout["body_leading"] * 1.6:

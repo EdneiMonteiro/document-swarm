@@ -1,7 +1,7 @@
 ---
 name: document-swarm
 skill_version: "3.5.0"
-description: "Use when the user asks for a substantial document (playbook, whitepaper, report, RFC, policy, technical guide, comparison), for a presentation delivered as offline HTML plus a faithful and an editable PowerPoint file, or wants to evolve an artefact an earlier swarm produced. The skill frames the request, creates declarative specialist agents with session-validated model provenance, runs evidence-based improvement cycles, executes deterministic source/table/composition/quality gates, and stops only when every evaluated topic reaches at least A or the work is explicitly escalated. Do not use for short text such as a paragraph or email."
+description: "Use ONLY when the user explicitly asks for a document swarm (e.g., 'use document-swarm', 'monte um swarm', 'rode o doc-swarm') or explicitly wants a full multi-agent swarm cycle with deterministic gates. Do NOT invoke automatically for ordinary document reviews, edits, modifications, summaries, or single-pass writing. If loaded on a request that did not explicitly ask for a swarm, your FIRST action MUST be to ask the user via ask_user whether to use Document Swarm or handle the task directly without it."
 ---
 
 # Document Swarm Skill
@@ -10,17 +10,33 @@ description: "Use when the user asks for a substantial document (playbook, white
 > agentes declarativos, evidência rastreável, revisão iterativa e portões
 > determinísticos. A régua é `D- ... A+`; **A- não aprova**.
 
-## 1. Quando usar
+## 1. Quando usar e confirmação obrigatória (`opt-in`)
 
-Use esta skill para:
+**Regra de ouro (confirmação antes de iniciar o swarm):**
+Se esta skill foi carregada e o usuário **não pediu explicitamente** `"swarm"`,
+`"doc-swarm"` ou `"document-swarm"` na mensagem (por exemplo, pediu apenas uma
+revisão de documento, modificação de arquivo, parecer ou geração direta de
+texto), **NÃO inicie o fluxo do swarm**. Sua **primeira ação obrigatória** é
+chamar `ask_user` com uma única pergunta:
+
+- **`direct` (Execução direta, sem Document Swarm — padrão para revisões/edições):**
+  abandone imediatamente esta skill e execute o pedido diretamente no terminal,
+  sem criar pasta `swarms/`, sem múltiplos agentes e sem ciclos de gate;
+- **`swarm` (Executar com Document Swarm completo):**
+  siga a Fase 0 abaixo com agentes declarativos, ciclos e gates determinísticos.
+
+Use o fluxo completo desta skill somente quando confirmado ou explicitamente
+solicitado para:
 
 - criar whitepaper, playbook, relatório, RFC, política, guia técnico, tutorial ou
-  comparativo substancial;
-- evoluir um documento já produzido por um swarm;
+  comparativo substancial via swarm multiagente;
+- evoluir um artefato já produzido em `swarms/<id>/` quando o usuário pedir para
+  rodar novo ciclo do swarm;
 - trabalhos que se beneficiam de autores especializados, revisores independentes
   e mais de um ciclo de melhoria.
 
-Não use para e-mail, parágrafo, resposta curta ou edição trivial.
+Não use para revisão avulsa, modificação pontual de documento, e-mail, parágrafo,
+resposta curta ou edição direta.
 Apresentações são um tipo de entrega opcional desta versão, descrito na
 seção 2.5; o modo documento continua sendo o padrão.
 
@@ -366,118 +382,37 @@ estão entre turnos.
 
 ### 2.4. Composição e inspeção profissional de PDF
 
-Quando PDF fizer parte da entrega, use o motor portátil de ReportLab/Platypus
-em `scripts/pdf`. O documento-fonte continua sendo Markdown; o motor não
-escreve títulos, legendas, recomendações ou notas editoriais. Perfis iniciais:
-`textbook` (livro didático) e `technical-report` (relatório técnico), com
-capa vetorial original, prosa justificada, sumário navegável, tabelas,
-fórmulas Unicode e diagramas vetoriais declarados na fonte.
+Quando PDF integrar `deliverables` (`pdf_engine: reportlab-v1`), leia
+[docs/pdf.md](docs/pdf.md) e use `docswarm_pdf` (`render`/`inspect`) ou
+`python -m scripts.pdf` sobre um destino novo a cada ciclo (`output/pdf-cycle-0N`).
+O motor em ReportLab/Platypus compõe capa vetorial, sumário, tabelas (com
+anti-órfão nas linhas finais), fórmulas e diagramas a partir do Markdown, sem
+criar redação autoral nova. As dependências de `requirements-pdf.txt` são
+opcionais; os checks em `scripts/checks` usam apenas Python stdlib.
 
-As dependências de `requirements-pdf.txt` são opcionais; os checks em
-`scripts/checks` continuam usando somente stdlib. Fontes redistribuíveis e
-suas licenças são incorporadas ao pacote, sem depender de fontes do Windows.
-Não instale dependências silenciosamente em ambientes de clientes.
-
-Descubra `docswarm_pdf` no catálogo, quando disponível, e use `action: render`
-com `source` e `destination` absolutos, `profile` e `language`. A pasta de destino
-deve ser nova para cada composição. Alternativa por terminal, a partir da raiz
-da skill com o Python do ambiente PDF:
-
-```bash
-python -m scripts.pdf render --source "<swarm>/output/documento.md" --destination "<swarm>/output/pdf-cycle-01" --profile textbook --language pt-BR
-python -m scripts.pdf inspect --source "<swarm>/output/documento.md" --destination "<swarm>/output/pdf-cycle-01"
-```
-
-`render` já inspeciona o resultado. O bundle contém `document.pdf`, prévias PNG
-por página, `editorial-text.txt`, `layout.json`, `manifest.json` e `inspection.json`.
-O comando retorna 0 somente se a inspeção mecânica passar, 1 para PDF produzido
-com falhas de inspeção e 2 para erro de entrada, composição ou dependências.
-Nunca declare uma entrega concluída apenas porque o arquivo foi criado.
-
-A inspeção compara o PDF real com o conteúdo-fonte, preservando operadores de
-fórmulas/código; mede limites de texto, contraste/tinta no raster, disposição de
-tabelas/figuras, links, navegação e incorporação de fontes. Não atribui qualidade
-editorial ou significado arquitetural. Os revisores devem abrir as prévias e
-avaliar redação e apresentação separadamente, mesmo com inspeção aprovada.
-
-Nas novas execuções com PDF, registre `pdf_engine: reportlab-v1` no brief e
-inclua o PDF em `deliverables`. O consolidado de cada ciclo acrescenta
-`pdf_inspections`, uma entrada por PDF com quatro referências `path`/`sha256`:
-`source`, `pdf`, `manifest` e `inspection`. O gate verifica os arquivos reais,
-os vínculos entre hashes, todas as prévias e o relatório mecânico. PDF, fonte
-ou prévia alterados exigem nova inspeção e revisão pertinente; um hash atualizado
-sem revalidação não satisfaz o contrato.
-
-Documentos anteriores à 3.3 mantêm a leitura histórica do contrato original.
-Novas evoluções com PDF usam este fluxo. A sintaxe suportada, os limites e os
-comandos completos estão em [docs/pdf.md](docs/pdf.md).
+Cada bundle gera `document.pdf`, `previews/page-XXX.png`, `editorial-text.txt`,
+`layout.json`, `manifest.json` e `inspection.json` (`0` aprovado, `1` falha de
+inspeção, `2` erro de entrada). `cycle_artifacts.py consolidate` vincula
+automaticamente `pdf_inspections` (`source`, `pdf`, `manifest`, `inspection`) por
+SHA-256, e `gate.py` valida os arquivos reais, todas as prévias e `status: pass`.
+Aprovação mecânica não substitui a revisão editorial e visual.
 
 ### 2.5. Apresentações como tipo de entrega
 
-Apresentações são opcionais e não alteram o caminho documental. Use-as apenas
-quando o usuário pedir a entrega em slides; um pedido de documento continua sem
-qualquer dependência nova. O escopo desta versão é Windows com Microsoft
-PowerPoint instalado.
+Apresentações são opcionais (`artifact_type: presentation`). Somente quando o
+usuário pedir entrega em slides, leia [docs/presentations.md](docs/presentations.md)
+para a sintaxe completa do DeckSpec, `preflight`, `build`, `inspect` e `publish`.
+Um único DeckSpec JSON produz três formatos obrigatórios por ciclo em
+`output/presentation-cycle-0N/`: `index.html` (offline), `deck-faithful.pptx` e
+`deck-editable.pptx` (Windows + PowerPoint).
 
-Uma fonte estruturada única, o DeckSpec em JSON, produz **três formatos
-obrigatórios** da mesma composição: `index.html` navegável e offline,
-`deck-faithful.pptx` por imagens e `deck-editable.pptx` com texto, tabelas,
-formas e conectores nativos. Um não substitui o outro. O compositor não escreve
-títulos, rótulos, legendas, notas ou recomendações: tudo isso pertence à fonte.
-
-No enquadramento, confirme que serão produzidos os três formatos, que a
-aparência do arquivo editável depende de fontes instaladas no destinatário e que
-as notas do apresentador acompanham a entrega. Registre no brief:
-
-```yaml
-artifact_type: presentation
-presentation:
-  schema_version: 1
-  capability: presentation-v1
-  deck_path: output/presentation-cycle-01/deck.json
-  profile: windows-powerpoint-v1
-  required_formats: [html-offline, pptx-faithful, pptx-editable]
-```
-
-Sem `artifact_type: presentation`, uma entrada histórica continua documental.
-Bloco novo sem tipo, capacidade desconhecida, formatos divergentes ou combinação
-com os campos legados de slides são rejeitados, não interpretados por aproximação.
-
-O fluxo, pela raiz da skill com o Python do ambiente de apresentações:
-
-```bash
-python -m scripts.presentations preflight --swarm <swarm> --profile windows-powerpoint-v1 --isolation <evidência>
-python -m scripts.presentations build --swarm <swarm> --deck <deck.json> --destination output/presentation-cycle-01 --profile windows-powerpoint-v1 --cycle 1
-python -m scripts.presentations inspect --destination <swarm>/output/presentation-cycle-01
-python -m scripts.presentations publish --swarm <swarm> --cycle 1 --destination <pasta nova>
-```
-
-O `preflight` qualifica implementação e ambiente em material sintético, nunca na
-candidata; sem perfil completo e aprovado não há entrega aprovada. O `build` exige
-destino inédito e inspeciona os arquivos salvos. Código 0 significa que tudo que
-foi executado passou; 1, falha executada; 2, erro de entrada ou dependência.
-
-Despache os revisores somente depois de uma composição inspecionada. O catálogo
-de dimensões é fechado e cada posição recebe uma nota: `factual` e `decision` por
-tópico; `legibility` e `interaction` por página lógica em cada um dos três
-formatos; `editability` por página do arquivo editável. Nenhuma delas aceita
-`not_applicable`. A revisão `editorial-v1` continua obrigatória, sobre o texto
-integral entregue, e é independente dessas notas.
-
-No consolidado, registre `presentation` com ciclo, perfil, capacidade e os
-descritores `inputs`, `manifest` e `inspections` por caminho e SHA-256, além de
-uma linha por posição avaliada. O portão reconstrói páginas, materializações de
-apoio, grafo de navegação e domínio de revisão **a partir do deck**: um manifesto
-que repita a omissão de um exportador não reduz a cobertura exigida. Estados
-`pending`, `not_evaluated`, `unsupported` e `stale` nunca aprovam.
-
-Qualquer alteração em conteúdo, ativo, fonte, layout, arquivo ou revisão invalida
-o aceite corrente. O histórico permanece; a nova edição exige nova composição,
-inspeção pertinente e leitura editorial integral. Inspeção mecânica aprovada não
-atesta legibilidade nem redação: os revisores abrem as páginas nos três formatos.
-
-Sintaxe do DeckSpec, temas, limites, qualificação do ambiente, evidência de
-isolamento e publicação estão em [docs/presentations.md](docs/presentations.md).
+No brief, declare `artifact_type: presentation` e o bloco `presentation`
+(`schema_version: 1`, `capability: presentation-v1`, `deck_path`, `profile:
+windows-powerpoint-v1`, `required_formats: [html-offline, pptx-faithful,
+pptx-editable]`). Execute `preflight` e `build`/`inspect` antes dos revisores.
+O catálogo fechado de dimensões (`factual` e `decision` por tópico; `legibility`
+e `interaction` nos três formatos; `editability` no PPTX editável) não aceita
+`not_applicable`, e `editorial-v1` permanece obrigatório sobre `editorial-text.txt`.
 
 ### 2.6. Vigia de saúde e retomada
 
@@ -696,10 +631,45 @@ Escala canônica:
 D-  D  D+  C-  C  C+  B-  B  B+  A-  A  A+
 ```
 
-- `A` e `A+`: aprovam;
-- `A-` ou menos: bloqueiam;
-- toda nota exige justificativa e correção acionável;
+- `A` e `A+`: aprovam (`bloqueia: false`);
+- `A-` ou menos: bloqueiam (`bloqueia: true`), exigindo pelo menos um defeito material (`blocking`);
+- toda nota abaixo de `A` exige justificativa baseada em evidência e correção acionável;
 - a nota mínima entre revisores é a nota efetiva do tópico.
+
+### 6.1. Tabela da escala de notas (`D-` a `A+`)
+
+| Nota | Efeito no Gate | Definição objetiva | Quando atribuir | Exigência no JSON do revisor |
+| :---: | :---: | --- | --- | --- |
+| **`A+`** | **Aprova** (`bloqueia: false`) | Excelência técnica, decisória e editorial; referência arquitetural sem ressalvas materiais ou menores. | Tópico ou superfície completo, exato, conciso e diretamente acionável pelo público-alvo. | `justification` com evidência do trecho; `action: ""`. |
+| **`A`** | **Aprova** (`bloqueia: false`) | Atende integralmente à dimensão avaliada sem defeito material (`blocking`). Pode coexistir apenas com observações opcionais de polimento (`severity: minor`). | Dados exatos, recomendações com critérios/trade-offs/reversão e redação clara, afirmativa e autônoma. | `justification` com evidência; `action: ""` (ou sugestão opcional se `minor`). |
+| **`A-`** | **Bloqueia** (`bloqueia: true`) | Estrutura e análise corretas, mas com **1 defeito material localizado (`blocking`)** que exige correção cirúrgica antes da publicação (ex.: número/ID divergente em uma célula, sigla sem expansão no 1º uso, condição de aceite omitida, trecho ambíguo). **Proibido atribuir `A-` apenas por achados `minor`.** | Quase pronto, porém contém uma falha verificável que não pode seguir para a entrega final. | `justification` + `action` cirúrgica obrigatória + defeito `blocking` (e bloco `regression` se era `>= A` no ciclo `N-1`). |
+| **`B+`** | **Bloqueia** (`bloqueia: true`) | Boa cobertura geral, porém com **lacuna decisória, factual ou editorial em mais de um ponto** (ex.: falta de critérios de aceite/reversão em itens do plano, inconsistência entre duas tabelas ou repetição estrutural). | A seção tem boa base, mas faltam condições operacionais ou reconciliação cruzada entre tabelas/seções. | `justification` + `action` detalhando cada ponto a corrigir. |
+| **`B`** | **Bloqueia** (`bloqueia: true`) | Cobertura parcial: aborda o tema, mas omite trade-offs essenciais, mistura fatos medidos com premissas sem distinção ou apresenta problemas recorrentes de linguagem e referentes. | Seção incompleta ou com afirmações sem sustentação/escopo claro. | `justification` + `action` especificando o conteúdo ou evidência faltante. |
+| **`B-`** | **Bloqueia** (`bloqueia: true`) | Deficiência relevante na dimensão avaliada: recomendações genéricas ("depende", catálogo sem decisão), contagens conflitantes ou redação em tom de rascunho/conversa interna. | Exige reescrita substancial de subseções ou reconstrução de tabela. | `justification` + `action` estrutural. |
+| **`C+` / `C` / `C-`** | **Bloqueia** (`bloqueia: true`) | Insuficiente: erro factual grave, recomendação tecnicamente incorreta para o provedor/SKU, ausência de fontes exigidas ou violação sistemática do perfil editorial. | O tópico não sustenta tomada de decisão segura. | `justification` com prova do erro + `action` de reconstrução. |
+| **`D+` / `D` / `D-`** | **Bloqueia** (`bloqueia: true`) | Crítico / ausente: tópico omitido, dados inventados/alucinados, fontes falsas ou contradição direta com as evidências brutas. | Tópico inexistente ou invalidado por alucinação/omissão grave. | `justification` + `action` de elaboração completa com dados reais. |
+
+### 6.2. Tabela de critérios por dimensão de avaliação
+
+| Dimensão / Papel | Classe (`sources_min`) | Critérios avaliados | Condição para nota `A` / `A+` | O que rebaixa para `<= A-` (`blocking`) |
+| --- | :---: | --- | --- | --- |
+| **Precisão Factual (`reviewer-*-facts`)** | `fact` (`>= 5`) | Exatidão de contagens, somas, SKUs, limites, SLAs, regiões, datas, citações `[Fxx]` e separação explícita entre fato medido, premissa, estimativa e recomendação. | 100% dos números, nomes de recursos e capacidades conferem com os insumos e fontes oficiais atuais; limitações de escopo declaradas. | Número/soma divergente, recurso inexistente no inventário, capacidade/SLA sem fonte oficial ou suposição apresentada como fato medido. |
+| **Completude Decisória (`reviewer-*-decision`)** | `form` (`0`) | Problema medido, critérios de decisão, alternativas cabíveis, recomendação explícita, trade-offs operacionais, pré-requisitos, critério de aceite, responsável/horizonte e reversão. | Toda recomendação conecta problema → escolha → trade-off → condição de mudança → aceite e reversão verificáveis, com IDs e prazos consistentes entre capítulos. | Recomendação vaga ("avaliar", "depende" sem fatores), ausência de critério de aceite/reversão ou conflito de ID/prazo/escopo entre tabelas. |
+| **Clareza e Público (`reviewer-*-clarity` / `editorial-v1`)** | `form` (`0`) | **Linguagem** (direta, afirmativa, verbos concretos), **Referentes** (sem "isso"/"esse caso" vagos), **Tom** (sênior, sem slogans, clichês, travessões longos ou "diário do arquiteto") e **Autonomia** (títulos, tabelas, figuras e legendas compreensíveis isoladamente, siglas expandidas no 1º uso). | As 5 superfícies (`titles`, `openings`, `body`, `captions`, `conclusions`) e os tópicos têm `0` achados `blocking`, leitura autônoma e terminologia uniforme. | Slogan promocional, metatexto de coleta/versão anterior, negativa defensiva vazia, código/sigla opaco sem definição no ponto de leitura ou referente ambíguo que esconda condição técnica. |
+| **Inspeção Visual e Funcional (`PDF` / `presentation`)** | `form` (`0`) | Quebra de números/identificadores em tabelas, sobreposição, cortes (`clipping`), linhas órfãs de total, contraste, hierarquia tipográfica, navegação (`interaction`) e editabilidade nativa (`editability`). | `inspection.json` com `status: pass` (`0` erros mecânicos) e páginas/slides legíveis, sem truncamento de dados ou cabeçalhos partidos ao meio. | Número ou identificador partido de forma ambígua na tabela impressa, sobreposição visual, corte de texto/figura ou falha de navegação/edição. |
+| **Auditoria Independente (`rubber-duck`)** | `rubber-duck` (`0`) | Contradições entre seções, omissões, notas `A` infladas (sem justificativa na dimensão ou contraditas pelo artefato), falhas de checks e integridade de hashes `.md` ↔ `.json` ↔ `.yaml`. | `critico: false` — todas as notas `A` se sustentam na evidência real do ciclo e os checks determinísticos (`sources`, `tables`, `gate`) fecham sem ressalvas ocultas. | `critico: true` — nota `A` atribuída sobre tabela/plano contraditório, justificativa que avalia outra dimensão por procuração ou etapa de qualidade pulada. |
+
+### 6.3. Tabela das superfícies editoriais (`editorial-v1`) e severidades
+
+| Superfície / Severidade | Escopo de verificação | Regra de nota e bloqueio no `gate.py` |
+| --- | --- | --- |
+| **`titles`** | Capa, títulos de capítulos, seções e subseções. | Deve identificar o objeto, a decisão ou a condição; títulos genéricos/intercambiáveis ou com verbos de anúncio recebem `< A`. |
+| **`openings`** | Parágrafos de abertura da capa, resumo executivo e capítulos. | Deve abrir pela conclusão técnica, impacto e números verificados; introduções vagas ("no cenário atual") recebem `< A`. |
+| **`body`** | Desenvolvimento técnico, listas, condições, exemplos e código. | Deve usar construção afirmativa, explicar mecanismos/limites, manter terminologia única e evitar parágrafos-bloco que escondam condições. |
+| **`captions`** | Títulos e notas de tabelas, figuras, diagramas e fórmulas. | Deve permitir leitura isolada com escopo, período, unidade e legenda local das abreviações (única superfície que aceita `not_applicable` quando não há figuras/tabelas). |
+| **`conclusions`** | Fechamentos de capítulos, sínteses de planos e conclusão executiva. | Deve sintetizar decisões, escopo medido, dependências e critérios de aceite sem generalizar além dos recortes medidos nem repetir slogans. |
+| **`severity: blocking`** | Defeito material de linguagem, referente, tom, autonomia ou nomenclatura. | **Bloqueia o gate** (`outcome: rejected`) mesmo que alguma superfície tenha nota `A`; exige `location`, `quote` literal, `reason` e `action`. |
+| **`severity: minor`** | Sugestão de polimento estilístico, concisão ou ritmo que não compromete clareza, exatidão ou autonomia. | **Não bloqueia o gate** e **não pode** reduzir nota de superfície ou tópico para `< A` (`A-` ou menos com apenas achados `minor` é recusado com `exit 3`). |
 
 Além do relatório Markdown, cada ciclo deve gerar
 `reports/cycle-0N-review.yaml`:
@@ -889,7 +859,10 @@ fora de ordem ou nomes de recursos inventados entre ciclos):
 - `match_keys`: garante que outra tabela contenha exatamente as mesmas chaves
   (e ordem, por padrão `order=true`) da tabela `source`;
 - `refs`: verifica que todo identificador casado por `pattern` na tabela pertença
-  ao conjunto de chaves da tabela `source`.
+  ao conjunto de chaves da tabela `source`;
+- `external_json`: compara chaves e contagens cadastrais da tabela diretamente
+  contra um arquivo JSON local de coleta (ex.:
+  `<!-- check: external_json file="services-analysis.json" key=1 json_key="name" map="objetos Backend:len(backends);Named Values secretos:count(namedValues,secret=true)" -->`).
 
 Tabelas marcadas que não fecham bloqueiam o ciclo. Heurísticas em tabelas não
 marcadas são informativas e nunca substituem uma marcação explícita.
@@ -945,9 +918,37 @@ entram se o portão estiver aprovado.
 
 ## 11. Fluxo — modo documento
 
-### Fase 0 — Enquadramento obrigatório
+### Fase 0 — Confirmação de modo, verificação de atualização e enquadramento
 
-Use `ask_user` antes de gerar agentes. Cubra:
+0. **Confirmação de uso do swarm (quando não solicitado explicitamente pelo nome):**
+   Se a mensagem do usuário não pediu explicitamente `"swarm"` / `"doc-swarm"` /
+   `"document-swarm"`, pergunte primeiro via `ask_user` se ele deseja **Execução
+   direta (sem Document Swarm)** ou **Executar com Document Swarm completo**.
+   Caso escolha execução direta, encerre o uso desta skill imediatamente e faça
+   o trabalho diretamente.
+
+1. **Verifique se há versão nova no repositório (`<DOCSWARM>`):**
+
+   ```bash
+   python3 "<DOCSWARM>/scripts/checks/check_update.py" "<DOCSWARM>"
+   ```
+
+   - Se o retorno indicar `"update_available": true` (`behind > 0`), informe ao
+     usuário a versão/commits disponíveis (`local_version`/`local_head` →
+     `remote_version`/`remote_head`) e pergunte via `ask_user` se ele aprova
+     atualizar o Document Swarm antes de iniciar.
+   - Se o usuário aprovar (e `"can_fast_forward": true`), execute:
+
+     ```bash
+     python3 "<DOCSWARM>/scripts/checks/check_update.py" "<DOCSWARM>" --apply
+     ```
+
+     Em seguida, chame `extensions_reload` para recarregar o monitor/PDF na
+     sessão atual e releia `<DOCSWARM>/SKILL.md`. Se estiver offline
+     (`"status": "offline"`) ou o usuário recusar, prossiga normalmente sem
+     bloquear.
+
+2. **Enquadramento (`ask_user` antes de gerar agentes).** Cubra:
 
 - objetivo;
 - tipo de entrega: documento, padrão, ou apresentação conforme a seção 2.5;
@@ -1603,6 +1604,7 @@ Todos usam somente Python stdlib. Consulte `--help` para opções exatas.
 | Script | Função | Bloqueia quando |
 |---|---|---|
 | `verify_sources.py` | testa URLs e mantém cache auditável | há fonte `fail` |
+| `check_update.py` | verifica commits/versão novos em `origin/main` e aplica `git merge --ff-only` mediante aprovação (`--apply`) | árvore local suja ou branch divergente ao aplicar (`exit 1`) |
 | `verify_tables.py` | recalcula tabelas marcadas e valida inventários/chaves (`rows`, `match_keys`, `refs`) | conta ou chave marcada não fecha |
 | `cycle_artifacts.py` | monta seções (`assemble`), gera diff de texto/páginas (`diff`) e consolida JSONs dos revisores em `.md` e `review.yaml` com hashes SHA-256 (`consolidate`) | artefato ausente ou inválido (exit `3`) |
 | `lint_agents.py` | valida frontmatter e swarm dos agentes | agente está inválido |

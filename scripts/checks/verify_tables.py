@@ -7,7 +7,8 @@ Supported markers immediately above a table are:
 ``<!-- check: sum target=100 -->`` and ``<!-- check: percent -->``
 ``<!-- check: rows id="inventario" count=71 key=1 pattern="apimv?2?-[a-z0-9-]+" unique=true -->``
 ``<!-- check: match_keys source="inventario" column=1 -->``
-``<!-- check: refs source="inventario" pattern="apimv?2?-[a-z0-9-]+" -->``.
+``<!-- check: refs source="inventario" pattern="apimv?2?-[a-z0-9-]+" -->``
+``<!-- check: external_json file="services-analysis.json" key=1 json_key="name" map="Backends:len(backends);Secretos:count(namedValues,secret=true)" -->``.
 
 Only marked tables can fail a run.  Unmarked Total/Soma columns are reported
 as information because their intended formula is unknowable.
@@ -431,6 +432,121 @@ def refs_check(table: dict[str, Any], marker: str, registry: dict[str, dict[str,
     }
 
 
+def _eval_json_expr(record: dict[str, Any], expr: str) -> Any:
+    expr = expr.strip()
+    m_len = re.fullmatch(r"len\(([^)]+)\)", expr)
+    if m_len:
+        target = _eval_json_expr(record, m_len.group(1))
+        return len(target) if isinstance(target, (list, dict, str)) else 0
+    m_cnt = re.fullmatch(r"count\(([^,]+),\s*([^=]+)=([^)]+)\)", expr)
+    if m_cnt:
+        items = _eval_json_expr(record, m_cnt.group(1).strip())
+        if not isinstance(items, list):
+            return 0
+        subkey = m_cnt.group(2).strip()
+        raw_val = m_cnt.group(3).strip().lower()
+        expected_val: Any = True if raw_val == "true" else False if raw_val == "false" else raw_val.strip("\"'")
+        return sum(1 for item in items if isinstance(item, dict) and item.get(subkey) == expected_val)
+    current: Any = record
+    for part in expr.split("."):
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        else:
+            return None
+    return current
+
+
+def external_json_check(table: dict[str, Any], marker: str, doc_path: Path) -> dict[str, Any]:
+    file_opt = marker_option(marker, "file") or marker_option(marker, "source_file")
+    if not file_opt:
+        return {"status": "fail", "rule": "external_json", "line": table["line"], "error": "missing file option"}
+    candidate = Path(file_opt)
+    if not candidate.is_absolute():
+        candidate = (doc_path.parent / candidate).resolve()
+        if not candidate.is_file():
+            candidate = (doc_path.parent.parent / file_opt).resolve()
+    if not candidate.is_file():
+        return {"status": "fail", "rule": "external_json", "line": table["line"],
+                "error": f"external JSON file not found: {file_opt}"}
+    try:
+        import json
+        payload = json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return {"status": "fail", "rule": "external_json", "line": table["line"], "error": f"invalid JSON: {exc}"}
+    root_key = marker_option(marker, "root_key")
+    if root_key and isinstance(payload, dict):
+        payload = payload.get(root_key)
+    json_key = marker_option(marker, "json_key") or "name"
+    records_by_key: dict[str, dict[str, Any]] = {}
+    if isinstance(payload, list):
+        for item in payload:
+            if isinstance(item, dict) and json_key in item:
+                records_by_key[str(item[json_key]).strip().lower()] = item
+    elif isinstance(payload, dict):
+        for k, item in payload.items():
+            if isinstance(item, dict):
+                records_by_key[str(k).strip().lower()] = item
+    else:
+        return {"status": "fail", "rule": "external_json", "line": table["line"], "error": "JSON root must be list or object"}
+
+    key_opt = marker_option(marker, "key") or marker_option(marker, "column") or marker_option(marker, "coluna")
+    key_col = resolve_column(table["headers"], key_opt, default=0)
+    if key_col is None:
+        return {"status": "fail", "rule": "external_json", "line": table["line"], "error": f"unknown key column {key_opt!r}"}
+    pattern_text = marker_option(marker, "pattern")
+    compiled = re.compile(pattern_text) if pattern_text else None
+    map_opt = marker_option(marker, "map") or ""
+    mappings: list[tuple[str, str]] = []
+    for pair in [p.strip() for p in map_opt.split(";") if p.strip()]:
+        if ":" in pair:
+            lhs, rhs = pair.split(":", 1)
+            mappings.append((lhs.strip(), rhs.strip()))
+
+    mismatches: list[dict[str, Any]] = []
+    for row_number, row in data_rows(table):
+        if len(row) <= key_col:
+            continue
+        row_key = extract_key(row[key_col], compiled)
+        if not row_key:
+            mismatches.append({"line": row_number, "label": row[key_col], "error": "empty key cell"})
+            continue
+        rec = records_by_key.get(row_key.lower())
+        if rec is None:
+            mismatches.append({"line": row_number, "label": row_key, "error": f"key {row_key!r} not found in {file_opt}"})
+            continue
+        row_blob = " | ".join(row)
+        for label_or_col, expr in mappings:
+            expected_val = _eval_json_expr(rec, expr)
+            if expected_val is None:
+                continue
+            col_idx = resolve_column(table["headers"], label_or_col, default=None)
+            actual_val: str | None = None
+            if col_idx is not None and col_idx < len(row):
+                actual_val = row[col_idx].strip()
+            else:
+                m_after = re.search(rf"(?i)\b{re.escape(label_or_col)}\s*[:=]\s*(\d+)", row_blob)
+                m_before = re.search(rf"(?i)\b(\d+)\s+{re.escape(label_or_col)}\b", row_blob)
+                if m_after:
+                    actual_val = m_after.group(1)
+                elif m_before:
+                    actual_val = m_before.group(1)
+            if actual_val is not None and str(actual_val) != str(expected_val):
+                mismatches.append({
+                    "line": row_number,
+                    "label": row_key,
+                    "field": label_or_col,
+                    "declared": str(actual_val),
+                    "expected": str(expected_val),
+                })
+    return {
+        "status": "fail" if mismatches else "pass",
+        "rule": "external_json",
+        "line": table["line"],
+        "file": file_opt,
+        "mismatches": mismatches,
+    }
+
+
 def check_file(path: Path) -> dict[str, Any]:
     """Validate every marked table in a Markdown document."""
     checks: list[dict[str, Any]] = []
@@ -461,6 +577,8 @@ def check_file(path: Path) -> dict[str, Any]:
             checks.append(match_keys_check(table, marker, registry))
         elif marker and re.search(r"^\s*refs\b", marker, re.I):
             checks.append(refs_check(table, marker, registry))
+        elif marker and re.search(r"^\s*external_json\b", marker, re.I):
+            checks.append(external_json_check(table, marker, path))
         elif marker and re.search(r"\bweighted\b", marker, re.I):
             checks.append(weighted_check(table, marker))
         elif marker and (re.search(r"\b(sum|percent|porcent)", marker, re.I)):

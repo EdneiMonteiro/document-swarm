@@ -14,7 +14,7 @@ const TERMINAL = new Set(["completed", "escalated", "aborted"]);
 const EVENTS = new Set([
     "tool.execution_start", "tool.execution_complete", "subagent.started",
     "subagent.configured", "subagent.completed", "subagent.failed",
-    "assistant.turn_start", "assistant.idle", "session.idle", "session.task_complete",
+    "session.usage_record", "assistant.turn_start", "assistant.idle", "session.idle", "session.task_complete",
 ]);
 const extensionDirectory = path.dirname(await fs.realpath(fileURLToPath(import.meta.url)));
 const readerPath = path.resolve(extensionDirectory, "..", "..", "..", "scripts", "checks", "progress.py");
