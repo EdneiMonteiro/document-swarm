@@ -63,6 +63,8 @@ class Profile:
     margin: float = 51.0
     top_margin: float = 62.0
     bottom_margin: float = 51.0
+    inner_margin: float | None = None
+    outer_margin: float | None = None
 
     @property
     def page_width(self) -> float:
@@ -73,8 +75,16 @@ class Profile:
         return float(self.page_size[1])
 
     @property
+    def effective_inner_margin(self) -> float:
+        return float(self.inner_margin if self.inner_margin is not None else self.margin)
+
+    @property
+    def effective_outer_margin(self) -> float:
+        return float(self.outer_margin if self.outer_margin is not None else self.margin)
+
+    @property
     def content_width(self) -> float:
-        return float(self.page_size[0] - 2 * self.margin)
+        return float(self.page_size[0] - self.effective_inner_margin - self.effective_outer_margin)
 
 
 PROFILES = {
@@ -92,6 +102,7 @@ PROFILES = {
         cover_bg_hex="#ffffff", box_bg_hex="#ffffff",
         chapter_pagebreak=True, page_size=A5,
         margin=36.0, top_margin=43.0, bottom_margin=47.0,
+        inner_margin=46.0, outer_margin=26.0,
     ),
     "almanac": Profile(
         "almanac", 9.8, 14.2, 7.0, 16.5, 21.5,
@@ -100,6 +111,7 @@ PROFILES = {
         cover_bg_hex="#ffffff", box_bg_hex="#ffffff",
         chapter_pagebreak=True, page_size=A5,
         margin=36.0, top_margin=43.0, bottom_margin=47.0,
+        inner_margin=46.0, outer_margin=26.0,
     ),
 }
 
@@ -604,6 +616,86 @@ class FootnoteRule(Flowable):
         c.restoreState()
 
 
+class EvenBackCoverPad(Flowable):
+    """When the page preceding the Colophon is even, emits a Folio Society Ex-Libris bookplate so the Colophon is odd and the Back Cover is even (outside back cover in duplex binding)."""
+
+    def __init__(self, identifier: str, *, profile: Profile):
+        super().__init__()
+        self.identifier = identifier
+        self.profile = profile
+        self.width = profile.content_width
+        self.height = 0.0
+        self._active = False
+
+    def wrap(self, availWidth, availHeight):
+        c = getattr(self, "canv", None)
+        doc = getattr(c, "_docswarm_document", None) if c is not None else None
+        page_no = int(getattr(doc, "page", 1) or 1) if doc is not None else 1
+        if page_no % 2 == 0:
+            self._active = True
+            self.width = self.profile.content_width
+            self.height = max(140.0, availHeight - 2.0)
+            return self.width, self.height
+        self._active = False
+        self.width = 0.0
+        self.height = 0.0
+        return 0.0, 0.0
+
+    def draw(self):
+        if not self._active:
+            return
+        c = self.canv
+        doc = getattr(c, "_docswarm_document", None)
+        if doc is not None:
+            doc.title_pages.add(int(c.getPageNumber()))
+        record(c, self.identifier, "title-plate", self.width, self.height)
+        accent = colors.HexColor(self.profile.accent_hex)
+        secondary = colors.HexColor(self.profile.secondary_hex)
+        mid_x = self.width / 2.0
+        mid_y = self.height / 2.0
+        box_w = min(210.0, self.width * 0.64)
+        box_h = 240.0
+        x0 = mid_x - box_w / 2.0
+        y0 = mid_y - box_h / 2.0
+        c.saveState()
+        # Outer and inner bookplate cartouche frames
+        c.setStrokeColor(secondary)
+        c.setLineWidth(0.9)
+        c.roundRect(x0, y0, box_w, box_h, 6, stroke=1, fill=0)
+        c.setStrokeColor(accent)
+        c.setLineWidth(0.55)
+        c.roundRect(x0 + 6, y0 + 6, box_w - 12, box_h - 12, 4, stroke=1, fill=0)
+        # Central compass emblem inside top half of cartouche
+        emblem_y = y0 + box_h * 0.66
+        c.setStrokeColor(secondary)
+        c.setLineWidth(0.75)
+        c.line(mid_x - 62, emblem_y, mid_x - 22, emblem_y)
+        c.line(mid_x + 22, emblem_y, mid_x + 62, emblem_y)
+        c.setStrokeColor(accent)
+        c.setLineWidth(1.05)
+        c.circle(mid_x, emblem_y, 13.5, stroke=1, fill=0)
+        c.setStrokeColor(secondary)
+        c.setLineWidth(0.65)
+        c.circle(mid_x, emblem_y, 9.0, stroke=1, fill=0)
+        p = c.beginPath()
+        p.moveTo(mid_x, emblem_y + 6.0)
+        p.lineTo(mid_x + 6.0, emblem_y)
+        p.lineTo(mid_x, emblem_y - 6.0)
+        p.lineTo(mid_x - 6.0, emblem_y)
+        p.close()
+        c.setFillColor(accent)
+        c.drawPath(p, stroke=0, fill=1)
+        c.setFillColor(colors.white)
+        c.circle(mid_x, emblem_y, 1.9, stroke=0, fill=1)
+        # Bookplate inscription lines in lower half of cartouche
+        c.setStrokeColor(colors.HexColor("#dfd7c6"))
+        c.setLineWidth(0.6)
+        for line_offset in (0.38, 0.27, 0.16):
+            ly = y0 + box_h * line_offset
+            c.line(x0 + 26, ly, x0 + box_w - 26, ly)
+        c.restoreState()
+
+
 class BackCoverMarker(Flowable):
     """Marks the current page as a dedicated Back Cover (Contracapa) and draws its editorial frame."""
 
@@ -616,9 +708,10 @@ class BackCoverMarker(Flowable):
 
     def draw(self):
         c = self.canv
+        page_no = int(c.getPageNumber())
         doc = getattr(c, "_docswarm_document", None)
         if doc is not None:
-            doc.back_cover_pages.add(c.getPageNumber())
+            doc.back_cover_pages.add(page_no)
         pw, ph = self.profile.page_width, self.profile.page_height
         accent = colors.HexColor(self.profile.accent_hex)
         secondary = colors.HexColor(self.profile.secondary_hex)
@@ -635,7 +728,12 @@ class BackCoverMarker(Flowable):
             c.rect(0, 0, pw, 10, stroke=0, fill=1)
         c.setStrokeColor(secondary)
         c.setLineWidth(0.75)
-        c.roundRect(14, 18, pw - 28, ph - 34, 6, stroke=1, fill=0)
+        if self.profile.effective_inner_margin > self.profile.effective_outer_margin:
+            bc_left = 14.0 if (page_no % 2 == 0) else 24.0
+            bc_right = 24.0 if (page_no % 2 == 0) else 14.0
+        else:
+            bc_left, bc_right = 14.0, 14.0
+        c.roundRect(bc_left, 18, pw - bc_left - bc_right, ph - 34, 6, stroke=1, fill=0)
         c.restoreState()
 
 
@@ -826,7 +924,7 @@ def styles(profile: Profile):
 class BookDocument(BaseDocTemplate):
     def __init__(self, destination, title, profile: Profile, language, *, corporate_cover: bool = False):
         super().__init__(str(destination), pagesize=profile.page_size, title=title, author="",
-                         leftMargin=profile.margin, rightMargin=profile.margin,
+                         leftMargin=profile.effective_inner_margin, rightMargin=profile.effective_outer_margin,
                          topMargin=profile.top_margin, bottomMargin=profile.bottom_margin,
                          allowSplitting=True, pageCompression=1, invariant=1)
         self.profile, self.language = profile, language
@@ -841,11 +939,29 @@ class BookDocument(BaseDocTemplate):
         self.chapter_opener_pages: set[int] = set()
         self.title_pages: set[int] = set()
         frame = Frame(
-            profile.margin, profile.bottom_margin, profile.content_width,
+            profile.effective_inner_margin, profile.bottom_margin, profile.content_width,
             profile.page_height - profile.top_margin - profile.bottom_margin,
             id="body", leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0,
         )
         self.addPageTemplates(PageTemplate(id="document", frames=[frame], onPage=self.background, onPageEnd=self.chrome))
+
+    def page_horizontal_bounds(self, page_no: int) -> tuple[float, float]:
+        im = self.profile.effective_inner_margin
+        om = self.profile.effective_outer_margin
+        if im != om:
+            if page_no % 2 == 1:
+                return im, self.page_width - om
+            return om, self.page_width - im
+        return self.margin, self.page_width - self.margin
+
+    def handle_pageBegin(self):
+        left_x, _ = self.page_horizontal_bounds(self.page)
+        if getattr(self, "pageTemplate", None) is not None:
+            for f in self.pageTemplate.frames:
+                f.x1 = left_x
+        if getattr(self, "frame", None) is not None:
+            self.frame.x1 = left_x
+        super().handle_pageBegin()
 
     def beforeDocument(self):
         self.current_heading = self.title
@@ -880,14 +996,17 @@ class BookDocument(BaseDocTemplate):
                         canvas.setFillColor(colors.HexColor(self.profile.accent_hex))
                         canvas.rect(0, ph - 8, pw, 8, stroke=0, fill=1)
                 if self.profile.name in {"book", "almanac"}:
+                    cov_left = 24.0 if self.profile.effective_inner_margin > self.profile.effective_outer_margin else 14.0
+                    cov_right = 14.0
                     canvas.setStrokeColor(colors.HexColor(self.profile.secondary_hex))
                     canvas.setLineWidth(0.75)
-                    canvas.roundRect(14, 18, pw - 28, ph - 34, 6, stroke=1, fill=0)
+                    canvas.roundRect(cov_left, 18, pw - cov_left - cov_right, ph - 34, 6, stroke=1, fill=0)
                     canvas.setStrokeColor(colors.HexColor(self.profile.accent_hex))
                     canvas.setLineWidth(1.2)
-                    mid_x = pw / 2.0
-                    canvas.line(self.margin + 18, 36, mid_x - 16, 36)
-                    canvas.line(mid_x + 16, 36, pw - self.margin - 18, 36)
+                    left_x, right_x = self.page_horizontal_bounds(1)
+                    mid_x = (left_x + right_x) / 2.0
+                    canvas.line(left_x + 18, 36, mid_x - 16, 36)
+                    canvas.line(mid_x + 16, 36, right_x - 18, 36)
                     canvas.setFillColor(colors.HexColor(self.profile.accent_hex))
                     canvas.circle(mid_x, 36, 3.5, stroke=0, fill=1)
                     canvas.circle(mid_x - 8, 36, 1.8, stroke=0, fill=1)
@@ -898,6 +1017,8 @@ class BookDocument(BaseDocTemplate):
         if doc.page <= 1 or doc.page in self.back_cover_pages or doc.page in self.title_pages:
             return
         pw, ph = self.page_width, self.page_height
+        left_x, right_x = self.page_horizontal_bounds(doc.page)
+        mid_x = (left_x + right_x) / 2.0
         line_y = ph - (self.profile.top_margin - 14)
         text_y = line_y + 5
         page_y = max(20, self.profile.bottom_margin - 24)
@@ -905,16 +1026,10 @@ class BookDocument(BaseDocTemplate):
         hdr_font = "DSSerifItalic" if self.profile.name == "book" else (self.profile.body_font if is_book_folio else "DSBody")
         folio_font = self.profile.body_font if is_book_folio else "DSBody"
         canvas.saveState()
-        if is_book_folio:
-            # Subtle inner binding margin rule (left edge on recto/odd pages, right edge on verso/even pages)
-            gutter_x = 12.0 if (doc.page % 2 == 1) else (pw - 12.0)
-            canvas.setStrokeColor(colors.HexColor("#ebe4d4"))
-            canvas.setLineWidth(0.5)
-            canvas.line(gutter_x, self.profile.bottom_margin, gutter_x, ph - self.profile.top_margin)
         if doc.page not in self.chapter_opener_pages:
             canvas.setStrokeColor(colors.HexColor("#dfd7c6" if is_book_folio else "#d2e0e9"))
             canvas.setLineWidth(0.6)
-            canvas.line(self.margin, line_y, pw - self.margin, line_y)
+            canvas.line(left_x, line_y, right_x, line_y)
             # Verso (even) pages display book title on the left; Recto (odd) pages display chapter heading on the right
             raw_hdr = self.title if (is_book_folio and doc.page % 2 == 0) else self.current_heading
             heading = raw_hdr
@@ -930,17 +1045,17 @@ class BookDocument(BaseDocTemplate):
             canvas.setFont(hdr_font, 8.0)
             canvas.setFillColor(GRAY)
             if is_book_folio and doc.page % 2 == 1:
-                canvas.drawRightString(pw - self.margin, text_y, heading)
+                canvas.drawRightString(right_x, text_y, heading)
             else:
-                canvas.drawString(self.margin, text_y, heading)
+                canvas.drawString(left_x, text_y, heading)
         canvas.setFont(folio_font, 8.2 if is_book_folio else 8.0)
         canvas.setFillColor(GRAY)
         if is_book_folio and doc.page in self.chapter_opener_pages:
-            canvas.drawCentredString(pw / 2.0, page_y, str(doc.page))
+            canvas.drawCentredString(mid_x, page_y, str(doc.page))
         elif is_book_folio and doc.page % 2 == 0:
-            canvas.drawString(self.margin, page_y, str(doc.page))
+            canvas.drawString(left_x, page_y, str(doc.page))
         else:
-            canvas.drawRightString(pw - self.margin, page_y, str(doc.page))
+            canvas.drawRightString(right_x, page_y, str(doc.page))
         canvas.restoreState()
 
     def afterFlowable(self, flowable):
@@ -1046,7 +1161,8 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
         elif block.kind == "back-cover":
             _append_pagebreak()
             if standalone_book_cover:
-                # Emit Folio Society Typographic Colophon page immediately before the Back Cover
+                # Ensure Colophon lands on an odd (recto) page so the Back Cover lands on the final even (verso) page
+                story.append(EvenBackCoverPad(f"{block.id}-even-pad", profile=profile))
                 col_hdr = "COLOFÃO TIPOGRÁFICO" if not language.startswith("pt") else "COLOFÃO EDITORIAL E TIPOGRÁFICO"
                 col_body = (
                     "Este volume foi composto na família tipográfica IBM Plex Serif, desenhada por Mike Abbink e Bold Monday, "
@@ -1056,17 +1172,19 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                     "para esta edição, acompanhadas de documentação fotográfica e iconográfica verificada."
                 )
                 story.extend([
-                    Spacer(1, 86 if is_a5 else 110),
-                    TitlePagePlate(f"{block.id}-colophon-plate", profile=profile, height=64.0),
-                    Spacer(1, 18),
-                    Paragraph(
-                        font_text(col_hdr, "DSBold"),
-                        ParagraphStyle(f"col-hdr-{block.id}", fontName="DSBold", fontSize=8.2, leading=12.0, textColor=colors.HexColor(profile.accent_hex), alignment=TA_CENTER, spaceAfter=10),
-                    ),
-                    Paragraph(
-                        font_text(col_body, "DSSerifItalic"),
-                        ParagraphStyle(f"col-body-{block.id}", fontName="DSSerifItalic", fontSize=8.8 if is_a5 else 9.6, leading=13.6 if is_a5 else 15.0, textColor=INK, alignment=TA_CENTER, leftIndent=24, rightIndent=24),
-                    ),
+                    KeepTogether([
+                        Spacer(1, 86 if is_a5 else 110),
+                        TitlePagePlate(f"{block.id}-colophon-plate", profile=profile, height=64.0),
+                        Spacer(1, 18),
+                        Paragraph(
+                            font_text(col_hdr, "DSBold"),
+                            ParagraphStyle(f"col-hdr-{block.id}", fontName="DSBold", fontSize=8.2, leading=12.0, textColor=colors.HexColor(profile.accent_hex), alignment=TA_CENTER, spaceAfter=10),
+                        ),
+                        Paragraph(
+                            font_text(col_body, "DSSerifItalic"),
+                            ParagraphStyle(f"col-body-{block.id}", fontName="DSSerifItalic", fontSize=8.8 if is_a5 else 9.6, leading=13.6 if is_a5 else 15.0, textColor=INK, alignment=TA_CENTER, leftIndent=24, rightIndent=24),
+                        ),
+                    ]),
                     PageBreak(),
                 ])
             story.extend([BackCoverMarker(block.id, profile), Spacer(1, 44 if is_a5 else 56)])
@@ -1153,7 +1271,8 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
             if highlights:
                 hl_style = ParagraphStyle(
                     f"bc-hl-{block.id}", fontName=profile.body_font, fontSize=8.6 if is_a5 else 9.4,
-                    leading=12.2 if is_a5 else 13.4, textColor=INK, leftIndent=bc_indent + 10, rightIndent=bc_indent,
+                    leading=12.2 if is_a5 else 13.4, textColor=INK,
+                    leftIndent=bc_indent + 10, rightIndent=bc_indent, bulletIndent=bc_indent,
                     firstLineIndent=0, bulletFontName=profile.body_font, spaceAfter=4,
                 )
                 for idx, hl in enumerate(highlights):
@@ -1453,10 +1572,11 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                 ("LEFTPADDING", (0, 0), (-1, -1), pad_h), ("RIGHTPADDING", (0, 0), (-1, -1), pad_h),
                 ("TOPPADDING", (0, 0), (-1, -1), 4 if is_a5 else 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 4 if is_a5 else 6),
             ]
-            if len(cells) <= 9:
+            max_cell_chars = max((len("".join(r.text for r in cell).strip()) for row in block.rows for cell in row), default=0)
+            if len(cells) <= 9 and max_cell_chars <= 85:
                 table_rules.append(("NOSPLIT", (0, 0), (-1, -1)))
             elif len(cells) >= 4:
-                table_rules.append(("NOSPLIT", (0, 0), (-1, min(2, len(cells) - 1))))
+                table_rules.append(("NOSPLIT", (0, 0), (-1, min(1, len(cells) - 1))))
                 table_rules.append(("NOSPLIT", (0, -2), (-1, -1)))
             table.setStyle(TableStyle(table_rules))
             story.extend([table, Spacer(1, 10 if is_a5 else 13)])
@@ -1618,11 +1738,12 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
         doc.multiBuild(story, maxPasses=8)
     except LayoutError as exc:
         raise InputError(f"source block cannot fit its page; restructure it without dropping text: {exc}") from exc
+    min_h_margin = min(profile.effective_inner_margin, profile.effective_outer_margin)
     return {
         "schema_version": 1, "profile": profile_name, "language": language,
         "page_size": list(profile.page_size),
-        "body_frame": [profile.margin, profile.top_margin, pw - profile.margin, ph - profile.bottom_margin],
-        "allowed_text_box": [profile.margin - 3, 14, pw - profile.margin + 3, ph - 16],
+        "body_frame": [min_h_margin, profile.top_margin, pw - min_h_margin, ph - profile.bottom_margin],
+        "allowed_text_box": [min_h_margin - 3, 14, pw - min_h_margin + 3, ph - 16],
         "body_font_size": profile.body_size, "body_leading": profile.leading,
         "placements": doc.placements, "headings": headings, "fonts": font_records,
     }
