@@ -15,6 +15,7 @@ from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
 from reportlab.lib.pagesizes import A4, A5
 from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.pdfdoc import PDFString
 from reportlab.pdfbase.ttfonts import TTFont
@@ -99,7 +100,7 @@ PROFILES = {
         "book", 10.2, 15.0, 8.0, 17.5, 22.5,
         body_font="DSSerif", heading_font="DSSerifBold",
         accent_hex="#7c2d12", secondary_hex="#1e3a5f",
-        cover_bg_hex="#ffffff", box_bg_hex="#ffffff",
+        cover_bg_hex="#ffffff", box_bg_hex="#f8f5ee",
         chapter_pagebreak=True, page_size=A5,
         margin=36.0, top_margin=43.0, bottom_margin=47.0,
         inner_margin=46.0, outer_margin=26.0,
@@ -108,7 +109,7 @@ PROFILES = {
         "almanac", 9.8, 14.2, 7.0, 16.5, 21.5,
         body_font="DSSerif", heading_font="DSBold",
         accent_hex="#b87314", secondary_hex="#0f766e",
-        cover_bg_hex="#ffffff", box_bg_hex="#ffffff",
+        cover_bg_hex="#ffffff", box_bg_hex="#f8f5ee",
         chapter_pagebreak=True, page_size=A5,
         margin=36.0, top_margin=43.0, bottom_margin=47.0,
         inner_margin=46.0, outer_margin=26.0,
@@ -248,6 +249,124 @@ class CodeBlock(Flowable):
             c.drawString(8, self.height - 17 - index * 13, line.expandtabs(4))
 
 
+def _trim_engraving_border(img_path: str):
+    """Strip outer uniform light mat borders and closed rectangular frame boxes without ever clipping open artwork."""
+    from PIL import Image as PilImage
+    im = PilImage.open(img_path).convert("RGB")
+    w, h = im.size
+    if w < 120 or h < 120:
+        return im, w, h
+    px = im.load()
+
+    def row_stats(y: int, x_start: int, x_end: int) -> tuple[float, float]:
+        span = max(1, (x_end - x_start) // 2)
+        light = dark = 0
+        for x in range(x_start, x_end, 2):
+            r, g, b = px[x, y]
+            if r > 212 and g > 206 and b > 192:
+                light += 1
+            elif r < 95 and g < 95 and b < 95:
+                dark += 1
+        return light / span, dark / span
+
+    def col_stats(x: int, y_start: int, y_end: int) -> tuple[float, float]:
+        span = max(1, (y_end - y_start) // 2)
+        light = dark = 0
+        for y in range(y_start, y_end, 2):
+            r, g, b = px[x, y]
+            if r > 212 and g > 206 and b > 192:
+                light += 1
+            elif r < 95 and g < 95 and b < 95:
+                dark += 1
+        return light / span, dark / span
+
+    top, bottom, left, right = 0, h - 1, 0, w - 1
+    max_frame_y = int(h * 0.18)
+    max_frame_x = int(w * 0.18)
+
+    # Check if the image has a closed 4-sided drawn rectangular frame near its outer edges
+    frame_top = next((y for y in range(0, max_frame_y) if row_stats(y, max_frame_x, w - max_frame_x)[1] > 0.65), None)
+    frame_bottom = next((y for y in range(h - 1, h - 1 - max_frame_y, -1) if row_stats(y, max_frame_x, w - max_frame_x)[1] > 0.65), None)
+    y_probe_start = (frame_top + 8) if frame_top is not None else max_frame_y
+    y_probe_end = (frame_bottom - 8) if frame_bottom is not None else (h - max_frame_y)
+    frame_left = next((x for x in range(0, max_frame_x) if col_stats(x, y_probe_start, y_probe_end)[1] > 0.65), None)
+    frame_right = next((x for x in range(w - 1, w - 1 - max_frame_x, -1) if col_stats(x, y_probe_start, y_probe_end)[1] > 0.65), None)
+
+    if frame_top is not None and frame_bottom is not None and frame_left is not None and frame_right is not None:
+        # Step 4 pixels inside the 4-sided drawn rectangular frame to strip its outer border line cleanly
+        left = min(frame_left + 4, w - 1)
+        top = min(frame_top + 4, h - 1)
+        right = max(frame_right - 4, left + 1)
+        bottom = max(frame_bottom - 4, top + 1)
+        if (right - left) >= w * 0.65 and (bottom - top) >= h * 0.65:
+            cropped = im.crop((left, top, right + 1, bottom + 1))
+            return cropped, cropped.width, cropped.height
+    return im, w, h
+
+
+class NativeTitleBanner(Flowable):
+    """Renders an optional native-script (e.g. Japanese) title line on the cover as a high-DPI typographic plate."""
+
+    _FONT_CANDIDATES = (
+        "C:/Windows/Fonts/yumindb.ttf",
+        "C:/Windows/Fonts/yumin.ttf",
+        "C:/Windows/Fonts/BIZ-UDMinchoM.ttc",
+        "C:/Windows/Fonts/msmincho.ttc",
+        "C:/Windows/Fonts/YuGothB.ttc",
+        "C:/Windows/Fonts/msgothic.ttc",
+    )
+
+    def __init__(self, identifier: str, *, text: str, profile: Profile):
+        super().__init__()
+        self.identifier = identifier
+        self.text = text.strip()
+        self.profile = profile
+        self.width = profile.content_width
+        self.height = 24.0 if profile.content_width < 400 else 28.0
+
+    def wrap(self, availWidth, availHeight):
+        return self.width, self.height
+
+    def draw(self):
+        if not self.text:
+            return
+        from PIL import Image as PilImage, ImageDraw, ImageFont
+        c = self.canv
+        scale = 6
+        px_w = max(60, int(round(self.width * scale)))
+        px_h = max(24, int(round(self.height * scale)))
+        bg_hex = (self.profile.cover_bg_hex or "#ffffff").lstrip("#")
+        bg_rgb = tuple(int(bg_hex[i:i + 2], 16) for i in (0, 2, 4))
+        fg_hex = (self.profile.secondary_hex or "#1e3a5f").lstrip("#")
+        fg_rgb = tuple(int(fg_hex[i:i + 2], 16) for i in (0, 2, 4))
+
+        img = PilImage.new("RGB", (px_w, px_h), bg_rgb)
+        draw = ImageDraw.Draw(img)
+        font_px = int(round((13.5 if self.width < 400 else 15.5) * scale))
+        font_obj = None
+        for cand in self._FONT_CANDIDATES:
+            if Path(cand).is_file():
+                try:
+                    font_obj = ImageFont.truetype(cand, font_px)
+                    break
+                except Exception:
+                    continue
+        if font_obj is None:
+            font_obj = ImageFont.load_default()
+
+        spaced_text = "  ".join(list(self.text.replace(" ", ""))) if len(self.text) <= 7 else self.text
+        bbox = draw.textbbox((0, 0), spaced_text, font=font_obj)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+        tx = (px_w - tw) / 2.0 - bbox[0]
+        ty = (px_h - th) / 2.0 - bbox[1]
+        draw.text((tx, ty), spaced_text, font=font_obj, fill=fg_rgb)
+
+        c.saveState()
+        c.drawImage(ImageReader(img), 0, 0, width=self.width, height=self.height, preserveAspectRatio=True, mask="auto")
+        c.restoreState()
+
+
 class CoverArt(Flowable):
     """Profile- and title-aware cover artwork supporting hero photography and generative vector plates."""
 
@@ -263,60 +382,20 @@ class CoverArt(Flowable):
         self.width, self.height = (96, 16) if compact else (cw, ch)
 
     def _draw_hero_image_cover(self, c, img_path: str):
-        from PIL import Image as PilImage
-        with PilImage.open(img_path) as im:
-            iw, ih = im.size
-        accent = colors.HexColor(self.spec.get("accent") or (self.profile.accent_hex if self.profile else "#7c2d12"))
-        secondary = colors.HexColor(self.spec.get("secondary") or (self.profile.secondary_hex if self.profile else "#1e3a5f"))
-        box_bg = colors.HexColor(self.profile.box_bg_hex if self.profile else "#f6f2ea")
-        seed = hashlib.sha256(self.title.encode("utf-8")).digest()
+        im_cropped, iw, ih = _trim_engraving_border(img_path)
 
         c.saveState()
-        # Outer decorative editorial plate with subtle offset shadow
-        c.setFillColor(box_bg)
-        c.setStrokeColor(secondary)
-        c.setLineWidth(1.0)
-        c.roundRect(6, 14, self.width - 12, self.height - 20, 8, stroke=1, fill=1)
-
-        # Dynamic background accent stripes seeded by document title
-        c.setStrokeColor(accent)
-        c.setLineWidth(0.75)
-        stripe_count = 5 + (seed[0] % 4)
-        for idx in range(stripe_count):
-            y_pos = 24 + idx * ((self.height - 44) / max(1, stripe_count - 1))
-            c.line(16, y_pos, 48 + (seed[(idx + 1) % len(seed)] % 28), y_pos)
-            c.line(self.width - 48 - (seed[(idx + 3) % len(seed)] % 28), y_pos, self.width - 16, y_pos)
-
-        # Compute centered hero image box with matte frame
-        pad_w = 48.0 if self.width < 400 else 84.0
-        avail_w = self.width - pad_w
-        avail_h = self.height - 44.0
+        avail_w = self.width - (4.0 if self.width < 400 else 16.0)
+        avail_h = self.height - 8.0
         scale = min(avail_w / max(iw, 1), avail_h / max(ih, 1))
         draw_w = iw * scale
         draw_h = ih * scale
         x0 = (self.width - draw_w) / 2.0
-        y0 = (self.height - draw_h) / 2.0 + 2.0
+        y0 = (self.height - draw_h) / 2.0
 
-        # Offset accent shadow behind the photo
-        c.setFillColor(accent)
-        c.roundRect(x0 + 5, y0 - 5, draw_w, draw_h, 4, stroke=0, fill=1)
-        # White photo mount
         c.setFillColor(colors.white)
-        c.setStrokeColor(INK)
-        c.setLineWidth(1.2)
-        c.rect(x0 - 4, y0 - 4, draw_w + 8, draw_h + 8, stroke=1, fill=1)
-        c.drawImage(img_path, x0, y0, width=draw_w, height=draw_h, preserveAspectRatio=True, mask="auto")
-
-        # Corner registration ticks & bottom accent bar
-        c.setStrokeColor(accent)
-        c.setLineWidth(1.8)
-        c.line(x0 - 10, y0 + draw_h + 8, x0 + 18, y0 + draw_h + 8)
-        c.line(x0 - 10, y0 + draw_h + 8, x0 - 10, y0 + draw_h - 16)
-        c.line(x0 + draw_w + 10, y0 - 8, x0 + draw_w - 18, y0 - 8)
-        c.line(x0 + draw_w + 10, y0 - 8, x0 + draw_w + 10, y0 + 16)
-        c.setStrokeColor(secondary)
-        c.setLineWidth(2.2)
-        c.line(42, 6, self.width - 42, 6)
+        c.rect(x0, y0, draw_w, draw_h, stroke=0, fill=1)
+        c.drawImage(ImageReader(im_cropped), x0, y0, width=draw_w, height=draw_h, preserveAspectRatio=True, mask="auto")
         c.restoreState()
 
     def _draw_generative_editorial_cover(self, c):
@@ -460,39 +539,14 @@ class ChapterArt(Flowable):
         img_path = self.spec.get("resolved_src")
         if not img_path or not Path(img_path).is_file():
             return
-        from PIL import Image as PilImage
-        with PilImage.open(img_path) as im:
-            iw, ih = im.size
-        accent = colors.HexColor(self.profile.accent_hex)
-        secondary = colors.HexColor(self.profile.secondary_hex)
-        box_bg = colors.HexColor(self.profile.box_bg_hex)
-        mid_x = self.width / 2.0
-        top_rule_y = self.height - 8.0
+        im_cropped, iw, ih = _trim_engraving_border(img_path)
 
         c.saveState()
-        # Ornamental divider between chapter title and engraving
-        c.setStrokeColor(accent)
-        c.setLineWidth(1.0)
-        c.line(mid_x - 68, top_rule_y, mid_x - 10, top_rule_y)
-        c.line(mid_x + 10, top_rule_y, mid_x + 68, top_rule_y)
-        c.setFillColor(accent)
-        c.circle(mid_x, top_rule_y, 2.8, stroke=0, fill=1)
-        c.circle(mid_x - 6, top_rule_y, 1.4, stroke=0, fill=1)
-        c.circle(mid_x + 6, top_rule_y, 1.4, stroke=0, fill=1)
-
-        # Outer editorial mat plate
-        plate_y = 6.0
-        plate_h = self.height - 24.0
-        plate_pad_x = 8.0 if self.width < 400 else 14.0
-        plate_w = self.width - 2.0 * plate_pad_x
-        c.setFillColor(box_bg)
-        c.setStrokeColor(secondary)
-        c.setLineWidth(0.85)
-        c.roundRect(plate_pad_x, plate_y, plate_w, plate_h, 6, stroke=1, fill=1)
-
-        # Compute centered engraving dimensions inside the mat
-        avail_w = plate_w - (24.0 if self.width < 400 else 36.0)
-        avail_h = plate_h - (22.0 if self.width < 400 else 28.0)
+        # Compute centered engraving dimensions without any outer frame or border lines
+        plate_y = 4.0
+        plate_h = self.height - 8.0
+        avail_w = self.width - (4.0 if self.width < 400 else 16.0)
+        avail_h = plate_h - 4.0
         scale = min(avail_w / max(iw, 1), avail_h / max(ih, 1))
         draw_w = iw * scale
         draw_h = ih * scale
@@ -500,18 +554,8 @@ class ChapterArt(Flowable):
         y0 = plate_y + (plate_h - draw_h) / 2.0
 
         c.setFillColor(colors.white)
-        c.setStrokeColor(INK)
-        c.setLineWidth(1.0)
-        c.rect(x0 - 3.5, y0 - 3.5, draw_w + 7.0, draw_h + 7.0, stroke=1, fill=1)
-        c.drawImage(img_path, x0, y0, width=draw_w, height=draw_h, preserveAspectRatio=True, mask="auto")
-
-        # Corner ticks in accent color
-        c.setStrokeColor(accent)
-        c.setLineWidth(1.4)
-        c.line(x0 - 7, y0 + draw_h + 6, x0 + 12, y0 + draw_h + 6)
-        c.line(x0 - 7, y0 + draw_h + 6, x0 - 7, y0 + draw_h - 12)
-        c.line(x0 + draw_w + 7, y0 - 6, x0 + draw_w - 12, y0 - 6)
-        c.line(x0 + draw_w + 7, y0 - 6, x0 + draw_w + 7, y0 + 12)
+        c.rect(x0, y0, draw_w, draw_h, stroke=0, fill=1)
+        c.drawImage(ImageReader(im_cropped), x0, y0, width=draw_w, height=draw_h, preserveAspectRatio=True, mask="auto")
         c.restoreState()
 
 
@@ -616,8 +660,29 @@ class FootnoteRule(Flowable):
         c.restoreState()
 
 
+class BlankPage(Flowable):
+    """Intentional blank white page (e.g., verso of 210g front cover or inside recto of 210g back cover)."""
+
+    def __init__(self, identifier: str, *, profile: Profile):
+        super().__init__()
+        self.identifier = identifier
+        self.profile = profile
+        self.width = profile.content_width
+        self.height = 360.0 if profile.content_width < 400 else 480.0
+
+    def wrap(self, availWidth, availHeight):
+        return self.width, min(self.height, max(120.0, availHeight - 4.0))
+
+    def draw(self):
+        c = self.canv
+        doc = getattr(c, "_docswarm_document", None)
+        if doc is not None:
+            doc.blank_pages.add(int(c.getPageNumber()))
+        record(c, self.identifier, "blank-page", self.width, self.height, expected_ink=False)
+
+
 class EvenBackCoverPad(Flowable):
-    """When the page preceding the Colophon is even, emits a Folio Society Ex-Libris bookplate so the Colophon is odd and the Back Cover is even (outside back cover in duplex binding)."""
+    """When the page after the interior text is even (back of the last 70g sheet), fills it as a blank white page so the 210g back-cover sheet begins on the next odd page."""
 
     def __init__(self, identifier: str, *, profile: Profile):
         super().__init__()
@@ -647,53 +712,8 @@ class EvenBackCoverPad(Flowable):
         c = self.canv
         doc = getattr(c, "_docswarm_document", None)
         if doc is not None:
-            doc.title_pages.add(int(c.getPageNumber()))
-        record(c, self.identifier, "title-plate", self.width, self.height)
-        accent = colors.HexColor(self.profile.accent_hex)
-        secondary = colors.HexColor(self.profile.secondary_hex)
-        mid_x = self.width / 2.0
-        mid_y = self.height / 2.0
-        box_w = min(210.0, self.width * 0.64)
-        box_h = 240.0
-        x0 = mid_x - box_w / 2.0
-        y0 = mid_y - box_h / 2.0
-        c.saveState()
-        # Outer and inner bookplate cartouche frames
-        c.setStrokeColor(secondary)
-        c.setLineWidth(0.9)
-        c.roundRect(x0, y0, box_w, box_h, 6, stroke=1, fill=0)
-        c.setStrokeColor(accent)
-        c.setLineWidth(0.55)
-        c.roundRect(x0 + 6, y0 + 6, box_w - 12, box_h - 12, 4, stroke=1, fill=0)
-        # Central compass emblem inside top half of cartouche
-        emblem_y = y0 + box_h * 0.66
-        c.setStrokeColor(secondary)
-        c.setLineWidth(0.75)
-        c.line(mid_x - 62, emblem_y, mid_x - 22, emblem_y)
-        c.line(mid_x + 22, emblem_y, mid_x + 62, emblem_y)
-        c.setStrokeColor(accent)
-        c.setLineWidth(1.05)
-        c.circle(mid_x, emblem_y, 13.5, stroke=1, fill=0)
-        c.setStrokeColor(secondary)
-        c.setLineWidth(0.65)
-        c.circle(mid_x, emblem_y, 9.0, stroke=1, fill=0)
-        p = c.beginPath()
-        p.moveTo(mid_x, emblem_y + 6.0)
-        p.lineTo(mid_x + 6.0, emblem_y)
-        p.lineTo(mid_x, emblem_y - 6.0)
-        p.lineTo(mid_x - 6.0, emblem_y)
-        p.close()
-        c.setFillColor(accent)
-        c.drawPath(p, stroke=0, fill=1)
-        c.setFillColor(colors.white)
-        c.circle(mid_x, emblem_y, 1.9, stroke=0, fill=1)
-        # Bookplate inscription lines in lower half of cartouche
-        c.setStrokeColor(colors.HexColor("#dfd7c6"))
-        c.setLineWidth(0.6)
-        for line_offset in (0.38, 0.27, 0.16):
-            ly = y0 + box_h * line_offset
-            c.line(x0 + 26, ly, x0 + box_w - 26, ly)
-        c.restoreState()
+            doc.blank_pages.add(int(c.getPageNumber()))
+        record(c, self.identifier, "blank-page", self.width, self.height, expected_ink=False)
 
 
 class BackCoverMarker(Flowable):
@@ -726,14 +746,9 @@ class BackCoverMarker(Flowable):
             c.rect(0, ph - 8, pw, 8, stroke=0, fill=1)
             c.setFillColor(secondary)
             c.rect(0, 0, pw, 10, stroke=0, fill=1)
-        c.setStrokeColor(secondary)
-        c.setLineWidth(0.75)
-        if self.profile.effective_inner_margin > self.profile.effective_outer_margin:
-            bc_left = 14.0 if (page_no % 2 == 0) else 24.0
-            bc_right = 24.0 if (page_no % 2 == 0) else 14.0
-        else:
-            bc_left, bc_right = 14.0, 14.0
-        c.roundRect(bc_left, 18, pw - bc_left - bc_right, ph - 34, 6, stroke=1, fill=0)
+            c.setStrokeColor(secondary)
+            c.setLineWidth(0.75)
+            c.roundRect(14, 18, pw - 28, ph - 34, 6, stroke=1, fill=0)
         c.restoreState()
 
 
@@ -938,6 +953,7 @@ class BookDocument(BaseDocTemplate):
         self.back_cover_pages: set[int] = set()
         self.chapter_opener_pages: set[int] = set()
         self.title_pages: set[int] = set()
+        self.blank_pages: set[int] = set()
         frame = Frame(
             profile.effective_inner_margin, profile.bottom_margin, profile.content_width,
             profile.page_height - profile.top_margin - profile.bottom_margin,
@@ -955,12 +971,17 @@ class BookDocument(BaseDocTemplate):
         return self.margin, self.page_width - self.margin
 
     def handle_pageBegin(self):
-        left_x, _ = self.page_horizontal_bounds(self.page)
+        next_page = self.page + 1
+        left_x, _ = self.page_horizontal_bounds(next_page)
         if getattr(self, "pageTemplate", None) is not None:
             for f in self.pageTemplate.frames:
                 f.x1 = left_x
+                f._x1 = left_x
+                f._geom()
         if getattr(self, "frame", None) is not None:
             self.frame.x1 = left_x
+            self.frame._x1 = left_x
+            self.frame._geom()
         super().handle_pageBegin()
 
     def beforeDocument(self):
@@ -969,6 +990,7 @@ class BookDocument(BaseDocTemplate):
         self.back_cover_pages = set()
         self.chapter_opener_pages = set()
         self.title_pages = set()
+        self.blank_pages = set()
         self.canv._docswarm_document = self
         self.canv._doc.Catalog.Lang = PDFString(self.language)
 
@@ -995,26 +1017,10 @@ class BookDocument(BaseDocTemplate):
                     if self.profile.name == "magazine":
                         canvas.setFillColor(colors.HexColor(self.profile.accent_hex))
                         canvas.rect(0, ph - 8, pw, 8, stroke=0, fill=1)
-                if self.profile.name in {"book", "almanac"}:
-                    cov_left = 24.0 if self.profile.effective_inner_margin > self.profile.effective_outer_margin else 14.0
-                    cov_right = 14.0
-                    canvas.setStrokeColor(colors.HexColor(self.profile.secondary_hex))
-                    canvas.setLineWidth(0.75)
-                    canvas.roundRect(cov_left, 18, pw - cov_left - cov_right, ph - 34, 6, stroke=1, fill=0)
-                    canvas.setStrokeColor(colors.HexColor(self.profile.accent_hex))
-                    canvas.setLineWidth(1.2)
-                    left_x, right_x = self.page_horizontal_bounds(1)
-                    mid_x = (left_x + right_x) / 2.0
-                    canvas.line(left_x + 18, 36, mid_x - 16, 36)
-                    canvas.line(mid_x + 16, 36, right_x - 18, 36)
-                    canvas.setFillColor(colors.HexColor(self.profile.accent_hex))
-                    canvas.circle(mid_x, 36, 3.5, stroke=0, fill=1)
-                    canvas.circle(mid_x - 8, 36, 1.8, stroke=0, fill=1)
-                    canvas.circle(mid_x + 8, 36, 1.8, stroke=0, fill=1)
             canvas.restoreState()
 
     def chrome(self, canvas, doc):
-        if doc.page <= 1 or doc.page in self.back_cover_pages or doc.page in self.title_pages:
+        if doc.page <= 1 or doc.page in self.back_cover_pages or doc.page in self.title_pages or doc.page in self.blank_pages:
             return
         pw, ph = self.page_width, self.page_height
         left_x, right_x = self.page_horizontal_bounds(doc.page)
@@ -1090,12 +1096,15 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
     if corporate_cover:
         story.append(Spacer(1, 102))
     seen_cover_title = False
-    title_page_emitted = False
+    cover_verso_emitted = False
     chapter_first_para_pending = False
     prev_was_body_para = False
     prev_block_kind = ""
     post_cover_art_body_idx = 0
-    doc_subtitle_text = next((b.text.strip() for b in document.blocks if b.kind == "cover-subtitle"), "")
+    cover_native_title = next(
+        ((b.spec or {}).get("native_title", "").strip() for b in document.blocks if b.kind == "cover-art" and (b.spec or {}).get("native_title")),
+        "",
+    )
 
     def _append_pagebreak():
         while story and isinstance(story[-1], Spacer):
@@ -1103,47 +1112,23 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
         if story and not isinstance(story[-1], PageBreak):
             story.append(PageBreak())
 
-    def _emit_folio_title_page():
-        nonlocal title_page_emitted
-        if not standalone_book_cover or title_page_emitted:
+    def _emit_cover_verso_blank():
+        nonlocal cover_verso_emitted
+        if not standalone_book_cover or cover_verso_emitted:
             return
-        title_page_emitted = True
-        accent_col = colors.HexColor(profile.accent_hex)
-        sec_col = colors.HexColor(profile.secondary_hex)
-        tp_kicker = "COLEÇÃO EDITORIAL ILUSTRADA" if language.startswith("pt") else "ILLUSTRATED COLLECTOR EDITION"
-        tp_imprint = "EDIÇÃO ILUSTRADA" if language.startswith("pt") else "ILLUSTRATED EDITION"
-        story.append(Spacer(1, 52 if is_a5 else 68))
-        story.append(Paragraph(
-            font_text(tp_kicker, "DSBold"),
-            ParagraphStyle("tp-kicker", fontName="DSBold", fontSize=7.8 if is_a5 else 8.8, leading=11.0, textColor=sec_col, alignment=TA_CENTER, spaceAfter=18),
-        ))
-        story.append(Paragraph(
-            font_text(document.title, "DSSerifBold"),
-            ParagraphStyle("tp-title", fontName="DSSerifBold", fontSize=18.5 if is_a5 else 22.5, leading=24.0 if is_a5 else 29.0, textColor=accent_col, alignment=TA_CENTER, spaceAfter=10),
-        ))
-        if doc_subtitle_text:
-            story.append(Paragraph(
-                font_text(doc_subtitle_text, "DSSerifItalic"),
-                ParagraphStyle("tp-sub", fontName="DSSerifItalic", fontSize=10.4 if is_a5 else 12.2, leading=14.8 if is_a5 else 17.0, textColor=INK, alignment=TA_CENTER, leftIndent=18, rightIndent=18, spaceAfter=28),
-            ))
-        story.append(Spacer(1, 20 if is_a5 else 28))
-        story.append(TitlePagePlate("folio-title-page-plate", profile=profile, height=84.0 if is_a5 else 96.0))
-        story.append(Spacer(1, 58 if is_a5 else 76))
-        story.append(Paragraph(
-            font_text(tp_imprint, "DSBold"),
-            ParagraphStyle("tp-imprint", fontName="DSBold", fontSize=7.5 if is_a5 else 8.4, leading=11.0, textColor=GRAY, alignment=TA_CENTER),
-        ))
+        cover_verso_emitted = True
+        story.append(BlankPage("front-cover-verso-blank", profile=profile))
         _append_pagebreak()
 
     for position, block in enumerate(document.blocks):
         if standalone_book_cover and not front_cover_closed and seen_cover_title and block.kind not in {"cover-art", "cover-title", "cover-subtitle", "pagebreak"}:
             _append_pagebreak()
             front_cover_closed = True
-            _emit_folio_title_page()
+            _emit_cover_verso_blank()
         if block.kind == "pagebreak":
             _append_pagebreak()
             front_cover_closed = True
-            _emit_folio_title_page()
+            _emit_cover_verso_blank()
             prev_was_body_para = False
             prev_block_kind = "pagebreak"
         elif block.kind == "cover-art":
@@ -1155,36 +1140,17 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                 )
                 if first_img:
                     cover_spec["resolved_src"] = first_img
-            story.extend([CoverArt(block.id, compact=corporate_cover, profile=profile, spec=cover_spec, title=document.title), Spacer(1, 18 if is_a5 else 24)])
+            story.extend([CoverArt(block.id, compact=corporate_cover, profile=profile, spec=cover_spec, title=document.title), Spacer(1, 14 if is_a5 else 20)])
             prev_was_body_para = False
             prev_block_kind = "cover-art"
         elif block.kind == "back-cover":
             _append_pagebreak()
             if standalone_book_cover:
-                # Ensure Colophon lands on an odd (recto) page so the Back Cover lands on the final even (verso) page
-                story.append(EvenBackCoverPad(f"{block.id}-even-pad", profile=profile))
-                col_hdr = "COLOFÃO TIPOGRÁFICO" if not language.startswith("pt") else "COLOFÃO EDITORIAL E TIPOGRÁFICO"
-                col_body = (
-                    "Este volume foi composto na família tipográfica IBM Plex Serif, desenhada por Mike Abbink e Bold Monday, "
-                    "com olho médio amplo, serifas firmes e entrelinha calibrada para impressão em papel Offset Chandra 90 g/m2 "
-                    "de alta alvura e excelente opacidade, valorizando o contraste das hachuras em bico de pena e a nitidez "
-                    "cromática das pranchas. As gravuras de abertura de capítulo e ilustrações originais foram desenhadas "
-                    "para esta edição, acompanhadas de documentação fotográfica e iconográfica verificada."
-                )
+                # 1) If the 70g interior ended on an odd page, pad the even verso of the last 70g sheet as blank.
+                # 2) Then make the odd recto (inside face) of the final 210g cover sheet blank, so the Back Cover lands on the final even (outside) page.
                 story.extend([
-                    KeepTogether([
-                        Spacer(1, 86 if is_a5 else 110),
-                        TitlePagePlate(f"{block.id}-colophon-plate", profile=profile, height=64.0),
-                        Spacer(1, 18),
-                        Paragraph(
-                            font_text(col_hdr, "DSBold"),
-                            ParagraphStyle(f"col-hdr-{block.id}", fontName="DSBold", fontSize=8.2, leading=12.0, textColor=colors.HexColor(profile.accent_hex), alignment=TA_CENTER, spaceAfter=10),
-                        ),
-                        Paragraph(
-                            font_text(col_body, "DSSerifItalic"),
-                            ParagraphStyle(f"col-body-{block.id}", fontName="DSSerifItalic", fontSize=8.8 if is_a5 else 9.6, leading=13.6 if is_a5 else 15.0, textColor=INK, alignment=TA_CENTER, leftIndent=24, rightIndent=24),
-                        ),
-                    ]),
+                    EvenBackCoverPad(f"{block.id}-even-pad", profile=profile),
+                    BlankPage(f"{block.id}-inside-back-cover-blank", profile=profile),
                     PageBreak(),
                 ])
             story.extend([BackCoverMarker(block.id, profile), Spacer(1, 44 if is_a5 else 56)])
@@ -1579,6 +1545,11 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                 table_rules.append(("NOSPLIT", (0, 0), (-1, min(1, len(cells) - 1))))
                 table_rules.append(("NOSPLIT", (0, -2), (-1, -1)))
             table.setStyle(TableStyle(table_rules))
+            if prev_block_kind != "table-title":
+                table.spaceBefore = 10.5 if is_a5 else 13.0
+                story.append(Spacer(1, 10.0 if is_a5 else 12.5))
+            else:
+                table.spaceBefore = 3.0
             story.extend([table, Spacer(1, 10 if is_a5 else 13)])
         elif block.kind == "rule":
             story.append(Spacer(1, 9))
@@ -1680,7 +1651,7 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                 chapter_first_para_pending = False
                 current = ParagraphStyle(
                     f"tbltitle-{block.id}", parent=current,
-                    firstLineIndent=0, spaceBefore=6.0, spaceAfter=4.0, keepWithNext=True,
+                    firstLineIndent=0, spaceBefore=12.0 if is_a5 else 14.5, spaceAfter=6.0, keepWithNext=True,
                 )
             elif block.kind == "paragraph" and profile.name == "book":
                 if chapter_first_para_pending and block.runs and block.runs[0].text.strip():
@@ -1728,8 +1699,10 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                     if pdfmetrics.stringWidth(line, "DSMath", current.fontSize) > cw:
                         raise InputError(f"line {block.line}: formula is too wide; provide authored line breaks")
             story.append(paragraph)
-            prev_was_body_para = (block.kind == "paragraph")
-            prev_block_kind = block.kind
+            if block.kind == "cover-title" and cover_native_title and not corporate_cover:
+                story.extend([NativeTitleBanner(f"{block.id}-native-title", text=cover_native_title, profile=profile), Spacer(1, 6)])
+            prev_was_body_para = (block.kind == "paragraph" and not is_table_title_para)
+            prev_block_kind = "table-title" if is_table_title_para else block.kind
         if block.kind not in {"paragraph", "heading", "list", "quote", "caption", "figure-title", "formula", "cover-title", "cover-subtitle", "cover-body"}:
             prev_was_body_para = False
             prev_block_kind = block.kind

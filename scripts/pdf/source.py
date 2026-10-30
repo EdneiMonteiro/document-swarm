@@ -259,10 +259,12 @@ def back_cover_spec(data: Any, name: str, *, strip_refs: bool = False) -> dict[s
 def cover_art_spec(data: Any, source_dir: Path | None = None) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise InputError("cover-art: JSON object required when payload is provided")
-    allowed = {"style", "src", "accent", "secondary", "motif"}
+    allowed = {"style", "src", "accent", "secondary", "motif", "native_title"}
     if set(data) - allowed:
         raise InputError(f"cover-art: unsupported fields {sorted(set(data) - allowed)}")
     out = dict(data)
+    if "native_title" in data and data["native_title"] is not None:
+        out["native_title"] = nonempty(data["native_title"], "cover-art native_title").strip()
     if "src" in data and data["src"] is not None:
         nonempty(data["src"], "cover-art src")
         raw_src = str(data["src"]).replace("\\", "/")
