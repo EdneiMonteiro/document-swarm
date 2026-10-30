@@ -1407,14 +1407,20 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
             for c in range(ncols):
                 max_len = 1
                 longest_tok_w = 0.0
+                has_url = False
                 for r, row in enumerate(block.rows):
                     txt = "".join(run.text for run in row[c]).strip()
                     max_len = max(max_len, len(txt))
+                    if r > 0 and ("http://" in txt or "https://" in txt):
+                        has_url = True
                     has_code = any(run.code for run in row[c])
                     fname = "DSMono" if has_code else ("DSBold" if r == 0 else "DSBody")
                     for tok in txt.split():
                         longest_tok_w = max(longest_tok_w, pdfmetrics.stringWidth(tok, fname, font_sz))
-                cap_frac = 0.34 if ncols >= 7 else 0.42
+                if has_url:
+                    cap_frac = 0.30 if is_a5 else 0.34
+                else:
+                    cap_frac = 0.34 if ncols >= 7 else 0.42
                 col_mins.append(min(cw * cap_frac, longest_tok_w + 2 * pad_h + 4.0))
                 col_weights.append(max(max_len, 4) ** 0.55)
             total_min = sum(col_mins)
@@ -1423,10 +1429,11 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                 flex = [i for i, m in enumerate(col_mins) if m > fixed_thresh]
                 fixed_sum = sum(col_mins[i] for i in fixed)
                 flex_sum = sum(col_mins[i] for i in flex)
-                if flex and fixed_sum < cw * 0.65 and flex_sum > 0:
+                flex_w_sum = sum(col_weights[i] for i in flex)
+                if flex and fixed_sum < cw * 0.65 and flex_sum > 0 and flex_w_sum > 0:
                     rem_w = cw - fixed_sum
                     col_widths = [
-                        col_mins[i] if i in fixed else rem_w * (col_mins[i] / flex_sum)
+                        col_mins[i] if i in fixed else rem_w * (0.5 * (col_mins[i] / flex_sum) + 0.5 * (col_weights[i] / flex_w_sum))
                         for i in range(ncols)
                     ]
                 else:

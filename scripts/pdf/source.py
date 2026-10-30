@@ -308,8 +308,8 @@ def footnote_spec(data: Any, name: str, *, strip_refs: bool = False) -> dict[str
     if set(data) - allowed:
         raise InputError(f"footnote {name}: unsupported fields {sorted(set(data) - allowed)}; use 'notes' list")
     raw_notes = data.get("notes")
-    if not isinstance(raw_notes, list) or not 1 <= len(raw_notes) <= 8:
-        raise InputError(f"footnote {name}: 'notes' must be a list of 1 to 8 footnote entries")
+    if not isinstance(raw_notes, list) or not 1 <= len(raw_notes) <= 32:
+        raise InputError(f"footnote {name}: 'notes' must be a list of 1 to 32 footnote entries")
     notes = []
     for idx, item in enumerate(raw_notes):
         if not isinstance(item, dict) or not set(item) <= {"number", "term", "text"} or "text" not in item:
@@ -611,6 +611,26 @@ def read_source(path: Path, *, profile: str | None = None) -> Document:
                 index += 1
             if not rows or any(len(row) != len(rows[0]) for row in rows) or len(rows[0]) > 12:
                 raise InputError(f"line {line}: invalid or overly wide table")
+            auto_table_notes = []
+            has_explicit_fn = any(
+                re.search(r"\[\d+\]$", "".join(run.text for run in cell).strip())
+                for r_cells in rows[1:] for cell in r_cells[1:]
+            )
+            if len(rows) >= 2 and len(rows[0]) >= 4 and not has_explicit_fn:
+                for r in range(1, len(rows)):
+                    row_key = "".join(run.text for run in rows[r][0]).strip().strip("[]")
+                    for c in range(1, len(rows[r])):
+                        cell_txt = "".join(run.text for run in rows[r][c]).strip()
+                        if any(run.link for run in rows[r][c]) or "http://" in cell_txt or "https://" in cell_txt:
+                            continue
+                        m_paren = re.match(r"^([^()]{3,65}?)\s*\(([^()]{85,})\)\s*\.?$", cell_txt, flags=re.DOTALL)
+                        if m_paren:
+                            prefix = m_paren.group(1).strip()
+                            note_body = m_paren.group(2).strip()
+                            note_num = len(auto_table_notes) + 1
+                            rows[r][c] = [Inline(f"{prefix} [{note_num}]")]
+                            term_lbl = f"{row_key} ({prefix})" if row_key else prefix
+                            auto_table_notes.append({"number": str(note_num), "term": term_lbl, "text": note_body})
             block = Block(identifier, "table", rows=rows, line=line)
             add(block)
             for r, cells in enumerate(rows):
@@ -619,6 +639,11 @@ def read_source(path: Path, *, profile: str | None = None) -> Document:
                     for run in runs:
                         if run.link and run.link not in links:
                             links.append(run.link)
+            if auto_table_notes:
+                fn_id = f"{identifier}-fn"
+                add(Block(fn_id, "footnote", spec={"notes": auto_table_notes}, line=line))
+                for idx, n_item in enumerate(auto_table_notes):
+                    expected[f"{fn_id}-n{idx}"] = {"kind": "footnote-item", "text": n_item["text"], "line": line}
         elif token.type == "hr":
             add(Block(identifier, "rule", line=line))
         elif token.type not in {"list_item_close", "paragraph_close", "heading_close"}:
