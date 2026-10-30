@@ -1,6 +1,6 @@
 ---
 name: document-swarm
-skill_version: "3.5.0"
+skill_version: "3.6.0"
 description: "Use ONLY when the user explicitly asks for a document swarm (e.g., 'use document-swarm', 'monte um swarm', 'rode o doc-swarm') or explicitly wants a full multi-agent swarm cycle with deterministic gates. Do NOT invoke automatically for ordinary document reviews, edits, modifications, summaries, or single-pass writing. If loaded on a request that did not explicitly ask for a swarm, your FIRST action MUST be to ask the user via ask_user whether to use Document Swarm or handle the task directly without it."
 ---
 
@@ -697,7 +697,7 @@ Além do relatório Markdown, cada ciclo deve gerar
 
 ```yaml
 schema_version: 1
-skill_version: "3.5.0"
+skill_version: "3.6.0"
 quality_contract: editorial-v1
 mode: document
 cycle: 2
@@ -1006,7 +1006,7 @@ No modo evolução, pergunte somente o que mudou.
 ```yaml
 ---
 swarm_id: <swarm_id>
-skill_version: "3.5.0"
+skill_version: "3.6.0"
 mode: document
 max_cycles: 5
 editorial_profile: <perfil definido no enquadramento>

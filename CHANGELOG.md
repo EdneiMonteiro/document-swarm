@@ -7,8 +7,14 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-10-30
+
 ### Added
 
+- Thermal bookbinding (`Mimo Binding Book`) layout and sheet architecture for A5 `book` and `almanac` profiles:
+  - Mirrored inner spine (`46 pt`) and outer (`32 pt`) margins across odd (recto) and even (verso) pages in `BookDocument.handle_pageBegin()`, plus mirrored running header/folio coordinates;
+  - Dedicated 210 g/m² white cover stock (`cover_bg_hex="#ffffff"`) with an automatic blank verso on Page 2 (`BlankPage`), 70 g/m² interior starting on Page 3 (odd recto), and `EvenBackCoverPad` + `BlankPage` before `:::back-cover` so the Back Cover always lands on an even total page count with a blank inside recto (`Total - 1`) and printed outside verso (`Total`);
+  - Optional `"native_title"` field in `:::cover-art` (`NativeTitleBanner`) for rendering native-script titles (e.g. Japanese kanji/kana) on the front cover, and open-vignette border preservation in `_trim_engraving_border()`.
 - A5 print-publishing upgrade for `book` and `almanac` profiles (`148 × 210 mm`):
   - Full 4-weight **IBM Plex Serif** family (`Regular`, `Bold`, `Italic`, `BoldItalic`) tuned for **papel Pólen** printing (`body_font="DSSerif"`), replacing sans-serif `Carlito` in book/almanac prose, quotes, lists, and callouts;
   - Dedicated **Primeira Capa (Front Cover)** on page 1 (`:::cover-art`, `# Title`, `## Subtitle`, and ornamental border/vignette, automatically breaking to page 2 before any introductory `Apresentação` paragraphs);

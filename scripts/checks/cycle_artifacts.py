@@ -901,7 +901,7 @@ def consolidate(
 
     review_data: dict[str, Any] = {
         "schema_version": 1,
-        "skill_version": str(brief.get("skill_version", "3.5.0")),
+        "skill_version": str(brief.get("skill_version", "3.6.0")),
         "mode": str(brief.get("mode", "document")),
         "cycle": cycle,
         "max_cycles": int(brief.get("max_cycles", 5)),
