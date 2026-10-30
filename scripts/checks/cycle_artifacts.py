@@ -1001,6 +1001,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"INVALID: {exc}", file=sys.stderr)
         return 3
     print(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True))
+    pf = result if args.command == "preflight" else result.get("preflight") if isinstance(result, dict) else None
+    if isinstance(pf, dict) and pf.get("status") == "fail":
+        issues = pf.get("issues") or []
+        summary = ", ".join(f"L{it.get('line')}:{it.get('code')}" for it in issues[:10])
+        print(
+            f"PREFLIGHT FAIL ({pf.get('issue_count', len(issues))} issues): {summary}",
+            file=sys.stderr,
+        )
+        if args.command == "preflight":
+            return 1
     return 0
 
 
