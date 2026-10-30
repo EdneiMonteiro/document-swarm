@@ -1238,7 +1238,7 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
             fn_style = ParagraphStyle(
                 f"fn-{block.id}", fontName=fn_font, fontSize=8.0 if is_a5 else 8.8,
                 leading=11.4 if is_a5 else 12.6, textColor=INK, alignment=TA_JUSTIFY,
-                leftIndent=8, rightIndent=4, spaceAfter=3.5,
+                justifyLastLine=0, leftIndent=0, rightIndent=0, spaceAfter=3.5,
             )
             fn_paras = []
             for idx, n_item in enumerate(block.spec.get("notes", [])):
@@ -1254,7 +1254,8 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                 ))
             if fn_paras:
                 story.append(KeepTogether([Spacer(1, 4), FootnoteRule(profile), Spacer(1, 2), fn_paras[0]]))
-                story.extend(fn_paras[1:])
+                for fn_p in fn_paras[1:]:
+                    story.append(KeepTogether([fn_p]))
         elif block.kind == "code":
             story.append(CodeBlock(block, content_width=cw))
         elif block.kind == "figure":
