@@ -6,8 +6,8 @@ fonts. The generated PDF is not subject to the font license.
 
 | Family | Use |
 |---|---|
-| Carlito | Body, headings, tables and running text. |
-| IBM Plex Serif | Cover title and subtitle. |
+| Carlito | Body, headings, tables and running text in A4 technical/magazine profiles. |
+| IBM Plex Serif | Cover title/subtitle and full 4-weight book/almanac body typography (Regular, Bold, Italic, BoldItalic) for Pólen paper printing. |
 | IBM Plex Mono | Literal code. |
 | Noto Sans Math | Mathematical glyphs unavailable in the selected text font. |
 

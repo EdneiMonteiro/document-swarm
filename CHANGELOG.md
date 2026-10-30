@@ -9,6 +9,53 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
 ### Added
 
+- A5 print-publishing upgrade for `book` and `almanac` profiles (`148 × 210 mm`):
+  - Full 4-weight **IBM Plex Serif** family (`Regular`, `Bold`, `Italic`, `BoldItalic`) tuned for **papel Pólen** printing (`body_font="DSSerif"`), replacing sans-serif `Carlito` in book/almanac prose, quotes, lists, and callouts;
+  - Dedicated **Primeira Capa (Front Cover)** on page 1 (`:::cover-art`, `# Title`, `## Subtitle`, and ornamental border/vignette, automatically breaking to page 2 before any introductory `Apresentação` paragraphs);
+  - Dedicated **Contracapa (`:::back-cover`)** directive rendered on the final page with cover stock background, kicker, title/subtitle, synopsis, critical/editorial blurbs, highlights, and colophon;
+  - Automatic stripping of inline `[Fxx]` bracket clusters from prose, captions, pullquotes, callouts, and factboxes in `book`, `almanac`, and `magazine` modes while preserving the full source bibliography at the end of the work.
+- Three new publication modes and PDF visual profiles (`magazine`, `book`, and
+  `almanac`) alongside `technical-report` and `textbook`:
+  - `magazine` (`editorial_profile: magazine-feature`): narrative feature layout
+    with warm editorial palette, continuous section flow, pull-quotes, backstage
+    callouts, and verified photography/engravings;
+  - `book` (`editorial_profile: progressive-book`): shelf-ready book layout with
+    mandatory 3-layer progressive learning curve (Layer 1: beginner gateway;
+    Layer 2: historical/conceptual progression; Layer 3: deep mastery &
+    reference), warm paper cover, serif chapter headings, and didactic callouts;
+  - `almanac` (`editorial_profile: illustrated-almanac`): modular compendium for
+    non-linear browsing with catalog factboxes, *"Você Sabia?"* curiosity cards,
+    timelines, and illustrated entries.
+- New authored PDF blocks (`:::pullquote`, `:::callout`, `:::factbox`) and
+  `credit` support on `:::figure` (`kind: "image"`), fully verified by
+  `inspect_pdf` and `cycle_artifacts.py preflight`.
+- `scripts/checks/fetch_media.py`: deterministic media acquisition, bespoke
+  FLUX.2-pro engraving generation (`--flux-prompt`, `--flux-style` `engraving` |
+  `manga-engraving` | `technical-cutaway` | `editorial-illustration`, with
+  Windows Credential Manager `CredReadW` key retrieval for Azure APIM), and
+  verification helper for normalizing (RGB PNG/JPEG) and recording SHA-256 +
+  provenance metadata of photos and engravings in
+  `sources/media/media-manifest.json`.
+- Bespoke cover artwork (`:::cover-art` with optional JSON `{"style": "hero-image", "src": "sources/media/..."}` or title-seeded vector mountain/horizon plates) and heading-length guards (`heading_too_long` in `cycle_artifacts.py preflight` and `source.py`, plus word-boundary running header truncation in `render.py`).
+- Local source corpus caching (`verify_sources.py --corpus-dir sources/corpus`):
+  extracts readable plain text from verified HTML/text sources into
+  `sources/corpus/<ID>.txt`, records `corpus_path`, `text_chars`, and
+  `corpus_sha256` in `sources-check.json`, and warns on thin landing pages
+  (`< 300` chars) so authors and fact reviewers can verify claims locally in
+  milliseconds without repeated `web_fetch` calls across cycles.
+- Fast Markdown/PDF preflight (`cycle_artifacts.py preflight` and automatic
+  preflight in `assemble`): detects long dashes (`—`/`–`), unsupported PDF font
+  glyphs (`²`, `³`, `ō`, `∞`, CJK), `flow` figure label overflows, and missing
+  `:::cover-art` / `:::pagebreak` directives in `< 0.2 s` before invoking
+  ReportLab/PDFium.
+- Comparable source diffing and reviewer JSON validation in
+  `cycle_artifacts.py`: preserves `reports/cycle-0N-source.md` so cross-cycle
+  diffs always compare Markdown-to-Markdown (while syncing
+  `cycle-0N-editorial-text.txt` from `output/pdf-cycle-0N/editorial-text.txt`),
+  parses topic definitions from `brief.md` body when omitted from frontmatter,
+  normalizes reviewer JSON alias keys (`id`/`justification`), and rejects
+  blocking grades (`<= A-`) paired with non-blocking `"Aprovado"` or empty
+  actions.
 - `check_update.py`: checks whether the installed `<DOCSWARM>` clone is behind
   `origin/main` at the start of Phase 0 and, upon explicit user approval via
   `ask_user`, fast-forwards the clone (`--apply`) and reloads extensions

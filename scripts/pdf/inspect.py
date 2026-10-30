@@ -161,6 +161,8 @@ def inspect_pdf(document: Document, pdf: Path, layout: dict, previews: Path) -> 
                 for item in page.get_objects(filter=[raw.FPDF_PAGEOBJ_PATH]):
                     left, bottom, right, top = item.get_bounds()
                     objects.append([left, height - top, right, height - bottom])
+                if not by_page[number]:
+                    errors.append({"code": "empty_page", "page": number})
                 for placement in by_page[number]:
                     box = rectangle(placement["bbox"])
                     if not contains([0, 0, width, height], box):

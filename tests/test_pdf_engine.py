@@ -266,7 +266,7 @@ class PdfEngineTests(unittest.TestCase):
         for literal in ("<= 0", "!= 0", "<tag>", "& ação", "N ≥", "⌈D / C⌉", "∧"):
             self.assertIn(literal, text)
         manifest = json.loads((ROOT / "scripts" / "pdf" / "fonts" / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(len([item for item in manifest["files"] if item["file"].endswith(".ttf")]), 8)
+        self.assertEqual(len([item for item in manifest["files"] if item["file"].endswith(".ttf")]), 10)
         for item in manifest["files"]:
             font = ROOT / "scripts" / "pdf" / "fonts" / item["file"]
             self.assertEqual(hashlib.sha256(font.read_bytes()).hexdigest(), item["sha256"])
@@ -456,3 +456,97 @@ class PdfEngineTests(unittest.TestCase):
         decision = gate.evaluate_current(below, swarm)
         self.assertEqual(decision["outcome"], "rejected")
         self.assertTrue(all(item["kind"] == "editorial" for item in decision["blocked"]))
+
+    def test_magazine_book_and_almanac_profiles_render_and_inspect_with_editorial_blocks_and_images(self):
+        from PIL import Image
+        from scripts.pdf.engine import inspect, render
+        media_dir = self.work / "sources" / "media"
+        media_dir.mkdir(parents=True, exist_ok=True)
+        img_path = media_dir / "sample-photo.png"
+        im = Image.new("RGB", (320, 180), (36, 98, 142))
+        im.save(img_path, format="PNG")
+
+        rich_md = self.work / "output" / "rich-publication.md"
+        rich_md.parent.mkdir(parents=True, exist_ok=True)
+        body = (
+            ":::cover-art\n\n"
+            "# Guia Ilustrado de Engenharia e Cultura\n\n"
+            "## Da introdução acessível para leigos ao domínio técnico na estante\n\n"
+            "Texto de abertura com contextualização histórica e humana para novos leitores.\n\n"
+            ":::pagebreak\n\n"
+            "# Sumário\n\n"
+            ":::toc\n\n"
+            "# 1. Porta de Entrada para Iniciantes\n\n"
+            ":::chapter-art cap-01\n"
+            '{\n  "src": "sources/media/sample-photo.png",\n'
+            '  "caption": "Gravura de abertura do primeiro capítulo.",\n'
+            '  "credit": "Gravura original"\n}\n'
+            ":::\n\n"
+            + ("Esta seção apresenta o contexto histórico de forma fluida, clara e prazerosa, "
+               "explicando cada conceito fundamental com exemplos reais antes de aprofundar nos mecanismos. " * 6)
+            + "\n\n"
+            ":::pullquote destaque-abertura\n"
+            '{\n  "quote": "O verdadeiro domínio técnico nasce quando o leitor compreende primeiro o problema humano por trás da máquina.",\n'
+            '  "attribution": "Crônica de abertura [F01]"\n}\n'
+            ":::\n\n"
+            ":::callout quadro-conceito-leigo\n"
+            '{\n  "kind": "key-concept",\n'
+            '  "title": "Para Entender Melhor: Como funciona o equilíbrio dinâmico",\n'
+            '  "body": "Uma carroceria leve exige menor transferência de massa nas frenagens e preserva os pneus ao longo do percurso."\n}\n'
+            ":::\n\n"
+            ":::figure foto-historica\n"
+            '{\n  "kind": "image",\n'
+            '  "src": "sources/media/sample-photo.png",\n'
+            '  "title": "Figura 1 - Registro visual de referência",\n'
+            '  "credit": "Foto: Acervo Técnico Verificado (CC BY-SA 4.0) [F01]",\n'
+            '  "caption": "Ilustração incorporada com verificação de contraste, geometria e crédito autoral.",\n'
+            '  "max_height": 180\n}\n'
+            ":::\n\n"
+            "# 2. Ficha Catalográfica de Consulta\n\n"
+            + ("No segundo capítulo, o leitor encontra dados consolidados para consulta rápida na estante, "
+               "combinando narrativa histórica e especificações verificadas em fontes primárias. " * 6)
+            + "\n\n"
+            ":::factbox ficha-referencia\n"
+            '{\n  "title": "Ficha Técnica: Especificações Principais",\n'
+            '  "items": [\n'
+            '    {"label": "Período histórico", "value": "1983 a 1998 [F01][F02]"},\n'
+            '    {"label": "Configuração", "value": " Arquitetura leve de tração traseira"}\n'
+            "  ],\n"
+            '  "caption": "Dados consolidados para consulta rápida [F01]."\n}\n'
+            ":::\n\n"
+            ":::back-cover\n"
+            '{\n'
+            '  "kicker": "CONTRACAPA • EDIÇÃO A5",\n'
+            '  "synopsis": "Sinopse da obra na contracapa para impressão em papel Pólen [F01][F02].",\n'
+            '  "blurbs": [{"quote": "Leitura envolvente do início ao fim.", "source": "Nota Editorial"}],\n'
+            '  "highlights": ["Curva progressiva em 3 camadas", "Gravuras e fichas verificadas"],\n'
+            '  "colophon": "Formato A5 • IBM Plex Serif"\n'
+            '}\n'
+            ":::\n"
+        )
+        rich_md.write_text(body, encoding="utf-8")
+
+        for profile_name in ("magazine", "book", "almanac"):
+            with self.subTest(profile=profile_name):
+                dest = self.work / f"bundle-{profile_name}"
+                res = render(rich_md, dest, profile_name, "pt-BR")
+                self.assertEqual(res["status"], "pass")
+                self.assertEqual(res["errors"], [])
+                extracted = (dest / "editorial-text.txt").read_text(encoding="utf-8")
+                self.assertIn("O verdadeiro domínio técnico nasce", extracted)
+                self.assertIn("Para Entender Melhor", extracted)
+                self.assertIn("Ficha Técnica: Especificações Principais", extracted)
+                self.assertIn("Acervo Técnico Verificado", extracted)
+                self.assertIn("Sinopse da obra na contracapa", extracted)
+                self.assertNotIn("[F01]", extracted)
+                layout = json.loads((dest / "layout.json").read_text(encoding="utf-8"))
+                if profile_name in ("book", "almanac"):
+                    self.assertAlmostEqual(layout["page_size"][0], 419.53, places=1)
+                    self.assertAlmostEqual(layout["page_size"][1], 595.28, places=1)
+                    cover_body_pages = [p["page"] for p in layout["placements"] if p["kind"] == "cover-body"]
+                    self.assertEqual(cover_body_pages, [3])
+                    chapter_art_pages = [p["page"] for p in layout["placements"] if p["kind"] == "chapter-art"]
+                    self.assertEqual(len(chapter_art_pages), 1)
+                recheck = inspect(rich_md, dest, profile_name, "pt-BR")
+                self.assertEqual(recheck["status"], "pass")
+

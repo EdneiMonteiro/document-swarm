@@ -85,6 +85,20 @@
       "url": "https://raw.githubusercontent.com/google/fonts/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/notosansmath/OFL.txt",
       "sha256": "403a95275b469061b7d4371c328e0ada3bc7d63328abe2e88aad5cd243b2fe21",
       "bytes": 4380
+    },
+    {
+      "file": "IBMPlexSerif-Italic.ttf",
+      "family": "ibmplexserif",
+      "url": "https://raw.githubusercontent.com/google/fonts/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/ibmplexserif/IBMPlexSerif-Italic.ttf",
+      "sha256": "4b75b38be4673527231f49c48818d090c913d5042dd5c747b525bf6185d29ecb",
+      "bytes": 173004
+    },
+    {
+      "file": "IBMPlexSerif-BoldItalic.ttf",
+      "family": "ibmplexserif",
+      "url": "https://raw.githubusercontent.com/google/fonts/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/ibmplexserif/IBMPlexSerif-BoldItalic.ttf",
+      "sha256": "2a32b76ac19c1942bf5942dbbd2a1566e5f1ae9833e421ebcf36d3522715e153",
+      "bytes": 173032
     }
   ]
 }

@@ -42,6 +42,9 @@ Se a extensão não estiver disponível na sessão, use os mesmos comandos pelo 
 |---|---|
 | `textbook` | Livro didático A4: capa com título serifado, prosa justificada de 11,25 pt, capítulos, subtítulos azul/petróleo e espaçamento de leitura longa. |
 | `technical-report` | Relatório A4 com a mesma identidade visual, corpo de 10,8 pt e hierarquia mais compacta. |
+| `magazine` | Matéria / reportagem especial ilustrada A4: paleta editorial quente (carmim/terracota `#a83820`, azul petróleo `#1b5e7a`, fundo creme `#faf6ee`), títulos em `DSSerifBold`, fluxo contínuo entre seções (sem quebras de página forçadas a cada `#`), *pull-quotes*, boxes de bastidores, fotos e remoção automática de colchetes `[Fxx]` inline. |
+| `book` | Livro ilustrado **A5 (`148 × 210 mm`)**: pensado para impressão em **papel Pólen** (`#fdfbf5`), corpo integralmente composto na família serifada `IBM Plex Serif` (`DSSerif`, `DSSerifBold`, `DSSerifItalic`, `DSSerifBoldItalic`), **Primeira Capa isolada** na página 1 (`:::cover-art` + título + subtítulo, sem parágrafos de corpo misturados na capa), **Contracapa dedicada (`:::back-cover`)** na última página (sinopse, destaques/crítica e colofão), capítulos iniciando em nova página e prosa limpa sem colchetes `[Fxx]` inline. |
+| `almanac` | Almanaque / compêndio visual **A5 (`148 × 210 mm`)**: paleta azul-marinho/ouro/turquesa (`#b87314` / `#0f766e`), prosa em `IBM Plex Serif` combinada com tabelas e fichas catalográficas (`:::factbox`) em `Carlito`, Primeira Capa isolada, Contracapa (`:::back-cover`), quadros *"Você Sabia?"* (`:::callout`) e prosa limpa sem colchetes `[Fxx]` inline. |
 
 Ambos preservam a paleta, a arte original, tabelas com cabeçalho azul, linhas
 alternadas e diagramas vetoriais. Fontes portáveis alteram métricas e quebras
@@ -94,6 +97,33 @@ não traduz palavras nem inventa rótulos para o sumário.
 
 Códigos de saída: **0** para inspeção mecânica aprovada, **1** para falhas
 detectadas no PDF e **2** para erro de entrada, dependência ou composição.
+
+## Aquisição de fotos e geração de gravuras com FLUX.2-pro (`fetch_media.py`)
+
+Nos modos `magazine`, `book` e `almanac`, o utilitário `scripts/checks/fetch_media.py`
+permite tanto baixar fotografias reais verificadas (Wikipedia, Wikimedia Commons
+ou URLs diretas) quanto gerar gravuras editoriais e cortes técnicos sob medida
+via **FLUX.2-pro** no Azure APIM (lendo a chave diretamente do Windows Credential
+Manager sem expor segredos no repositório):
+
+```powershell
+# Buscar foto real no Wikimedia Commons
+python scripts\checks\fetch_media.py `
+  --output-dir swarms\2026-10-29-SWARM-02\sources\media `
+  --id takumi-ae86 --commons-search "Toyota Sprinter Trueno AE86 Initial D"
+
+# Gerar gravura editorial ou corte técnico via FLUX.2-pro (estilos: engraving, manga-engraving, technical-cutaway, editorial-illustration, raw)
+python scripts\checks\fetch_media.py `
+  --output-dir swarms\2026-10-29-SWARM-02\sources\media `
+  --id flux-cover-akina --flux-style manga-engraving `
+  --flux-prompt "1986 Toyota Sprinter Trueno AE86 drifting down Mount Akina at dawn" `
+  --width 1024 --height 768
+
+# Verificar integridade e hashes SHA-256 de todas as mídias do manifesto
+python scripts\checks\fetch_media.py `
+  --output-dir swarms\2026-10-29-SWARM-02\sources\media --verify
+```
+
 
 ## Fonte Markdown
 
@@ -148,10 +178,10 @@ um processador LaTeX nem um solucionador matemático: não rearranja termos,
 calcula valores ou substitui operadores. Glifos indisponíveis produzem erro
 explícito, não quadrados ou caracteres aproximados.
 
-### Figuras
+### Figuras e Imagens Reais (`flow`, `layers`, `bars`, `image`)
 
 Use um identificador local para o processamento e forneça o conteúdo visível
-integralmente. Tipos: `flow`, `layers` e `bars`.
+integralmente. Tipos: `flow`, `layers`, `bars` e `image`.
 
 ```text
 :::figure comparison
@@ -167,10 +197,61 @@ integralmente. Tipos: `flow`, `layers` e `bars`.
 :::
 ```
 
+Para **fotos, gravuras históricas e ilustrações reais** (baixadas e verificadas em `sources/media/` com `scripts/checks/fetch_media.py`), use `kind: "image"`:
+
+```text
+:::figure foto-ae86
+{
+  "kind": "image",
+  "src": "sources/media/ae86-trueno.jpg",
+  "title": "Figura 1 - Toyota Sprinter Trueno GT-APEX (AE86)",
+  "credit": "Foto: Wikimedia Commons (CC BY-SA 4.0) [F04]",
+  "caption": "Exemplar de três portas hatchback equipado com faróis escamoteáveis e motor 4A-GE.",
+  "max_height": 220
+}
+:::
+```
+
 `display_values` evita que o compositor invente arredondamento ou formatação
 numérica. `flow` conecta os rótulos na ordem fornecida; `layers` representa
 camadas aninhadas. Esses tipos recebem `title`, `caption` e `labels`, sem
-campos numéricos. O motor não escolhe relações arquiteturais por nomes de figuras.
+campos numéricos. `image` recebe `src` (caminho relativo para `.png`/`.jpg`/`.jpeg`),
+`title`, `caption` e opcionalmente `credit` e `max_height` (`40` a `520` pt).
+
+### Destaques Editoriais, Quadros Didáticos e Fichas de Almanaque (`pullquote`, `callout`, `factbox`)
+
+Nos perfis `magazine`, `book` e `almanac` (e quando útil nos demais), use os três blocos estruturados abaixo para criar ritmo visual, explicar conceitos a leigos e organizar fichas de consulta:
+
+```text
+:::pullquote virada-historica
+{
+  "quote": "Ao deslocar o foco da potência bruta para o equilíbrio dinâmico nas descidas de montanha, a obra transformou um compacto acessível de 1983 em ícone mundial.",
+  "attribution": "Síntese histórica da recepção cultural [F01]"
+}
+:::
+
+:::callout conceito-leigo
+{
+  "kind": "key-concept",
+  "title": "Para Entender Melhor: O que é relação peso-potência?",
+  "body": "Mesmo com um motor de 130 cavalos, uma carroceria leve de 940 kg permite frear mais tarde e manter velocidade nas curvas sem sobrecarregar os pneus dianteiros."
+}
+:::
+
+:::factbox ficha-tecnica-ae86
+{
+  "title": "Toyota AE86 Sprinter Trueno (1983-1987)",
+  "items": [
+    {"label": "Configuração", "value": "Motor dianteiro longitudinal, tração traseira (FR)"},
+    {"label": "Motorização", "value": "1.587 cm3 DOHC 16 válvulas (4A-GE), 130 PS a 6.600 rpm"},
+    {"label": "Massa em ordem de marcha", "value": "940 kg (versão GT-APEX 3 portas)"}
+  ],
+  "caption": "Especificações de catálogo do modelo comercializado no Japão entre 1983 e 1987 [F04]."
+}
+:::
+```
+
+Em `:::callout`, o campo opcional `kind` aceita `intro`, `key-concept`, `curiosity`, `backstage`, `note` ou `info`. Todos os textos de `pullquote`, `callout`, `factbox` e `credit` são inspecionados mecanicamente no PDF (`missing_text`, `out_of_bounds`, `invisible_text`) e incluídos em `editorial-text.txt`.
 
 Tabelas podem continuar em várias páginas, com repetição do cabeçalho. Código
 mantém os caracteres literais e usa fonte monoespaçada; linhas longas demais
