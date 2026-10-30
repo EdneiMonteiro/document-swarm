@@ -1453,7 +1453,10 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                 ("LEFTPADDING", (0, 0), (-1, -1), pad_h), ("RIGHTPADDING", (0, 0), (-1, -1), pad_h),
                 ("TOPPADDING", (0, 0), (-1, -1), 4 if is_a5 else 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 4 if is_a5 else 6),
             ]
-            if len(cells) >= 4:
+            if len(cells) <= 9:
+                table_rules.append(("NOSPLIT", (0, 0), (-1, -1)))
+            elif len(cells) >= 4:
+                table_rules.append(("NOSPLIT", (0, 0), (-1, min(2, len(cells) - 1))))
                 table_rules.append(("NOSPLIT", (0, -2), (-1, -1)))
             table.setStyle(TableStyle(table_rules))
             story.extend([table, Spacer(1, 10 if is_a5 else 13)])
@@ -1544,7 +1547,22 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                     alignment=TA_CENTER, spaceBefore=0, spaceAfter=10 if is_a5 else 14, keepWithNext=False,
                 )
             para_markup = markup(block.runs, current.fontName)
-            if block.kind == "paragraph" and profile.name == "book":
+            is_table_title_para = (
+                block.kind == "paragraph"
+                and position + 1 < len(document.blocks)
+                and (
+                    document.blocks[position + 1].kind == "factbox"
+                    or (document.blocks[position + 1].kind == "table" and len(document.blocks[position + 1].rows) <= 10)
+                )
+                and bool(re.match(r"^(?:Tabela|Quadro|Table)\s+\d", block.text.strip(), re.IGNORECASE))
+            )
+            if is_table_title_para:
+                chapter_first_para_pending = False
+                current = ParagraphStyle(
+                    f"tbltitle-{block.id}", parent=current,
+                    firstLineIndent=0, spaceBefore=6.0, spaceAfter=4.0, keepWithNext=True,
+                )
+            elif block.kind == "paragraph" and profile.name == "book":
                 if chapter_first_para_pending and block.runs and block.runs[0].text.strip():
                     chapter_first_para_pending = False
                     first_run = block.runs[0]
