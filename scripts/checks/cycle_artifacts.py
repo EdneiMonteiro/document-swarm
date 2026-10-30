@@ -432,15 +432,16 @@ def preflight_markdown(
                     "line": lineno,
                     "message": f"unsupported PDF font glyph U+{ord(bad_ch):04X} ({bad_ch!r}); use '{replacement}' instead",
                 })
-        for ch in line:
-            cp = ord(ch)
-            if 0x3000 <= cp <= 0x9FFF:
-                issues.append({
-                    "code": "unsupported_cjk_glyph",
-                    "line": lineno,
-                    "message": f"CJK glyph U+{cp:04X} ({ch!r}) is missing from bundled PDF fonts; transliterate to Latin script",
-                })
-                break
+        if not (directive_kind == "cover-art" and '"native_title"' in line):
+            for ch in line:
+                cp = ord(ch)
+                if 0x3000 <= cp <= 0x9FFF:
+                    issues.append({
+                        "code": "unsupported_cjk_glyph",
+                        "line": lineno,
+                        "message": f"CJK glyph U+{cp:04X} ({ch!r}) is missing from bundled PDF fonts; transliterate to Latin script",
+                    })
+                    break
 
     if require_pdf_directives:
         if ":::cover-art" not in text or ":::pagebreak" not in text:
