@@ -33,7 +33,7 @@ def render(source: Path, destination: Path, profile: str = "textbook", language:
         raise InputError("render destination must be new; use a new cycle directory to preserve reviewed artifacts")
     if not destination.name or destination.is_symlink():
         raise InputError("invalid PDF destination directory")
-    document = read_source(source)
+    document = read_source(source, profile=profile)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".docswarm-pdf-", dir=destination.parent))
     committed = False
@@ -112,7 +112,7 @@ def inspect(source: Path, destination: Path, profile: str | None = None, languag
             if child.is_symlink() or not child.is_file() or not re.fullmatch(r"page-\d{3}\.png", child.name):
                 raise InputError("previews must contain only owned PNG files")
             previous_previews.append(child)
-    document = read_source(source)
+    document = read_source(source, profile=manifest.get("profile"))
     layout = json.loads(layout_path.read_text(encoding="utf-8"))
     if (not isinstance(layout, dict) or layout.get("profile") != manifest["profile"]
             or layout.get("language") != manifest["language"]):

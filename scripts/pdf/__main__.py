@@ -15,7 +15,7 @@ def main(argv=None):
     parser.add_argument("action", choices=["render", "inspect"])
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--destination", type=Path, required=True, help="new bundle directory for render; existing bundle for inspect")
-    parser.add_argument("--profile", choices=["textbook", "technical-report"])
+    parser.add_argument("--profile", choices=["textbook", "technical-report", "magazine", "book", "almanac"])
     parser.add_argument("--language", choices=["pt-BR", "pt-PT", "en-US", "en-GB", "es-ES"])
     args = parser.parse_args(argv)
     try:

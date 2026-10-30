@@ -14,7 +14,7 @@ export const parameters = {
         action: { type: "string", enum: ["render", "inspect"], description: "Renderizar ou inspecionar, sem escrever ou reformular conteúdo." },
         source: { type: "string", description: "Caminho absoluto do documento Markdown autoral." },
         destination: { type: "string", description: "Pasta nova para render; bundle existente para inspect. Nunca sobrescreve uma entrega existente no render." },
-        profile: { type: "string", enum: ["textbook", "technical-report"] },
+        profile: { type: "string", enum: ["textbook", "technical-report", "magazine", "book", "almanac"] },
         language: { type: "string", enum: ["pt-BR", "pt-PT", "en-US", "en-GB", "es-ES"] },
     },
 };
@@ -26,7 +26,7 @@ export async function pdfAction(args, { run = execute, root = repository } = {})
             throw new Error(`${field} deve ser um caminho absoluto explícito.`);
         }
     }
-    if (args.profile !== undefined && !["textbook", "technical-report"].includes(args.profile)) throw new Error("Perfil PDF inválido.");
+    if (args.profile !== undefined && !["textbook", "technical-report", "magazine", "book", "almanac"].includes(args.profile)) throw new Error("Perfil PDF inválido.");
     if (args.language !== undefined && !["pt-BR", "pt-PT", "en-US", "en-GB", "es-ES"].includes(args.language)) throw new Error("Idioma PDF inválido.");
     const venv = path.join(root, ".venv-pdf", process.platform === "win32" ? "Scripts" : "bin", process.platform === "win32" ? "python.exe" : "python");
     const candidates = [];

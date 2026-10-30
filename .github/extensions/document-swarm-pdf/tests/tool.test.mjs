@@ -19,6 +19,12 @@ test("PDF tool delegates explicit paths without a shell or a content prompt", as
     assert.ok(command.args.includes("scripts.pdf"));
     assert.equal(command.args[command.args.indexOf("--source") + 1], source);
     assert.equal(command.options.shell, undefined);
+    for (const profile of ["magazine", "book", "almanac"]) {
+        const res = await pdfAction({ action: "render", source, destination, profile, language: "pt-BR" }, {
+            run: async () => ({ stdout: '{"status":"pass","editorial_approval":"not_evaluated","page_count":4}' }),
+        });
+        assert.equal(res.status, "pass");
+    }
 });
 
 test("PDF inspection failure is not converted to success", async () => {

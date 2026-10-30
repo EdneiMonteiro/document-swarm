@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.checks import final_report, gate, lint_agents, update_memory, verify_sources, verify_tables
+from scripts.checks import cycle_artifacts, final_report, gate, lint_agents, update_memory, verify_sources, verify_tables
 from scripts.checks.common import parse_yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -759,6 +759,196 @@ class EndToEndFixtureTests(WorkTest):
             server.shutdown()
             thread.join()
             server.server_close()
+
+    def test_source_corpus_extraction_preflight_and_comparable_cycle_diff(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), SourceHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{server.server_port}"
+            swarm = self.work / "2026-10-28-SWARM-SPEED"
+            sections = swarm / "output" / "sections"
+            reports = swarm / "reports"
+            sources = swarm / "sources"
+            corpus = sources / "corpus"
+            for path in (sections, reports, sources):
+                path.mkdir(parents=True, exist_ok=True)
+            (swarm / "brief.md").write_text(
+                "---\nswarm_id: 2026-10-28-SWARM-SPEED\nskill_version: \"3.5.0\"\n"
+                "mode: document\nmax_cycles: 5\nquality_contract: editorial-v1\n"
+                "editorial_reviewer: reviewer-03-clarity\npdf_engine: reportlab-v1\n"
+                "deliverables:\n  - output/doc.md\n---\n\n"
+                "## Tópicos\n- **T01 — Gênese Editorial:** Escopo 1\n- **T02 — Dinâmica Veicular:** Escopo 2\n",
+                encoding="utf-8",
+            )
+            (sources / "sources-index.md").write_text(
+                "| ID | Título | Tipo | URL | Verificado |\n|---|---|---|---|---|\n"
+                f"| F01 | Fonte 1 | Oficial | {base}/ok-1 | HTTP 200 |\n",
+                encoding="utf-8",
+            )
+            rep = verify_sources.verify(
+                sources / "sources-index.md",
+                sources / "sources-check.json",
+                timeout=2,
+                corpus_dir=corpus,
+            )
+            self.assertEqual(rep["results"][0]["source_id"], "F01")
+            self.assertEqual(rep["results"][0]["corpus_path"], "F01.txt")
+            self.assertTrue((corpus / "F01.txt").is_file())
+            self.assertTrue(any("thin source content" in w for w in rep["warnings"]))
+
+            bad_sec = sections / "01-sec.md"
+            bad_sec.write_text("# 1. Gênese — Teste\n\nTexto com 10 m/s².\n", encoding="utf-8")
+            pf = cycle_artifacts.preflight_markdown(bad_sec, require_pdf_directives=True)
+            self.assertEqual(pf["status"], "fail")
+            codes = {item["code"] for item in pf["issues"]}
+            self.assertIn("long_dash", codes)
+            self.assertIn("unsupported_pdf_glyph", codes)
+            self.assertIn("missing_cover_directives", codes)
+
+            # Cycle 1 clean assembly + simulated multi-line PDF editorial-text.txt
+            (sections / "01-sec.md").write_text(
+                ":::cover-art\n\n# Doc\n\n:::pagebreak\n\n# 1. Gênese Editorial\n\nParágrafo 1.\n\n# 2. Dinâmica Veicular\n\nParágrafo 2.\n",
+                encoding="utf-8",
+            )
+            asm1 = cycle_artifacts.assemble(swarm, 1, from_sections=True)
+            self.assertEqual(asm1["preflight"]["status"], "pass")
+            # Simulate PDF extraction having many wrapped lines in cycle-01-editorial-text.txt
+            (reports / "cycle-01-editorial-text.txt").write_text("\n".join(f"wrapped line {i}" for i in range(200)), encoding="utf-8")
+
+            # Cycle 2 modifies only Section 2 (T02)
+            (sections / "01-sec.md").write_text(
+                ":::cover-art\n\n# Doc\n\n:::pagebreak\n\n# 1. Gênese Editorial\n\nParágrafo 1.\n\n# 2. Dinâmica Veicular\n\nParágrafo 2 atualizado.\n",
+                encoding="utf-8",
+            )
+            asm2 = cycle_artifacts.assemble(swarm, 2, from_sections=True)
+            self.assertEqual(asm2["diff"]["changed_topics"], ["T02"])
+            self.assertEqual(asm2["diff"]["unchanged_topics"], ["T01"])
+
+            # Reviewer JSON with A- and 'Aprovado' action must be rejected by consolidate
+            (reports / "cycle-02-reviewer-01-facts.json").write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "reviewer": "reviewer-01-facts",
+                    "topics": [
+                        {"id": "T01", "grade": "A-", "justification": "Sem bloqueios.", "action": "Aprovado. Opcional."},
+                        {"id": "T02", "grade": "A", "justification": "OK.", "action": ""},
+                    ],
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaises(cycle_artifacts.InputError):
+                cycle_artifacts.consolidate(swarm, 2, carry_unchanged=False)
+        finally:
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
+    def test_fetch_media_and_preflight_for_new_editorial_blocks(self) -> None:
+        from scripts.checks import fetch_media
+
+        root = self.work / "media-test"
+        media_dir = root / "sources" / "media"
+        # Minimal valid 1x1 RGB PNG bytes
+        png_1x1 = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+            b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0"
+            b"\x00\x00\x03\x01\x01\x00\xc9\xfe\x92\xef\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+        entry = fetch_media.save_media_item(
+            media_dir,
+            media_id="M01",
+            raw_bytes=png_1x1,
+            source_url="https://example.org/m01.png",
+            title="Gravura Histórica 1",
+            credit="Wikimedia Commons (CC BY 4.0)",
+            license_name="CC BY 4.0",
+        )
+        self.assertEqual(entry["id"], "M01")
+        verified = fetch_media.verify_media_dir(media_dir)
+        self.assertEqual(verified["status"], "pass")
+        self.assertEqual(verified["verified_count"], 1)
+
+        import base64
+        from unittest import mock
+
+        class _FakeFluxResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self) -> bytes:
+                return json.dumps({"data": [{"b64_json": base64.b64encode(png_1x1).decode("ascii")}]}).encode("utf-8")
+
+        with (
+            mock.patch.object(fetch_media, "resolve_apim_key", return_value="test-apim-key"),
+            mock.patch("urllib.request.urlopen", return_value=_FakeFluxResp()),
+        ):
+            flux_bytes, full_prompt = fetch_media.generate_flux_media(
+                "AE86 drifting on Mount Akina",
+                style="manga-engraving",
+                width=1024,
+                height=768,
+            )
+            flux_entry = fetch_media.save_media_item(
+                media_dir,
+                media_id="flux-test",
+                raw_bytes=flux_bytes,
+                source_url="apim://blackforestlabs/flux-2-pro",
+                title="Gravura FLUX",
+                credit="Gravura original gerada via FLUX.2-pro",
+                license_name="Editorial / FLUX.2-pro",
+                extra_metadata={"generator": "FLUX.2-pro", "style": "manga-engraving", "prompt": full_prompt},
+            )
+        self.assertEqual(flux_entry["id"], "flux-test")
+        self.assertEqual(flux_entry["generator"], "FLUX.2-pro")
+        self.assertEqual(flux_entry["style"], "manga-engraving")
+        verified_after_flux = fetch_media.verify_media_dir(media_dir)
+        self.assertEqual(verified_after_flux["status"], "pass")
+        self.assertEqual(verified_after_flux["verified_count"], 2)
+
+        out_dir = root / "output"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        good_md = out_dir / "book.md"
+        good_md.write_text(
+            ":::cover-art\n\n# Livro\n\n:::pagebreak\n\n# 1. Introdução\n\n"
+            ":::pullquote pq-1\n"
+            '{"quote": "Destaque editorial válido", "attribution": "Fonte [F01]"}\n'
+            ":::\n\n"
+            ":::callout co-1\n"
+            '{"kind": "curiosity", "title": "Você Sabia?", "body": "Curiosidade verificada."}\n'
+            ":::\n\n"
+            ":::factbox fb-1\n"
+            '{"title": "Ficha", "items": [{"label": "Ano", "value": "1995"}]}\n'
+            ":::\n\n"
+            ":::figure img-1\n"
+            f'{{"kind": "image", "src": "sources/media/{entry["file"]}", "title": "Fig 1", "caption": "Legenda"}}\n'
+            ":::\n",
+            encoding="utf-8",
+        )
+        pf_good = cycle_artifacts.preflight_markdown(good_md, require_pdf_directives=True)
+        self.assertEqual(pf_good["status"], "pass")
+
+        bad_md = out_dir / "bad-blocks.md"
+        bad_md.write_text(
+            ":::cover-art\n\n# " + ("Título excessivamente longo com cara de ementa burocrática copiando todo o escopo do brief " * 2) + "\n\n:::pagebreak\n\n"
+            ":::pullquote pq-bad\n"
+            '{"quote": ""}\n'
+            ":::\n\n"
+            ":::figure img-missing\n"
+            '{"kind": "image", "src": "sources/media/absent.png", "title": "Fig", "caption": "Cap"}\n'
+            ":::\n",
+            encoding="utf-8",
+        )
+        pf_bad = cycle_artifacts.preflight_markdown(bad_md, require_pdf_directives=True)
+        self.assertEqual(pf_bad["status"], "fail")
+        bad_codes = {item["code"] for item in pf_bad["issues"]}
+        self.assertIn("invalid_pullquote_json", bad_codes)
+        self.assertIn("missing_figure_image", bad_codes)
+        self.assertIn("heading_too_long", bad_codes)
+
 
 
 if __name__ == "__main__":

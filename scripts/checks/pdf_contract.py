@@ -15,7 +15,7 @@ def validate_manifest(manifest) -> None:
             or manifest["schema_version"] != 1 or manifest.get("engine") != "docswarm-pdf"
             or manifest.get("engine_version") != "1.0"):
         raise InputError("unsupported PDF manifest")
-    if (manifest.get("profile") not in ("textbook", "technical-report")
+    if (manifest.get("profile") not in ("textbook", "technical-report", "magazine", "book", "almanac")
             or manifest.get("language") not in ("pt-BR", "pt-PT", "en-US", "en-GB", "es-ES")):
         raise InputError("invalid PDF manifest profile or language")
     for name in ("source", "pdf", "layout"):

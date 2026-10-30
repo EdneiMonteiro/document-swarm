@@ -1050,10 +1050,10 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                 col_hdr = "COLOFÃO TIPOGRÁFICO" if not language.startswith("pt") else "COLOFÃO EDITORIAL E TIPOGRÁFICO"
                 col_body = (
                     "Este volume foi composto na família tipográfica IBM Plex Serif, desenhada por Mike Abbink e Bold Monday, "
-                    "com olho médio amplo, serifas firmes e entrelinha calibrada para impressão em papel Pólen Bold 70 g/m2 "
-                    "de fibra curta e tonalidade creme natural, preservando o conforto óptico e a opacidade da folha em leitura "
-                    "prolongada. As pranchas de abertura de capítulo e gravuras originais foram desenhadas para esta edição, "
-                    "acompanhadas de documentação fotográfica e iconográfica verificada."
+                    "com olho médio amplo, serifas firmes e entrelinha calibrada para impressão em papel Offset Chandra 90 g/m2 "
+                    "de alta alvura e excelente opacidade, valorizando o contraste das hachuras em bico de pena e a nitidez "
+                    "cromática das pranchas. As gravuras de abertura de capítulo e ilustrações originais foram desenhadas "
+                    "para esta edição, acompanhadas de documentação fotográfica e iconográfica verificada."
                 )
                 story.extend([
                     Spacer(1, 86 if is_a5 else 110),

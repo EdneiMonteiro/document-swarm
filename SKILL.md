@@ -97,7 +97,28 @@ No modo evolução, trabalhe sobre a pasta existente. Não crie um swarm novo.
 
 ### 2.1. Perfil editorial técnico
 
-Para documentos de arquitetura de nuvem, o perfil padrão é
+#### Modos de publicação (`technical-report`, `magazine`, `book`, `almanac`)
+
+O Document Swarm oferece cinco perfis visuais de PDF (`technical-report`, `textbook`, `magazine`, `book` e `almanac`) associados a quatro modos editoriais distintos. Escolha no enquadramento (`brief.md`) o modo que corresponde ao propósito do usuário — **nunca imponha o formato de relatório executivo corporativo a livros, matérias de revista ou almanaques**:
+
+| Modo / Perfil PDF (`pdf_profile`) | Perfil Editorial (`editorial_profile`) | Quando usar | Estrutura e Ritmo de Leitura | Blocos Visuais e Mídia (`sources/media/`) | Papel do 2º Revisor (`form`) |
+| --- | --- | --- | --- | --- | --- |
+| **`technical-report`** / **`textbook`** | `principal-cloud-solution-architect` (ou especialista técnico do domínio) | Arquiteturas de nuvem, RFCs, diagnósticos de engenharia, laudos e playbooks operacionais. | Abre pela decisão/conclusão executiva; explicita critérios, alternativas, trade-offs, riscos, aceite e reversão. | Diagramas `flow`, `layers`, `bars`, tabelas ponderadas (`weighted`) e fórmulas (`:::formula`) quando o cálculo for necessário. | `reviewer-*-decision`: Completude decisória, trade-offs operacionais, critérios de aceite e reversão. |
+| **`magazine`** | `magazine-feature` (Reportagem Especial Ilustrada) | Matérias dinâmicas de revista (estilo *National Geographic*, *Wired*, *Superinteressante*, *Quatro Rodas*). | Abre com cena real, personagem ou conflito histórico (*lead* narrativo); prosa ágil, envolvente e sem jargão corporativo; seções contínuas sem quebras de página forçadas. | Fotos e gravuras reais (`:::figure` `kind: "image"` com `credit`), frases de destaque (`:::pullquote`), boxes de bastidores (`:::callout` `backstage`/`curiosity`) e quadros *"Em Números"* (`:::factbox`). | `reviewer-*-narrative`: Ritmo jornalístico, força do *lead*, integração entre texto/fotos/boxes e ausência de tom burocrático. |
+| **`book`** | `progressive-book` (Livro Ilustrado com Curva Progressiva) | Livros e obras completas para leitura contínua e consulta durável. | **Curva pedagógica obrigatória em 3 camadas contínuas:**<br>1. **Parte I — Porta de Entrada:** acolhe quem não conhece o tema, explica o contexto humano/histórico e conceitos básicos com analogias claras;<br>2. **Parte II — Construção e Evolução:** desenvolve a história, os bastidores e os mecanismos em profundidade crescente;<br>3. **Parte III — Domínio e Referência:** nuances avançadas, legado, guia comentado de obras/versões e referência durável. | Gravuras e fotos históricas (`:::figure` `kind: "image"`), quadros didáticos *"Para Entender Melhor"* (`:::callout` `intro`/`key-concept`), destaques (`:::pullquote`) e fichas de referência (`:::factbox`). **Proibido** inventar fórmulas matemáticas ou matrizes corporativas artificiais. | `reviewer-*-progression`: Progressão didática contínua (da introdução acessível ao domínio profundo sem saltos de jargão), prazer de leitura e riqueza visual/contextual. |
+| **`almanac`** | `illustrated-almanac` (Almanaque / Compêndio Visual de Consulta) | Almanaques temáticos, enciclopédias ilustradas, guias de universos ficcionais, carros, aviação, jogos ou história ("abra em qualquer página"). | Leitura modular e não-linear: combina textos enxutos e cativantes com alta densidade de fichas catalográficas, cronologias, recordes e curiosidades verificadas. | Fichas técnicas padronizadas (`:::factbox`), quadros *"Você Sabia?"* (`:::callout` `curiosity`), fotos/gravuras (`:::figure` `kind: "image"`), linhas do tempo (`flow`) e comparativos (`bars` / tabelas). | `reviewer-*-curation`: Curadoria modular, variedade e completude das fichas (`factbox`), curiosidades verificadas e escaneabilidade visual. |
+
+#### Regras de fluidez e prazer de leitura para `magazine`, `book` e `almanac`
+
+1. **Julgamento editorial nos títulos (não literalizar a conversa de briefing nem copiar ementas):** quando o usuário explica *como* pretende usar a entrega (ex.: *"quero imprimir para deixar na estante"*, *"quero uma introdução para quem é leigo"*), isso orienta o **modo e a estrutura pedagógica**, nunca o título da obra ou dos capítulos. O `brief.md` descreve o escopo de trabalho dos agentes, não os títulos literais do documento: autores devem criar títulos concisos, elegantes e naturais para o tema e o gênero, e `reviewer-*-clarity` / `rubber-duck` devem reprovar (`< A`, `blocking`) qualquer título desajeitado, prolixo (estilo ementa escolar) ou que repita mecanicamente instruções da conversa, **mesmo que tais palavras constem no `brief.md`**.
+2. **Proibido metatexto burocrático ou de auditoria na prosa publicada:** nunca escreva no texto frases como *"Esta seção é uma síntese analítica do autor documentada em F01"*, *"conforme exigido pelo tópico T03"* ou *"cuja expansão não é explicitada nos snapshots do corpus"*. A distinção entre fato e análise deve transparecer naturalmente pela própria redação (ex.: *"Nos registros de produção da época..."*, *"Uma leitura comparativa desses números revela..."*).
+3. **Prosa limpa sem colchetes `[Fxx]` em `book`, `almanac` e `magazine` + Formato A5 com Primeira Capa e Contracapa (`:::back-cover`):** livros, almanaques e matérias de revista reais nunca poluem a prosa, legendas, *pull-quotes*, *callouts* ou *factboxes* com cadeias de colchetes como `[F02][F16][F21]`. Mantenha todas as fontes catalogadas e verificadas em `sources/sources-index.md` e na seção final de *Fontes e Créditos Iconográficos* do documento, deixando a prosa corrida limpa (o motor PDF também remove automaticamente tags `[Fxx]` inline nos perfis `book`, `almanac` e `magazine`). Nos modos `book` e `almanac`, o PDF é composto em **formato A5 (`148 × 210 mm`)** com tipografia serifada completa (**IBM Plex Serif** Regular/Bold/Italic/BoldItalic, ideal para impressão em **papel Pólen**), **Primeira Capa isolada** na página 1 (`:::cover-art` + `# Título` + `## Subtítulo`, seguida de `:::pagebreak` antes da *Apresentação*) e **Contracapa dedicada (`:::back-cover`)** na última página (com sinopse, trechos de crítica/destaques e colofão editorial).
+4. **Imagens reais dos personagens/objetos com direitos e referências + gravuras sob medida (`fetch_media.py`):** nos modos `magazine`, `book` e `almanac`, busque prioritariamente **imagens reais e oficiais dos personagens, autores, máquinas e locais** em `sources/media/` usando `scripts/checks/fetch_media.py` (`--wikipedia-page`, `--commons-file`, `--commons-search` ou `--url` de acervos enciclopédicos/oficiais), registrando obrigatoriamente os detentores de direitos autorais/licença (`credit` e `license` no manifesto e na legenda da `:::figure`, além da entrada correspondente em `sources/sources-index.md` e na seção final de *Fontes, Direitos Autorais e Créditos Iconográficos*). Quando o APIM do modelo **FLUX.2-pro** estiver configurado no cofre da máquina (`--flux-prompt` e `--flux-style` `engraving` | `manga-engraving` | `technical-cutaway` | `editorial-illustration`), use-o para gravuras conceituais, diagramas em corte e arte de capa (`:::cover-art`), conferindo sempre a fidelidade técnica e geográfica da cena gerada (por exemplo, **direção à direita / RHD** com volante na direita e câmbio na esquerda em carros japoneses ou britânicos).
+5. **Proibição de fórmulas e matrizes artificiais fora de temas matemáticos/decisórios:** em temas culturais, históricos, biográficos ou de divulgação, não crie blocos `:::formula` nem matrizes de decisão ponderada apenas para aparentar rigor técnico; use tabelas históricas/comparativas reais (`rows`, `sum`), fichas (`:::factbox`), linhas do tempo e boxes explicativos (`:::callout`).
+
+#### Perfil técnico (`principal-cloud-solution-architect`)
+
+Para documentos de arquitetura de nuvem e engenharia (`technical-report`), o perfil padrão é
 `principal-cloud-solution-architect`, salvo orientação diferente no enquadramento.
 Adote o nível de análise, discernimento e comunicação esperado de um Principal
 Cloud Solution Architect de Microsoft, AWS ou Google Cloud. A referência é a
@@ -106,7 +127,7 @@ comercial por um provedor.
 
 O perfil não substitui a especialidade de cada autor nem presume que o público
 seja técnico. Em outros domínios, preserve os princípios abaixo e registre no
-brief um perfil adequado, sem forçar conteúdo de nuvem.
+brief um perfil adequado (`magazine-feature`, `progressive-book`, `illustrated-almanac` ou especialista do domínio), sem forçar conteúdo de nuvem.
 
 **Julgamento e precisão**
 
@@ -654,7 +675,7 @@ D-  D  D+  C-  C  C+  B-  B  B+  A-  A  A+
 | Dimensão / Papel | Classe (`sources_min`) | Critérios avaliados | Condição para nota `A` / `A+` | O que rebaixa para `<= A-` (`blocking`) |
 | --- | :---: | --- | --- | --- |
 | **Precisão Factual (`reviewer-*-facts`)** | `fact` (`>= 5`) | Exatidão de contagens, somas, SKUs, limites, SLAs, regiões, datas, citações `[Fxx]` e separação explícita entre fato medido, premissa, estimativa e recomendação. | 100% dos números, nomes de recursos e capacidades conferem com os insumos e fontes oficiais atuais; limitações de escopo declaradas. | Número/soma divergente, recurso inexistente no inventário, capacidade/SLA sem fonte oficial ou suposição apresentada como fato medido. |
-| **Completude Decisória (`reviewer-*-decision`)** | `form` (`0`) | Problema medido, critérios de decisão, alternativas cabíveis, recomendação explícita, trade-offs operacionais, pré-requisitos, critério de aceite, responsável/horizonte e reversão. | Toda recomendação conecta problema → escolha → trade-off → condição de mudança → aceite e reversão verificáveis, com IDs e prazos consistentes entre capítulos. | Recomendação vaga ("avaliar", "depende" sem fatores), ausência de critério de aceite/reversão ou conflito de ID/prazo/escopo entre tabelas. |
+| **Completude Decisória / Progressão / Narrativa / Curadoria (`reviewer-*-decision` \| `progression` \| `narrative` \| `curation`)** | `form` (`0`) | Em `technical-report`: problema medido, critérios, alternativas, recomendação, trade-offs, aceite e reversão.<br>Em `book`: curva pedagógica em 3 camadas (leigo → evolução → domínio), clareza didática e integração de gravuras/boxes.<br>Em `magazine`: força do *lead* narrativo, ritmo jornalístico, *pull-quotes*, boxes de bastidores e fotos.<br>Em `almanac`: fichas catalográficas (`factbox`), quadros *"Você Sabia?"* (`callout`), cronologias e leitura não-linear. | Em `technical-report`: recomendação completa com trade-offs e reversão.<br>Em `book`/`magazine`/`almanac`: texto envolvente, progressão contínua sem saltos de jargão, ausência de metatexto burocrático e uso rico de imagens, *callouts*, *pull-quotes* e *factboxes*. | Em `technical-report`: recomendação vaga ou sem aceite/reversão.<br>Em `book`/`magazine`/`almanac`: abertura burocrática de laudo, salto abrupto de jargão para leigos, ausência de fotos/boxes previstos no brief ou fórmulas/matrizes artificiais. |
 | **Clareza e Público (`reviewer-*-clarity` / `editorial-v1`)** | `form` (`0`) | **Linguagem** (direta, afirmativa, verbos concretos), **Referentes** (sem "isso"/"esse caso" vagos), **Tom** (sênior, sem slogans, clichês, travessões longos ou "diário do arquiteto") e **Autonomia** (títulos, tabelas, figuras e legendas compreensíveis isoladamente, siglas expandidas no 1º uso). | As 5 superfícies (`titles`, `openings`, `body`, `captions`, `conclusions`) e os tópicos têm `0` achados `blocking`, leitura autônoma e terminologia uniforme. | Slogan promocional, metatexto de coleta/versão anterior, negativa defensiva vazia, código/sigla opaco sem definição no ponto de leitura ou referente ambíguo que esconda condição técnica. |
 | **Inspeção Visual e Funcional (`PDF` / `presentation`)** | `form` (`0`) | Quebra de números/identificadores em tabelas, sobreposição, cortes (`clipping`), linhas órfãs de total, contraste, hierarquia tipográfica, navegação (`interaction`) e editabilidade nativa (`editability`). | `inspection.json` com `status: pass` (`0` erros mecânicos) e páginas/slides legíveis, sem truncamento de dados ou cabeçalhos partidos ao meio. | Número ou identificador partido de forma ambígua na tabela impressa, sobreposição visual, corte de texto/figura ou falha de navegação/edição. |
 | **Auditoria Independente (`rubber-duck`)** | `rubber-duck` (`0`) | Contradições entre seções, omissões, notas `A` infladas (sem justificativa na dimensão ou contraditas pelo artefato), falhas de checks e integridade de hashes `.md` ↔ `.json` ↔ `.yaml`. | `critico: false` — todas as notas `A` se sustentam na evidência real do ciclo e os checks determinísticos (`sources`, `tables`, `gate`) fecham sem ressalvas ocultas. | `critico: true` — nota `A` atribuída sobre tabela/plano contraditório, justificativa que avalia outra dimensão por procuração ou etapa de qualidade pulada. |
@@ -663,7 +684,7 @@ D-  D  D+  C-  C  C+  B-  B  B+  A-  A  A+
 
 | Superfície / Severidade | Escopo de verificação | Regra de nota e bloqueio no `gate.py` |
 | --- | --- | --- |
-| **`titles`** | Capa, títulos de capítulos, seções e subseções. | Deve identificar o objeto, a decisão ou a condição; títulos genéricos/intercambiáveis ou com verbos de anúncio recebem `< A`. |
+| **`titles`** | Capa, títulos de capítulos, seções, subseções e títulos de boxes/fichas. | Deve ser conciso, natural e adequado ao assunto e ao gênero editorial. Títulos genéricos/intercambiáveis, títulos longos/desajeitados que copiam a ementa do `brief.md` ou títulos que literalizam sem bom senso a conversa de briefing recebem obrigatoriamente `< A` (`blocking`), mesmo que o termo apareça no `brief.md`. |
 | **`openings`** | Parágrafos de abertura da capa, resumo executivo e capítulos. | Deve abrir pela conclusão técnica, impacto e números verificados; introduções vagas ("no cenário atual") recebem `< A`. |
 | **`body`** | Desenvolvimento técnico, listas, condições, exemplos e código. | Deve usar construção afirmativa, explicar mecanismos/limites, manter terminologia única e evitar parágrafos-bloco que escondam condições. |
 | **`captions`** | Títulos e notas de tabelas, figuras, diagramas e fórmulas. | Deve permitir leitura isolada com escopo, período, unidade e legenda local das abreviações (única superfície que aceita `not_applicable` quando não há figuras/tabelas). |
@@ -804,15 +825,23 @@ Priorize documentação oficial, normas, artigos acadêmicos e referências
 reconhecidas. Nunca invente URL ou trate acessibilidade como prova de que a fonte
 sustenta a afirmação.
 
-### Cache
+### Cache e corpus local (`sources/corpus/`)
 
-1. Consulte `sources/sources-check.json` e `<DOCSWARM>/memory/sources.json`.
+1. Consulte `sources/sources-check.json`, `sources/corpus/` e `<DOCSWARM>/memory/sources.json`.
 2. Verificação com menos de 7 dias pode ser reutilizada e citada como cache.
-3. URL nova ou expirada deve ser aberta pelo agente e verificada pelo script.
-4. Antes da entrega final, rode a verificação com `--force`.
-5. `403` e `429` são `warn`, não aprovação automática: o coordenador confirma
+3. URL nova ou expirada deve ser aberta pelo agente e verificada pelo script com
+   `--corpus-dir sources/corpus`, que extrai o texto limpo da página para
+   `sources/corpus/<ID>.txt` e alerta sobre páginas vazias/rasas (`< 300`
+   caracteres, como homepages genéricas que retornam `HTTP 200` mas não contêm
+   os fatos citados).
+4. Nos ciclos `N >= 2`, autores e `reviewer-*-facts` consultam prioritariamente
+   os snapshots locais em `sources/corpus/<ID>.txt` (em milissegundos, sem
+   repetir `web_fetch` em URLs já extraídas), buscando na rede apenas fontes
+   novas ou contestações específicas.
+5. Antes da entrega final, rode a verificação com `--force`.
+6. `403` e `429` são `warn`, não aprovação automática: o coordenador confirma
    por ferramenta de conteúdo e registra a ressalva.
-6. Fonte `fail` deve ser removida ou substituída antes dos revisores.
+7. Fonte `fail` deve ser removida ou substituída antes dos revisores.
 
 ## 8. Tabelas auditáveis
 
@@ -1053,24 +1082,33 @@ Você é o coordenador. Para cada ciclo `N`:
    os parágrafos, contagens e identificadores já aprovados.
    No monitor, publique `authors` com o ciclo real e registre cada despacho
    antes de chamar `task`/`write_agent`, usando o `task_name` retornado.
-2. **Consolidação e diff determinístico.** Monte `output/<doc>.md`, atualize
-   `sources/sources-index.md` e grave `reports/cycle-0N-authors.md`. Uniformize
-   voz, terminologia e profundidade antes da revisão; divergências de conteúdo
-   voltam aos autores, não são resolvidas apenas por edição de estilo.
+2. **Consolidação, preflight e diff determinístico.** Monte `output/<doc>.md`,
+   atualize `sources/sources-index.md` e grave `reports/cycle-0N-authors.md`.
+   Uniformize voz, terminologia e profundidade antes da revisão; divergências de
+   conteúdo voltam aos autores, não são resolvidas apenas por edição de estilo.
    Converta orientações internas em critérios de aplicação, limitações ou
    consequências para o leitor. Preserve fatos, lógica, escopo e ressalvas;
    isso não congela uma redação coloquial ou ambígua.
-   Monte os formatos finais pedidos antes da revisão. Execute a composição/inspeção
-   da seção 2.4 antes de despachar revisores e rode a montagem e o diff
-   determinístico do ciclo:
+   Antes de renderizar o PDF, execute a montagem com preflight rápido (`< 0,2 s`,
+   detectando travessões longos, glifos fora da fonte PDF como `²`/`³`/`ō`/`∞`,
+   rótulos de `:::figure` que estouram a caixa e ausência de `:::cover-art` /
+   `:::pagebreak`):
+
+   ```bash
+   python3 "<DOCSWARM>/scripts/checks/cycle_artifacts.py" assemble . --cycle N --from-sections
+   ```
+
+   Em seguida, componha/inspecione o PDF da seção 2.4 (`output/pdf-cycle-0N`) e
+   rode `assemble` novamente (sem `--from-sections`) para sincronizar
+   `reports/cycle-0N-editorial-text.txt` com `output/pdf-cycle-0N/editorial-text.txt`
+   e gerar `reports/cycle-0N-diff.json` e `reports/cycle-0N-diff.md` comparando
+   `reports/cycle-0(N-1)-source.md` contra `reports/cycle-0N-source.md` (mais
+   `changed_pages` do PDF):
 
    ```bash
    python3 "<DOCSWARM>/scripts/checks/cycle_artifacts.py" assemble . --cycle N
    ```
 
-   O comando preserva `reports/cycle-0N-editorial-text.txt` e, para `N >= 2`,
-   gera `reports/cycle-0N-diff.json` e `reports/cycle-0N-diff.md` (seções/linhas
-   modificadas, `changed_topics`, `unchanged_topics` e `changed_pages` do PDF).
    Se houver falha mecânica, corrija a fonte ou o compositor e gere outro bundle,
    preservando o anterior; não reduza o conteúdo nem masque operadores para passar.
    Inspecione candidatos de nomenclatura no texto integral:
@@ -1083,13 +1121,13 @@ Você é o coordenador. Para cada ciclo `N`:
    definições. Autores/revisor classificam os candidatos, substituem códigos
    dispensáveis por nomes e conferem definições/legendas na entrega real.
    Zero candidatos não dispensa a revisão de figuras, código ou termos não capturados.
-3. **Checagem de fontes.**
+3. **Checagem de fontes e extração de corpus local.**
 
    ```bash
-   python3 "<DOCSWARM>/scripts/checks/verify_sources.py" sources/sources-index.md --output sources/sources-check.json
+   python3 "<DOCSWARM>/scripts/checks/verify_sources.py" sources/sources-index.md --output sources/sources-check.json --corpus-dir sources/corpus
    ```
 
-   Remova/substitua `fail`; documente `warn`.
+   Remova/substitua `fail`, documente `warn` e substitua páginas rasas (`thin source content`) que não contenham os fatos citados.
 4. **Checagem de tabelas.**
 
    ```bash
@@ -1603,7 +1641,8 @@ Todos usam somente Python stdlib. Consulte `--help` para opções exatas.
 
 | Script | Função | Bloqueia quando |
 |---|---|---|
-| `verify_sources.py` | testa URLs e mantém cache auditável | há fonte `fail` |
+| `verify_sources.py` | testa URLs, mantém cache auditável e extrai corpus textual local (`--corpus-dir`) | há fonte `fail` |
+| `fetch_media.py` | busca fotos reais (Wikipedia, Wikimedia Commons ou URLs) e gera gravuras/cortes técnicos via FLUX.2-pro no Azure APIM com chave do Windows Credential Manager (`--flux-prompt`, `--flux-style`), normalizando PNG/JPEG RGB em `sources/media/media-manifest.json` | imagem ausente, corrompida ou com hash divergente (`--verify`) |
 | `check_update.py` | verifica commits/versão novos em `origin/main` e aplica `git merge --ff-only` mediante aprovação (`--apply`) | árvore local suja ou branch divergente ao aplicar (`exit 1`) |
 | `verify_tables.py` | recalcula tabelas marcadas e valida inventários/chaves (`rows`, `match_keys`, `refs`) | conta ou chave marcada não fecha |
 | `cycle_artifacts.py` | monta seções (`assemble`), gera diff de texto/páginas (`diff`) e consolida JSONs dos revisores em `.md` e `review.yaml` com hashes SHA-256 (`consolidate`) | artefato ausente ou inválido (exit `3`) |
