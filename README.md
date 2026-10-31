@@ -397,7 +397,7 @@ O README é apenas uma porta de entrada. As regras completas vivem em:
 
 ## Exemplos
 
-- [CoE de Nuvem: criação e evolução](./docs/examples/coe-nuvem.md)
+- [CoE de Nuvem: criação e evolução (exemplo fictício)](./docs/examples/coe-nuvem.md)
 - [Plano arquitetural histórico da versão 2.0](./docs/project/plano-melhoria.md)
 
 ## Desenvolvimento
