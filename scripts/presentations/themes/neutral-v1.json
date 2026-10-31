@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "theme_id": "neutral-v1",
+  "title": "Neutral presentation theme",
+  "description": "Redistributable neutral theme. Colours and spacing are tokens; no customer identity is embedded.",
+  "palette": {
+    "ink": "#17344B",
+    "muted": "#50657A",
+    "accent": "#216B9A",
+    "support": "#087F8C",
+    "highlight": "#C27024",
+    "surface": "#FFFFFF",
+    "panel": "#EEF4F8",
+    "line": "#C8D7E2",
+    "inverse": "#FFFFFF"
+  },
+  "typography": {
+    "title": {"family": "sans", "size": 34, "leading": 40, "bold": true, "colour": "ink"},
+    "heading": {"family": "sans", "size": 22, "leading": 28, "bold": true, "colour": "accent"},
+    "body": {"family": "sans", "size": 17, "leading": 24, "bold": false, "colour": "ink"},
+    "caption": {"family": "sans", "size": 13, "leading": 18, "bold": false, "colour": "muted"},
+    "table": {"family": "sans", "size": 14, "leading": 19, "bold": false, "colour": "ink"},
+    "table-header": {"family": "sans", "size": 14, "leading": 19, "bold": true, "colour": "inverse"},
+    "code": {"family": "mono", "size": 13, "leading": 18, "bold": false, "colour": "ink"},
+    "shape": {"family": "sans", "size": 14, "leading": 19, "bold": true, "colour": "ink"},
+    "control": {"family": "sans", "size": 14, "leading": 19, "bold": true, "colour": "inverse"}
+  },
+  "metrics": {
+    "margin": 48,
+    "gutter": 24,
+    "padding": 10,
+    "radius": 8,
+    "rule": 1.25,
+    "control_height": 30,
+    "control_padding": 14,
+    "chrome_height": 34
+  },
+  "layouts": {
+    "title-and-body": {
+      "areas": {
+        "title": {"x": 48, "y": 44, "width": 864, "height": 52},
+        "body": {"x": 48, "y": 112, "width": 864, "height": 330},
+        "controls": {"x": 48, "y": 452, "width": 864, "height": 30}
+      }
+    },
+    "two-column": {
+      "areas": {
+        "title": {"x": 48, "y": 44, "width": 864, "height": 52},
+        "left": {"x": 48, "y": 112, "width": 420, "height": 330},
+        "right": {"x": 492, "y": 112, "width": 420, "height": 330},
+        "controls": {"x": 48, "y": 452, "width": 864, "height": 30}
+      }
+    },
+    "full-stage": {
+      "areas": {
+        "title": {"x": 48, "y": 44, "width": 864, "height": 52},
+        "stage": {"x": 48, "y": 112, "width": 864, "height": 330},
+        "controls": {"x": 48, "y": 452, "width": 864, "height": 30}
+      }
+    }
+  }
+}

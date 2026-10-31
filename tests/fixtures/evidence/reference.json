@@ -1,0 +1,10 @@
+{
+  "source": "swarms/2026-10-29-SWARM-02/sources/corpus/F16.txt",
+  "line": 141,
+  "excerpt": "delivers tofu every day to a hotel by the lake at the top of the hill, driving up and back down",
+  "claim": "delivery-route",
+  "expected_conclusion": "contradicted",
+  "occurrences": ["delivery-opening", "delivery-return"],
+  "family": "inverted-route",
+  "reason": "The opening inverts the outbound direction; the return section agrees with the source. Both occurrences must be inspected. This is an annotated judgment, not lexical truth detection."
+}

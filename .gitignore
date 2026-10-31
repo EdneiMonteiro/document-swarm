@@ -1,0 +1,23 @@
+# Entregas dos swarms sao locais e nao devem ser publicadas.
+/swarms/*
+
+# Ruído de validação de diagramas Mermaid
+*.svg
+.mermaid-validation/
+
+# Locais
+.env
+.env.*
+!.env.example
+/memory/
+/scripts/pdf/ms_logo.png
+*.bak
+*.tmp
+__pycache__/
+.venv-pdf/
+.DS_Store
+Thumbs.db
+
+# Ruído de depuração do Playwright MCP (browser console/page snapshots)
+.playwright-mcp/
+.venv-presentations/

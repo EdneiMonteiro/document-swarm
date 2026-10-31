@@ -1,0 +1,6 @@
+# Optional dependencies for the presentation engine (scripts/presentations).
+# The deterministic checks in scripts/checks never import them.
+python-pptx>=1.0,<2
+playwright>=1.47,<2
+Pillow>=10.4,<13
+pywin32>=306; sys_platform == "win32"
