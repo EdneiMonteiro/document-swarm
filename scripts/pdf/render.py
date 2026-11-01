@@ -179,15 +179,17 @@ def markup(runs: list[Inline], default_font="DSBody") -> str:
     return "".join(output)
 
 
-def record(canvas, identifier, kind, width, height, *, expected_ink=False, parent=None):
+def record(canvas, identifier, kind, width, height, *, expected_ink=False, parent=None, **extra):
     corners = [canvas.absolutePosition(x, y) for x, y in ((0, 0), (width, 0), (0, height), (width, height))]
     xs, ys = zip(*corners)
     page_height = getattr(canvas._docswarm_document, "page_height", HEIGHT)
-    canvas._docswarm_document.placements.append({
+    entry = {
         "id": identifier, "kind": kind, "page": canvas.getPageNumber(),
         "bbox": [min(xs), page_height - max(ys), max(xs), page_height - min(ys)],
         "expected_ink": expected_ink, "parent": parent,
-    })
+    }
+    entry.update(extra)
+    canvas._docswarm_document.placements.append(entry)
 
 
 class TrackedParagraph(Paragraph):
@@ -308,6 +310,11 @@ class NativeTitleBanner(Flowable):
     """Renders an optional native-script (e.g. Japanese) title line on the cover as a high-DPI typographic plate."""
 
     _FONT_CANDIDATES = (
+        "/System/Library/Fonts/Supplemental/Songti.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/System/Library/Fonts/AquaKana.ttc",
+        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
         "C:/Windows/Fonts/yumindb.ttf",
         "C:/Windows/Fonts/yumin.ttf",
         "C:/Windows/Fonts/BIZ-UDMinchoM.ttc",
@@ -327,10 +334,49 @@ class NativeTitleBanner(Flowable):
     def wrap(self, availWidth, availHeight):
         return self.width, self.height
 
+    @classmethod
+    def _font_covers_char(cls, font_obj, ch: str) -> bool:
+        try:
+            mask = font_obj.getmask(ch)
+            if mask.size[0] <= 0 or mask.size[1] <= 0 or not any(mask):
+                return False
+            notdef = font_obj.getmask("\ufffe")
+            if mask.size == notdef.size and bytes(mask) == bytes(notdef):
+                return False
+            return True
+        except Exception:
+            return False
+
+    @classmethod
+    def select_font(cls, text: str, font_px: int, candidates: tuple[str, ...] | None = None):
+        from PIL import ImageFont
+        non_space_chars = [ch for ch in text if not ch.isspace()]
+        font_list = candidates if candidates is not None else cls._FONT_CANDIDATES
+        best_font = None
+        best_missing = non_space_chars
+        for cand in font_list:
+            if not Path(cand).is_file():
+                continue
+            indices = (2, 1, 6, 7, 0) if cand.lower().endswith(".ttc") else (0,)
+            for idx in indices:
+                try:
+                    candidate_font = ImageFont.truetype(cand, font_px, index=idx)
+                    missing = [ch for ch in non_space_chars if not cls._font_covers_char(candidate_font, ch)]
+                    if not missing:
+                        return candidate_font, []
+                    if best_font is None or len(missing) < len(best_missing):
+                        best_font = candidate_font
+                        best_missing = missing
+                except Exception:
+                    continue
+        if best_font is not None:
+            return best_font, best_missing
+        return ImageFont.load_default(), non_space_chars
+
     def draw(self):
         if not self.text:
             return
-        from PIL import Image as PilImage, ImageDraw, ImageFont
+        from PIL import Image as PilImage, ImageDraw
         c = self.canv
         scale = 6
         px_w = max(60, int(round(self.width * scale)))
@@ -343,18 +389,17 @@ class NativeTitleBanner(Flowable):
         img = PilImage.new("RGB", (px_w, px_h), bg_rgb)
         draw = ImageDraw.Draw(img)
         font_px = int(round((13.5 if self.width < 400 else 15.5) * scale))
-        font_obj = None
-        for cand in self._FONT_CANDIDATES:
-            if Path(cand).is_file():
-                try:
-                    font_obj = ImageFont.truetype(cand, font_px)
-                    break
-                except Exception:
-                    continue
-        if font_obj is None:
-            font_obj = ImageFont.load_default()
+        font_obj, missing_glyphs = self.select_font(self.text, font_px)
+        self.missing_glyphs = missing_glyphs
+        record(c, self.identifier, "native-title", self.width, self.height, missing_glyphs=missing_glyphs)
 
-        spaced_text = "  ".join(list(self.text.replace(" ", ""))) if len(self.text) <= 7 else self.text
+        clean_chars = list(self.text.replace(" ", ""))
+        if len(clean_chars) <= 7:
+            spaced_text = "  ".join(clean_chars)
+        elif len(clean_chars) <= 12:
+            spaced_text = " ".join(clean_chars)
+        else:
+            spaced_text = self.text
         bbox = draw.textbbox((0, 0), spaced_text, font=font_obj)
         tw = bbox[2] - bbox[0]
         th = bbox[3] - bbox[1]
@@ -1064,6 +1109,8 @@ class BookDocument(BaseDocTemplate):
     def afterFlowable(self, flowable):
         if getattr(flowable, "source_anchor", None):
             self.canv.bookmarkPage(flowable.source_anchor)
+        if getattr(flowable, "current_heading_only", None):
+            self.current_heading = flowable.current_heading_only
         if getattr(flowable, "heading_key", None):
             key = flowable.heading_key
             title = flowable.heading_text
@@ -1259,6 +1306,23 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
             toc = TableOfContents()
             toc_font = profile.body_font if profile.name == "book" else "DSBody"
             toc.levelStyles = [ParagraphStyle("toc", fontName=toc_font, fontSize=9.8 if is_a5 else 11.3, leading=14.8 if is_a5 else 17.5, textColor=INK, rightIndent=22 if is_a5 else 28, spaceBefore=5 if is_a5 else 7, spaceAfter=4 if is_a5 else 5)]
+            orig_toc_split = toc.split
+
+            def _tracked_toc_split(availWidth, availHeight, _orig=orig_toc_split, _bid=block.id):
+                parts = _orig(availWidth, availHeight)
+                for idx_part, part in enumerate(parts):
+                    orig_draw = part.draw
+
+                    def _make_draw(p, od, i):
+                        def _draw():
+                            record(p.canv, f"{_bid}-part-{i}-p{p.canv.getPageNumber()}", "toc", getattr(p, "_width", availWidth), getattr(p, "_height", 20))
+                            return od()
+                        return _draw
+
+                    part.draw = _make_draw(part, orig_draw, idx_part)
+                return parts
+
+            toc.split = _tracked_toc_split
             story.extend([toc, PageBreak()])
             if standalone_book_cover:
                 plate_entries = []
@@ -1266,18 +1330,33 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                 for b_item in document.blocks:
                     if b_item.kind == "chapter-art":
                         chap_idx += 1
-                        cap_txt = (b_item.spec or {}).get("caption") or f"Gravura do Capítulo {chap_idx}"
+                        kicker_raw = str((b_item.spec or {}).get("kicker") or "").strip()
+                        m_kicker = re.search(r"(\d+)", kicker_raw)
+                        if m_kicker:
+                            opener_label = f"Abertura do Capítulo {m_kicker.group(1)}"
+                        elif kicker_raw.upper().startswith("PRÓLOGO") or kicker_raw.upper().startswith("PROLOGO"):
+                            opener_label = "Abertura do Prólogo"
+                        elif kicker_raw.upper().startswith("INTERLÚDIO") or kicker_raw.upper().startswith("INTERLUDIO"):
+                            roman = kicker_raw.split()[-1]
+                            opener_label = f"Abertura do Interlúdio {roman}"
+                        elif kicker_raw.upper().startswith("EPÍLOGO") or kicker_raw.upper().startswith("EPILOGO"):
+                            opener_label = "Abertura do Epílogo"
+                        else:
+                            opener_label = f"Abertura do Capítulo {chap_idx}"
+                        cap_txt = (b_item.spec or {}).get("caption") or opener_label
                         short_cap = cap_txt.split(":")[0].strip() if ":" in cap_txt else cap_txt[:68]
-                        plate_entries.append((f"Prancha {chap_idx:02d}", f"Abertura do Capítulo {chap_idx}: {short_cap}"))
+                        plate_entries.append((f"Prancha {chap_idx:02d}", f"{opener_label}: {short_cap}"))
                     elif b_item.kind == "figure" and (b_item.spec or {}).get("kind") == "image" and (b_item.spec or {}).get("title"):
                         plate_entries.append(("Ilustração", str(b_item.spec["title"])))
                 if plate_entries:
                     loi_title = "Lista de Gravuras e Ilustrações" if language.startswith("pt") else "List of Illustrations"
-                    story.append(TrackedParagraph(
+                    loi_p = TrackedParagraph(
                         font_text(loi_title, "DSSerifBold"),
                         ParagraphStyle("loi-h1", fontName="DSSerifBold", fontSize=14.0 if is_a5 else 17.0, leading=18.0, textColor=colors.HexColor(profile.accent_hex), spaceAfter=6),
                         element_id=f"{block.id}-loi-h1", element_kind="loi-heading",
-                    ))
+                    )
+                    loi_p.current_heading_only = loi_title
+                    story.append(loi_p)
                     loi_item_style = ParagraphStyle(
                         "loi-item", fontName=profile.body_font, fontSize=7.8 if is_a5 else 9.0,
                         leading=11.0 if is_a5 else 13.0, textColor=INK, spaceAfter=2.0,
@@ -1314,6 +1393,7 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                     font_text(block.spec["credit"], "DSBody"), cred_style,
                     element_id=f"{block.id}-credit", element_kind="chapter-art-credit",
                 ))
+            chapter_first_para_pending = True
             _append_pagebreak()
         elif block.kind == "footnote":
             fn_font = profile.body_font
@@ -1691,6 +1771,8 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                     paragraph.heading_key = block.id
                     paragraph.heading_text = block.text
                     headings.append({"id": block.id, "title": block.text})
+                else:
+                    paragraph.current_heading_only = block.text
             if block.kind == "formula":
                 for line in block.text.splitlines():
                     if pdfmetrics.stringWidth(line, "DSMath", current.fontSize) > cw:

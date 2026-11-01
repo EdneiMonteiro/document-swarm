@@ -246,6 +246,13 @@ def inspect_pdf(document: Document, pdf: Path, layout: dict, previews: Path) -> 
         errors.append({"code": "missing_figure_ink", "count": len(vector_failures)})
     if overlap:
         errors.append({"code": "overlapping_layout", "count": len(overlap)})
+    missing_native_glyphs = [
+        {"page": item["page"], "id": item["id"], "characters": item["missing_glyphs"]}
+        for item in placements
+        if item.get("missing_glyphs")
+    ]
+    if missing_native_glyphs:
+        errors.append({"code": "missing_native_title_glyphs", "items": missing_native_glyphs})
     if any(item["page"] > len(pages) for item in placements):
         errors.append({"code": "missing_layout_page"})
     if justification_lines >= 10 and aligned_lines / justification_lines < .9:

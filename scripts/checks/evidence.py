@@ -628,13 +628,18 @@ def register(swarm: Path, kind: str, key: str, path: str | None = None,
                        "agent": policy["agents"][reviewer]}
             event_id = f"{key}:{reviewer}"
         else:
-            artifact = descriptor(root, nonempty(path, "record path"))
-            data = object_file(root, artifact)
+            src_artifact = descriptor(root, nonempty(path, "record path"))
+            data = object_file(root, src_artifact)
             if data.get("candidate_id") != key:
                 raise InputError("record candidate_id differs from frozen candidate")
-            payload = {"artifact": artifact, "record": data}
+            artifact = src_artifact
             if kind == "inventory":
                 validate_inventory(root, cand, data)
+                inv_snap_rel = f"reports/evidence/inventories/{key}.json"
+                inv_snap_path = inside(root, inv_snap_rel)
+                if not inv_snap_path.is_file():
+                    write_json_atomic(inv_snap_path, data)
+                artifact = descriptor(root, inv_snap_rel)
             elif kind == "review":
                 reviewer = data.get("reviewer")
                 if reviewer not in [*policy["reviewers"], policy["auditor"]]:
@@ -651,6 +656,7 @@ def register(swarm: Path, kind: str, key: str, path: str | None = None,
             else:
                 event_id = f"{key}:{identifier(data.get('finding'), 'finding')}"
                 verify_resolution(history, key, data, policy)
+            payload = {"artifact": artifact, "record": data}
         seq = append(db, history, kind, event_id, payload)
         if kind == "inventory":
             for claim in data["claims"]:
