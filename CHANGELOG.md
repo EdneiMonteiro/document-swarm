@@ -7,6 +7,17 @@ the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
 ## [Unreleased]
 
+### Added
+
+- Book-mode (`pdf_profile: book` / `editorial_profile: progressive-book`) structural and literary completeness gates in `preflight_markdown(..., book_profile=True)`:
+  - Enforces 100% `:::chapter-art` opening plates across all narrative H1 units (`Prólogo`, numbered chapters, `Interlúdios`, `Epílogo`), `:::footnote` and at least one editorial box (`:::callout`, `:::pullquote`, or `:::factbox`) per numbered chapter, and minimum prose word-count floors (`>= 1200` words per chapter; `>= 450` words per prologue/interlude/epilogue).
+- CJK glyph coverage verification in `NativeTitleBanner.select_font()` (`scripts/pdf/render.py`) and `missing_native_title_glyphs` inspection check in `scripts/pdf/inspect.py`:
+  - Probes macOS/Windows CJK font collections across TTC sub-font indices (`Songti TC Bold`, `Hiragino Sans GB`, `AppleSDGothicNeo`, `Yu Mincho`, `MS Mincho`) against empty/tofu `.notdef` masks, records `missing_glyphs` in `layout.json` placements, and fails `inspect_pdf()` if any `native_title` character lacks coverage.
+  - Tracks multi-page `TableOfContents` splits (`_tracked_toc_split`), preserves running headers on TOC/LOI continuation pages (`current_heading_only`), enables drop caps after `:::chapter-art`, and labels `Pranchas` accurately for prologues, chapters, interludes, and epilogues.
+- `fetch_media.py` enhancements for `FLUX.2-pro`:
+  - Native macOS Keychain lookup via `Security.framework` (`ctypes`) alongside Windows Credential Manager (`CredReadW`), `--reference-image` alias for structural `img2img` reference grounding, `sanitize_flux_prompt()` to prevent false-positive HTTP 400 content filters on historical terms, and `auto_crop_engraving_bytes()` to strip idle outer margins/frames automatically.
+- Immutable per-candidate inventory snapshots (`reports/evidence/inventories/<candidate_id>.json`) in `evidence.py` so recomposing within the same review cycle never invalidates earlier candidate inventory descriptors, plus unified `sources-check.json` schema (`results`/`sources` and `counts`/`summary`) across `verify_sources.py`, `final_report.py`, and `update_memory.py`.
+
 ## [4.0.0] - 2026-10-31
 
 ### Added

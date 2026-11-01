@@ -106,9 +106,10 @@ def render(swarm: Path) -> str:
     table_reports = collect_json(table_paths, "tables-check.json")
     source_counts = {"ok": 0, "redirect": 0, "warn": 0, "fail": 0}
     for report in source_reports:
-        if not isinstance(report.get("counts"), dict):
+        counts_dict = report.get("counts") if isinstance(report.get("counts"), dict) else report.get("summary")
+        if not isinstance(counts_dict, dict):
             raise InputError(f"invalid sources-check.json artifact {report['_artifact']}: missing counts")
-        for status, count in report.get("counts", {}).items():
+        for status, count in counts_dict.items():
             if status in source_counts:
                 if not isinstance(count, int):
                     raise InputError(f"invalid sources-check.json artifact {report['_artifact']}: count {status} is not integer")

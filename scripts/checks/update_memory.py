@@ -89,7 +89,7 @@ def proposed_sources(swarm: Path) -> list[dict[str, Any]]:
     if checks_path.exists():
         try:
             payload = json.loads(checks_path.read_text(encoding="utf-8"))
-            results = payload.get("results")
+            results = payload.get("results") if isinstance(payload.get("results"), list) else payload.get("sources")
             if not isinstance(results, list):
                 raise InputError(f"invalid sources check: {checks_path} has no results list")
             checks = {

@@ -687,7 +687,9 @@ class FluxConfigurationTests(WorkTest):
         key = None
         with (
             mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.object(fetch_media, "LOCAL_CONFIG", self.work / "missing.env"),
             mock.patch.object(fetch_media, "read_key_from_windows_vault", return_value=None),
+            mock.patch.object(fetch_media, "read_key_from_macos_vault", return_value=None),
             mock.patch("subprocess.check_output", return_value="synthetic-key") as cli,
         ):
             try:
@@ -696,6 +698,82 @@ class FluxConfigurationTests(WorkTest):
                 pass
         self.assertEqual(cli.call_count, 0, f"Azure CLI calls measured: {cli.call_count}")
         self.assertIsNone(key)
+
+    def test_flux_prompt_sanitization_and_auto_crop(self):
+        from scripts.checks import fetch_media
+
+        cleaned = fetch_media.sanitize_flux_prompt("A radioactive fallout after a thermonuclear explosion")
+        self.assertNotIn("radioactive", cleaned.lower())
+        self.assertNotIn("thermonuclear explosion", cleaned.lower())
+        self.assertIn("falling white coral ash", cleaned)
+
+        try:
+            import io
+            from PIL import Image, ImageDraw
+
+            im = Image.new("RGB", (400, 300), (255, 255, 255))
+            dr = ImageDraw.Draw(im)
+            dr.rectangle([40, 30, 360, 270], fill=(30, 40, 55))
+            buf = io.BytesIO()
+            im.save(buf, format="PNG")
+            cropped_bytes = fetch_media.auto_crop_engraving_bytes(buf.getvalue(), 400, 300)
+            with Image.open(io.BytesIO(cropped_bytes)) as out_im:
+                self.assertEqual(out_im.size, (400, 300))
+                # Corner pixel should now be dark from the cropped inner artwork, not white margin
+                self.assertLess(out_im.getpixel((5, 5))[0], 100)
+        except ImportError:
+            pass
+
+    def test_book_profile_preflight_enforces_chapter_art_footnotes_boxes_and_word_floor(self):
+        from scripts.checks import cycle_artifacts
+
+        img_path = self.work / "plate.jpg"
+        img_path.write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9")
+        md_incomplete = self.work / "book_incomplete.md"
+        md_incomplete.write_text(
+            "# Prólogo: Abertura\n\nTexto curto.\n\n"
+            "# 1. Primeiro Capítulo\n\nTexto curto sem gravura, sem nota e sem quadro.\n\n"
+            "# Epílogo: Fecho\n\nTexto curto.\n",
+            encoding="utf-8",
+        )
+        res_bad = cycle_artifacts.preflight_markdown(md_incomplete, book_profile=True)
+        codes_bad = {item["code"] for item in res_bad["issues"]}
+        self.assertEqual(res_bad["status"], "fail")
+        self.assertIn("missing_chapter_art", codes_bad)
+        self.assertIn("missing_chapter_footnote", codes_bad)
+        self.assertIn("missing_chapter_box", codes_bad)
+        self.assertIn("unit_word_count_low", codes_bad)
+
+        prose_500 = " ".join(["palavra"] * 500)
+        prose_1250 = " ".join([" narrativa"] * 1250)
+        md_complete = self.work / "book_complete.md"
+        md_complete.write_text(
+            "# Prólogo: Abertura\n\n"
+            ':::chapter-art p-art\n{"kicker": "PRÓLOGO", "src": "plate.jpg", "caption": "Legenda"}\n:::\n\n'
+            f"{prose_500}\n\n"
+            "# 1. Primeiro Capítulo\n\n"
+            ':::chapter-art c1-art\n{"kicker": "CAPÍTULO 1", "src": "plate.jpg", "caption": "Legenda"}\n:::\n\n'
+            f"{prose_1250}\n\n"
+            ':::callout c1-box\n{"kind": "intro", "title": "Quadro", "body": "Explicação"}\n:::\n\n'
+            ':::footnote c1-fn\n{"notes": [{"number": "1", "term": "Termo", "text": "Nota"}]}\n:::\n\n'
+            "# Epílogo: Fecho\n\n"
+            ':::chapter-art ep-art\n{"kicker": "EPÍLOGO", "src": "plate.jpg", "caption": "Legenda"}\n:::\n\n'
+            f"{prose_500}\n",
+            encoding="utf-8",
+        )
+        res_ok = cycle_artifacts.preflight_markdown(md_complete, book_profile=True)
+        self.assertEqual(res_ok["status"], "pass", res_ok["issues"])
+
+    def test_native_title_font_selection_detects_missing_glyphs(self):
+        try:
+            from scripts.pdf.render import NativeTitleBanner
+        except ImportError:
+            self.skipTest("PDF dependencies not installed")
+        _, missing_bad = NativeTitleBanner.select_font("頭文字 D", 72, candidates=("/nonexistent/font.ttf",))
+        self.assertIn("頭", missing_bad)
+        if Path("/System/Library/Fonts/Supplemental/Songti.ttc").is_file():
+            _, missing_ok = NativeTitleBanner.select_font("頭文字 D 新世紀エヴァンゲリオン 機動戦士ガンダム ゴジラ", 72)
+            self.assertEqual(missing_ok, [])
 
     def test_local_settings_are_loaded_without_mutating_environment(self):
         from scripts.checks import fetch_media

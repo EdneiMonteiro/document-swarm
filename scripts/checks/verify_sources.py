@@ -266,7 +266,13 @@ def verify(index: Path, output: Path, *, force: bool = False, cache_days: int = 
         "checked_at": checked_now(),
         "cache_days": cache_days,
         "results": results,
+        "sources": results,
         "counts": counts,
+        "summary": {**counts, "total": len(results)},
+        "ok": counts["ok"],
+        "redirect": counts["redirect"],
+        "warn": counts["warn"],
+        "fail": counts["fail"],
         "warnings": warnings,
     }
     write_json(output, report)

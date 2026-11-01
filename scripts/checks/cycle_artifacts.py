@@ -157,6 +157,7 @@ def preflight_markdown(
     target: Path,
     *,
     require_pdf_directives: bool = False,
+    book_profile: bool = False,
 ) -> dict[str, Any]:
     """Run sub-second preflight checks on a Markdown section or assembled document."""
     text = target.read_text(encoding="utf-8")
@@ -166,6 +167,8 @@ def preflight_markdown(
     directive_kind: str | None = None
     directive_line = 0
     directive_buf: list[str] = []
+    h1_units: list[dict[str, Any]] = []
+    current_unit: dict[str, Any] | None = None
 
     unsupported_glyphs = {
         "\u00b2": "^2",
@@ -361,6 +364,8 @@ def preflight_markdown(
             directive_kind = "chapter-art"
             directive_line = lineno
             directive_buf = []
+            if current_unit is not None:
+                current_unit["has_chapter_art"] = True
             continue
         elif stripped.startswith(":::figure"):
             directive_kind = "figure"
@@ -376,21 +381,29 @@ def preflight_markdown(
             directive_kind = "pullquote"
             directive_line = lineno
             directive_buf = []
+            if current_unit is not None:
+                current_unit["has_box"] = True
             continue
         elif stripped.startswith(":::callout"):
             directive_kind = "callout"
             directive_line = lineno
             directive_buf = []
+            if current_unit is not None:
+                current_unit["has_box"] = True
             continue
         elif stripped.startswith(":::factbox"):
             directive_kind = "factbox"
             directive_line = lineno
             directive_buf = []
+            if current_unit is not None:
+                current_unit["has_box"] = True
             continue
         elif stripped.startswith(":::footnote"):
             directive_kind = "footnote"
             directive_line = lineno
             directive_buf = []
+            if current_unit is not None:
+                current_unit["has_footnote"] = True
             continue
 
         if stripped.startswith("#"):
@@ -398,6 +411,22 @@ def preflight_markdown(
             if m_head:
                 h_level = len(m_head.group(1))
                 h_text = m_head.group(2).strip()
+                if h_level == 1:
+                    is_chapter = bool(re.match(r"^(?:\d+\.|Cap[íi]tulo\s+\d+\b)", h_text, re.I))
+                    is_narrative_unit = is_chapter or bool(
+                        re.match(r"^(?:Pr[óo]logo\b|Interl[úu]dio\b|Ep[íi]logo\b)", h_text, re.I)
+                    )
+                    current_unit = {
+                        "title": h_text,
+                        "line": lineno,
+                        "is_chapter": is_chapter,
+                        "is_narrative_unit": is_narrative_unit,
+                        "has_chapter_art": False,
+                        "has_footnote": False,
+                        "has_box": False,
+                        "words": 0,
+                    }
+                    h1_units.append(current_unit)
                 max_h_len = 90 if h_level == 1 else 105 if h_level == 2 else 120
                 if len(h_text) > max_h_len:
                     issues.append({
@@ -408,6 +437,8 @@ def preflight_markdown(
                             "write a concise editorial title instead of copying a long syllabus description"
                         ),
                     })
+        elif current_unit is not None and stripped and not stripped.startswith((":::", "|", "<!--")):
+            current_unit["words"] += len(stripped.split())
 
         if "`:::" in line:
             issues.append({
@@ -451,6 +482,43 @@ def preflight_markdown(
                 "code": "missing_cover_directives",
                 "line": 1,
                 "message": "PDF document is missing :::cover-art and :::pagebreak at the cover boundary (causes cover-body style leak and unembedded /F1 fonts)",
+            })
+
+    narrative_units = [u for u in h1_units if u["is_narrative_unit"]]
+    if book_profile and len(narrative_units) >= 3:
+        chapters = [u for u in narrative_units if u["is_chapter"]]
+        total_boxes = sum(1 for u in narrative_units if u["has_box"])
+        for unit in narrative_units:
+            if not unit["has_chapter_art"]:
+                issues.append({
+                    "code": "missing_chapter_art",
+                    "line": unit["line"],
+                    "message": f"book unit '{unit['title']}' is missing a dedicated :::chapter-art opening plate",
+                })
+            min_words = 900 if unit["is_chapter"] else 400
+            if unit["words"] < min_words:
+                issues.append({
+                    "code": "unit_word_count_low",
+                    "line": unit["line"],
+                    "message": (
+                        f"book unit '{unit['title']}' has {unit['words']} prose words "
+                        f"(minimum {min_words} required for book depth)"
+                    ),
+                })
+            if unit["is_chapter"] and not unit["has_footnote"]:
+                issues.append({
+                    "code": "missing_chapter_footnote",
+                    "line": unit["line"],
+                    "message": f"book chapter '{unit['title']}' is missing a :::footnote block",
+                })
+        if chapters and total_boxes < max(1, (len(chapters) + 1) // 2):
+            issues.append({
+                "code": "missing_chapter_box",
+                "line": chapters[0]["line"],
+                "message": (
+                    f"book has only {total_boxes} editorial box(es) across {len(chapters)} chapter(s); "
+                    f"at least {max(1, (len(chapters) + 1) // 2)} required (:::callout, :::pullquote, or :::factbox)"
+                ),
             })
 
     return {
@@ -642,7 +710,8 @@ def assemble(swarm: Path, cycle: int, *, from_sections: bool = False) -> dict[st
         isinstance(item, str) and item.lower().endswith(".pdf")
         for item in (brief.get("deliverables") or [])
     )
-    preflight = preflight_markdown(primary, require_pdf_directives=has_pdf)
+    is_book = str(brief.get("pdf_profile") or "").strip().lower() == "book" or str(brief.get("editorial_profile") or "").strip().lower() == "progressive-book"
+    preflight = preflight_markdown(primary, require_pdf_directives=has_pdf, book_profile=is_book)
     diff_payload = diff_cycles(root, cycle)
     return {
         "schema_version": 1,
