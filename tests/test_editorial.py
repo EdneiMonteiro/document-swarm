@@ -14,8 +14,10 @@ from pathlib import Path
 
 from scripts.checks import final_report, gate, progress, update_memory, verify_sources, verify_tables
 from scripts.checks.common import InputError, parse_yaml
+from scripts.checks.lint_agents import frontmatter_text
 from tests.test_checks import SourceHandler
 
+ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures" / "editorial"
 
 
@@ -578,4 +580,186 @@ class EditorialTests(unittest.TestCase):
         self.assertFalse((self.root / "reports" / "cycle-02-rubberduck.md").is_file())
         self.assertEqual(gate.evaluate_current(consolidated_c2, self.root)["outcome"], "approved")
 
+    def test_phase_zero_architecture_gate_and_false_compromise_rubric_are_materialized(self):
+        skill = (Path(__file__).resolve().parents[1] / "SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(skill.split())
+        for expected in (
+            "Author Decides Architecture",
+            "até 3 caminhos arquiteturais neutros",
+            "sem ranquear opções nem marcar `(Recomendado)`",
+            "não reapresente o mesmo gate em loop",
+            "Nenhum falso compromisso detectado",
+            "passivos operacionais secundários",
+        ):
+            self.assertIn(expected, normalized)
+        templates = {
+            parse_yaml(header)["kind"]: " ".join(body.split())
+            for header, body in re.findall(r"```markdown\s*\n---\n(.*?)\n---\n(.*?)\n```", skill, re.S)
+        }
+        self.assertIn("passivos operacionais secundários", templates["author"])
+        self.assertIn("Nenhum falso compromisso detectado", templates["reviewer"])
+        self.assertIn("Não aplique esta seção aos modos `magazine`, `book` ou `almanac`.", templates["reviewer"])
+        self.assertIn("até 3 caminhos arquiteturais", templates["coordinator"])
+        self.assertIn("violem o Passo 0", templates["rubber-duck"])
 
+    def test_false_compromise_calibration_enforces_step_zero_minor_bounds_and_secondary_liabilities(self):
+        reference = json.loads((FIXTURES / "false-compromise-calibration.json").read_text(encoding="utf-8"))
+        self.assertEqual(reference["profile"], "technical-report")
+        self.assertCountEqual(reference["excluded_modes"], ["magazine", "book", "almanac"])
+        self.assertEqual(reference["phase_zero_gate"]["max_options"], 3)
+        self.assertTrue(reference["phase_zero_gate"]["neutral_presentation"])
+        self.assertTrue(reference["phase_zero_gate"]["forbid_recommended_badge"])
+
+        by_id = {case["id"]: case for case in reference["cases"]}
+
+        # 1. Step 0 balanced case: approves at A; speculative over-engineering B+ is challenged by rubber-duck without silent grade edits.
+        balanced = by_id["balanced-monolith-step-zero"]
+        self.assertIn(reference["step_zero_sentinel"], balanced["expected_step_zero"])
+        data = self.cycle(1)
+        self.save(data)
+        self.assertEqual(gate.evaluate_current(data, self.root)["outcome"], "approved")
+        over = balanced["overengineering_review"]
+        contested = self.cycle(1)
+        contested["topics"][0].update(
+            nota_minima=over["grade"], revisor_da_minima=over["reviewer"], bloqueia=True,
+        )
+        contested["rubberduck"] = {
+            "critico": True,
+            "achados": [{"reviewer": over["reviewer"], "reason": over["rubberduck_challenge"]}],
+        }
+        self.save(contested, reviewer=False)
+        self.assertEqual(gate.evaluate(contested)["outcome"], "rejected")
+        self.assertEqual(contested["topics"][0]["nota_minima"], "B+", "rubber-duck challenges without rewriting reviewer grade")
+
+        # 2. Peripheral coupling is advisory (minor) and keeps A; attempting to block (< A) on minor-only fails closed.
+        peripheral = by_id["peripheral-export-coupling-minor"]
+        self.assertEqual((peripheral["expected_grade"], peripheral["expected_severity"]), ("A", "minor"))
+        self.assertTrue(peripheral["secondary_liabilities"].strip())
+        advisory = self.cycle(1)
+        advisory["editorial"]["findings"] = [{
+            "severity": "minor",
+            "location": "Exportação administrativa",
+            "quote": "Não altere produção sem essa validação.",
+            "reason": peripheral["expected_step_zero"],
+            "action": f"{peripheral['proposed_pattern']} ({peripheral['secondary_liabilities']})",
+        }]
+        self.save(advisory)
+        self.assertEqual(gate.evaluate_current(advisory, self.root)["outcome"], "approved")
+
+        # 3. Core false compromise blocks (B+) until resolved with explicit secondary operational liabilities (A).
+        core = by_id["core-throughput-durability-false-dilemma"]
+        self.assertEqual((core["before_grade"], core["before_severity"], core["after_grade"]), ("B+", "blocking", "A"))
+        self.assertLess(gate.GRADE_INDEX[core["incomplete_after_grade"]], gate.GRADE_INDEX["A"])
+        self.assertIn("passivos operacionais secundários", core["after"])
+        blocked_cycle = self.cycle(1)
+        blocked_cycle["topics"][0].update(nota_minima=core["before_grade"], bloqueia=True)
+        self.save(blocked_cycle, reviewer=False)
+        (self.root / "reports" / "cycle-01-reviewer-01-clarity.json").write_text(
+            json.dumps({
+                "schema_version": 1, "cycle": 1, "reviewer": "reviewer-01-clarity",
+                "topics": [{"topic": "T01", "grade": core["before_grade"],
+                            "justification": core["before_reason"], "action": core["proposed_pattern"]}],
+                "editorial": blocked_cycle["editorial"],
+            }, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        self.assertEqual(gate.evaluate_current(blocked_cycle, self.root)["outcome"], "rejected")
+
+    def test_goldfish_isolation_and_blind_paraphrase_materialized_in_skill_templates(self):
+        skill_text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        meta = frontmatter_text(skill_text)
+        self.assertEqual(meta.get("skill_version"), "4.1.0")
+        self.assertIn("comprehension_contract: goldfish-v1", skill_text)
+        self.assertIn("blind_paraphrase", skill_text)
+        self.assertIn("paraphrase_check", skill_text)
+        self.assertIn("reports/evidence/reader-context/", skill_text)
+        self.assertIn("chamada nova de `task`", skill_text)
+
+    def test_blind_paraphrase_rejects_verbatim_copy_and_blocks_unconnected_sections(self):
+        # 0. Any 4.1.0+ review automatically activates goldfish-v1 in gate.evaluate.
+        v41 = self.cycle(1)
+        v41["skill_version"] = "4.1.0"
+        with self.assertRaisesRegex(InputError, "blind_paraphrase"):
+            gate.evaluate(v41)
+
+        (self.root / "brief.md").write_text(
+            '---\nswarm_id: editorial-swarm\nskill_version: "3.5.0"\nmode: document\n'
+            "max_cycles: 3\nquality_contract: editorial-v1\ncomprehension_contract: goldfish-v1\n"
+            'audience: "Arquitetos de plataforma avaliando capacidade de AKS"\n'
+            "editorial_reviewer: reviewer-01-clarity\ndeliverables:\n  - output/document.md\n---\n"
+            "# Bastidores secretos: o time quer evitar criar clusters novos sem validação.\n",
+            encoding="utf-8",
+        )
+        brief = frontmatter_text((self.root / "brief.md").read_text(encoding="utf-8"))
+        brief_sha = hashlib.sha256((self.root / "brief.md").read_bytes()).hexdigest()
+
+        # 1. Missing blind_paraphrase under goldfish-v1 fails closed (InputError).
+        missing_bp = self.cycle(1)
+        missing_bp["comprehension_contract"] = "goldfish-v1"
+        self.save(missing_bp)
+        with self.assertRaisesRegex(InputError, "blind_paraphrase"):
+            gate.evaluate_current(missing_bp, self.root)
+
+        # 2. Verbatim substring (including stitched sentences) copied from the reviewed text is rejected.
+        verbatim = self.cycle(1)
+        verbatim["comprehension_contract"] = "goldfish-v1"
+        verbatim["editorial"]["blind_paraphrase"] = {
+            "central_thesis": "Os requests dos pods são comparados à capacidade alocável. Não altere produção sem essa validação.",
+            "how_parts_connect": "A abertura define o objeto técnico, o corpo relaciona consumo e reserva dos nós, e o fechamento condiciona mudanças operacionais.",
+            "unconnected_sections": [],
+        }
+        verbatim["rubberduck"]["paraphrase_check"] = {
+            "reviewer": "reviewer-01-clarity",
+            "brief_sha256": brief_sha,
+            "matches_brief": True,
+            "justification": "Confronto da paráfrase com o objetivo do brief.",
+        }
+        self.save(verbatim)
+        with self.assertRaisesRegex(InputError, "own words, not copied verbatim"):
+            gate.verify_editorial_artifacts(verbatim, self.root, brief)
+
+        # 3. Unconnected sections without a blocking finding/surface fail closed; with blocking finding they reject.
+        unconnected_invalid = copy.deepcopy(verbatim)
+        unconnected_invalid["editorial"]["blind_paraphrase"]["central_thesis"] = (
+            "O estudo avalia o dimensionamento dos pools de nós no AKS cruzando reservas solicitadas pelos workloads com o teto efetivo de cada nó."
+        )
+        unconnected_invalid["editorial"]["blind_paraphrase"]["unconnected_sections"] = ["Condições para adoção"]
+        self.save(unconnected_invalid)
+        with self.assertRaisesRegex(InputError, "unconnected_sections"):
+            gate.evaluate_current(unconnected_invalid, self.root)
+
+        unconnected_blocked = copy.deepcopy(unconnected_invalid)
+        unconnected_blocked["editorial"]["findings"] = [{
+            "severity": "blocking",
+            "location": "Condições para adoção",
+            "quote": "Não altere produção sem essa validação.",
+            "reason": "A transição entre a medição dos pods e a trava operacional depende de contexto ausente no texto.",
+            "action": "Explicitar qual validação conecta a medição de requests à liberação em produção.",
+        }]
+        self.save(unconnected_blocked)
+        res_unconnected = gate.evaluate_current(unconnected_blocked, self.root)
+        self.assertEqual(res_unconnected["outcome"], "rejected")
+        self.assertIn("blind_paraphrase:Condições para adoção", {b["name"] for b in res_unconnected["blocked"]})
+
+        # 4. Rubber-duck mismatch must set critico=True and blocks approval.
+        mismatch = copy.deepcopy(unconnected_invalid)
+        mismatch["editorial"]["blind_paraphrase"]["unconnected_sections"] = []
+        mismatch["rubberduck"]["paraphrase_check"]["matches_brief"] = False
+        self.save(mismatch)
+        with self.assertRaisesRegex(InputError, "critico/critical=true"):
+            gate.evaluate_current(mismatch, self.root)
+
+        mismatch["rubberduck"]["critico"] = True
+        mismatch["rubberduck"]["achados"] = [{"reviewer": "reviewer-01-clarity", "reason": "Tese compreendida diverge do brief."}]
+        self.save(mismatch)
+        res_mismatch = gate.evaluate_current(mismatch, self.root)
+        self.assertEqual(res_mismatch["outcome"], "rejected")
+        self.assertIn("blind_paraphrase_mismatch", {b["name"] for b in res_mismatch["blocked"]})
+
+        # 5. Cohesive own-word blind_paraphrase aligned with brief.md passes the gate.
+        aligned = copy.deepcopy(mismatch)
+        aligned["rubberduck"]["critico"] = False
+        aligned["rubberduck"]["achados"] = []
+        aligned["rubberduck"]["paraphrase_check"]["matches_brief"] = True
+        self.save(aligned)
+        self.assertEqual(gate.evaluate_current(aligned, self.root)["outcome"], "approved")

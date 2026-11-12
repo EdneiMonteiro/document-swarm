@@ -156,6 +156,11 @@ def render(swarm: Path) -> str:
                   f"- Open blockers: {factual['open_findings']}; independent audit: {factual['audit']}",
                   f"- Diagnosis required: {factual['diagnosis_required']}",
                   "- These are verified bindings and declared coverage, not an automated judgment of truth."]
+        if factual.get("special_resolutions"):
+            lines.append("- Contested / escalated resolutions recorded:")
+            for item in factual["special_resolutions"]:
+                detail = f" ({item.get('decision_state')}/{item.get('effect', 'pending')})" if item["status"] == "escalate" else ""
+                lines.append(f"  - `{item['finding']}`: `{item['status']}`{detail} via `{item['reviewer']}`")
     if isinstance(editorial, dict):
         lines += [
             "", "### Final editorial review",

@@ -88,6 +88,25 @@ changes it must:
 - Nomenclature inspection is lexical only: preserve source line locations, avoid
   source edits, exclude declared non-prose spans, and never infer meanings or
   turn zero candidates into editorial approval.
+- Phase 0 separates single-answer mechanical defaults from open prescriptive
+  architectural forks (`Author Decides Architecture`): present up to three
+  neutral architectural paths via `ask_user` without marking a favorite, and
+  convert them into formal compared alternatives (instead of looping) when the
+  human delegates the choice.
+- False-compromise review in `reviewer-*-decision` (`technical-report`/`textbook`
+  only) must enforce Step 0 (`"Nenhum falso compromisso detectado"` when the
+  architecture is already balanced or constrained by real invariants) and state
+  secondary operational liabilities alongside any pattern recommendation; see
+  `tests/fixtures/editorial/false-compromise-calibration.json`.
+- Starting in `4.1.0` (`comprehension_contract: goldfish-v1`), `evidence.py freeze`
+  writes a sanitized `reader-context` manifest (single-line audience, profile,
+  concise topic labels, and frozen deliverable hashes, excluding `brief.md`
+  prose), `editorial_reviewer` is dispatched via a fresh `task` call without
+  `brief.md` and records `editorial.blind_paraphrase` in its own words (verbatim
+  substrings from the reviewed text are rejected), and `rubber-duck` records
+  `paraphrase_check` against `brief.md` (`matches_brief: false` requires
+  `critical: true` and blocks approval). Historical `3.x` and `4.0.0` reviews
+  retain their original candidate hashes and validation semantics.
 
 See the [editorial review format](./docs/editorial-review.md).
 
@@ -102,7 +121,13 @@ See the [editorial review format](./docs/editorial-review.md).
 - Inventory the whole document, including headings, openings, captions and
   tables. Reviewers check classification, source support and all occurrences.
 - Keep blockers open until an owner/auditor records a current family-wide
-  reassessment. An old A does not immunize unchanged text.
+  reassessment (`fixed`), an auditor-upheld `contested` resolution backed by
+  verified candidate/corpus line citations (never `"foi intencional"` / `"this
+  was intentional"`, and never against `editorial_reviewer` comprehension gaps),
+  or an explicit `escalate` user decision via `ask_user` (`update_document` or
+  auditor-confirmed `waive_finding`, never waiving unsupported factual claims).
+  An old A does not immunize unchanged text, and original reviewer files are
+  never mutated.
 - Default to 10 cycles, respect explicit ceilings, count review cycles rather
   than renders and diagnose two consecutive rounds without verified progress.
 - Run `python3 -m unittest tests.test_evidence -v`. Annotated factual judgments

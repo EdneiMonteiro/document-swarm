@@ -10,9 +10,11 @@ substitui `editorial-v1`, os contratos de PDF/apresentação ou julgamento human
 Crie o brief e as declarações dos agentes existentes antes de registrar:
 
 ```yaml
-skill_version: "4.0.0"
+skill_version: "4.1.0"
 quality_contract: editorial-v1
+comprehension_contract: goldfish-v1
 evidence_contract: evidence-v1
+audience: "Engenheiros de plataforma e líderes técnicos sem contexto prévio dos bastidores"
 max_cycles: 10
 factual_reviewer: reviewer-01-facts
 editorial_reviewer: reviewer-02-clarity
@@ -177,7 +179,12 @@ O julgamento compara sujeito, direção, condições e resultado; um trecho pres
 na fonte não prova por si só que sustenta a afirmação.
 
 O editorial acrescenta o bloco `editorial` existente, já com hashes da candidata
-examinada. O consolidado não injeta hashes novos num parecer antigo.
+examinada. Na `4.1.0` (`comprehension_contract: goldfish-v1`), `evidence.py freeze`
+também gera o manifesto sanitizado `reports/evidence/reader-context/<composition_id>-c<NN>.json`
+(sem a prosa de bastidores do `brief.md`), `evidence.py dispatch` marca o
+`editorial_reviewer` com `isolation: goldfish-v1` e `fresh_task_required: true`,
+e o bloco `editorial` inclui `blind_paraphrase` vinculada ao hash exato de
+`reader_context` e escrita nas palavras do próprio revisor. O consolidado não injeta hashes novos num parecer antigo.
 
 ```bash
 python3 scripts/checks/evidence.py review <swarm> \
@@ -189,8 +196,11 @@ python3 scripts/checks/cycle_artifacts.py consolidate <swarm> \
 Sem auditor independente, a candidata continua `audit_pending`. Depois dos
 pareceres, registre despacho e resposta do `evidence_auditor`. Seu JSON inclui
 os campos comuns, `critical` booleano, `inventory_complete: true`,
-`reviewed_reviewers` na ordem do brief e `review_artifacts` com path/sha256
-dos originais. Não precisa de `topics`: audita as justificativas, cobertura e
+`reviewed_reviewers` na ordem do brief, `review_artifacts` com path/sha256
+dos originais e, sob `goldfish-v1`, `paraphrase_check` (`reviewer`,
+`brief_sha256`, `matches_brief`, `justification`) confrontando a paráfrase às
+cegas do `editorial_reviewer` contra o `brief.md` atual (`matches_brief: false`
+exige `critical: true` e achado `blocking`, bloqueando a entrega). Não precisa de `topics`: audita as justificativas, cobertura e
 achados, sem substituir as notas dos revisores.
 
 Reconsolide após registrar o auditor. O JSON e o manifesto original não são
@@ -212,12 +222,39 @@ Descobrir um defeito antigo pode reabrir A; não exige editar artificialmente o
 trecho. Para relatórios legados, a causa `newly_discovered_defect` em `regression`
 registra trecho, evidência e motivo da descoberta.
 
-Somente o responsável ou auditor pode registrar resolução. O JSON tem
-`candidate_id`, `finding`, `reviewer`, `correction`, `reassessment`,
-`family_inspection`, `occurrences` (ocorrências e IDs de blocos do inventário atual) e
-`previous_occurrences` (todas as anteriormente afetadas). Reavaliação factual
-atual deve sustentar os fatos e aceitar classificações; o resolutor não pode
-continuar registrando o mesmo achado ou veto crítico.
+Somente o responsável ou auditor pode registrar resolução (`status: "fixed"` por
+padrão). Para `fixed`, o JSON tem `candidate_id`, `finding`, `reviewer`,
+`correction`, `reassessment`, `family_inspection`, `occurrences` (ocorrências e
+IDs de blocos do inventário atual) e `previous_occurrences` (todas as
+anteriormente afetadas). Reavaliação factual atual deve sustentar os fatos e
+aceitar classificações; o resolutor não pode continuar registrando o mesmo
+achado ou veto crítico.
+
+Na versão `4.1.0`, `evidence.py resolution` também suporta dois fluxos formais
+de arbitragem que preservam intactos os pareceres originais dos revisores:
+
+- **`status: "contested"` (crítica incorreta refutada por evidência legível):**
+  exige `reviewer` igual ao `evidence_auditor` (`rubber-duck`), `rationale`
+  (`>= 30` caracteres; alegações de intenção como `"foi intencional"` / `"this
+  was intentional"` são recusadas com `exit 3`), `citations` verificadas linha a
+  linha contra `cand["text"]` (`target: "candidate"`) ou `cand["sources"]`
+  (`target: "<source_id>"`, obrigatório ao contestar `factual_reviewer`), e
+  entrada correspondente em `contest_rulings` (`verdict: "upheld"`) no JSON do
+  auditor. Lacunas de clareza/compreensão do `editorial_reviewer` nunca podem
+  ser contestadas (`exit 3`). Quando todos os achados bloqueantes daquele
+  revisor forem revertidos e os demais revisores atribuírem `>= A`, os
+  `overturned_topics` geram `contested_override` auditável no YAML consolidado e
+  no `final-report.md`.
+- **`status: "escalate"` (decisão de negócio ou convenção fora do corpus):**
+  inicia com `decision_state: "pending_user"` (`missing_decision` e
+  `ask_user_question`), mantendo o bloqueio explícito `escalate_pending:<id>`
+  até que o coordenador consulte o humano via `ask_user`. Após a resposta,
+  registra `decision_state: "decided"` com `user_decision` e
+  `effect: "update_document"` (contabilizado em `decided_escalations` para não
+  disparar `diagnosis_required` espúrio enquanto a próxima candidata incorpora a
+  decisão) ou `effect: "waive_finding"` (confirmado pelo `rubber-duck` em
+  `escalation_rulings` com `verdict: "accepted_out_of_band"`, proibido quando
+  houver afirmação factual não sustentada pelas fontes).
 
 ```bash
 python3 scripts/checks/evidence.py resolution <swarm> \

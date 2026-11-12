@@ -22,6 +22,10 @@ CONTRACT = "evidence-v1"
 VERSION = 1
 KINDS = ("candidate", "inventory", "dispatch", "review", "resolution",
          "cycle", "diagnosis", "extension")
+INTENT_EXCUSE_RE = re.compile(
+    r"\b(?:foi intencional|era intencional|this was intentional|was intentional)\b",
+    re.IGNORECASE,
+)
 SCHEMA = """
 CREATE TABLE events (
     seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, identity TEXT NOT NULL,
@@ -221,7 +225,59 @@ def export(root: Path) -> dict[str, Any]:
     return payload
 
 
+def build_reader_context(
+    root: Path,
+    brief: dict[str, Any],
+    cycle: int,
+    composition: str,
+    text_desc: dict[str, str],
+    artifacts: list[dict[str, str]],
+) -> dict[str, Any]:
+    from scripts.checks.cycle_artifacts import topic_map
+    from scripts.checks.gate import COMPREHENSION_CONTRACT
+    audience_raw = brief.get("audience") if "audience" in brief else brief.get("publico")
+    if audience_raw is not None:
+        if (
+            not isinstance(audience_raw, str)
+            or not audience_raw.strip()
+            or "\n" in audience_raw
+            or "\r" in audience_raw
+            or len(audience_raw.strip()) > 240
+        ):
+            raise InputError("brief audience for goldfish reader_context must be a single line up to 240 characters")
+        audience = audience_raw.strip()
+    else:
+        audience = "Leitor do perfil editorial declarado, sem contexto prévio dos bastidores"
+    topics = []
+    for idx, (tid, label) in enumerate(topic_map(brief).items(), 1):
+        if "\n" in label or "\r" in label or len(label.strip()) > 140:
+            raise InputError(f"topic label for {tid} must be a single concise line (<= 140 chars) under goldfish-v1")
+        topics.append({"id": tid, "ordinal": idx, "label": label.strip()})
+    payload: dict[str, Any] = {
+        "schema_version": VERSION,
+        "comprehension_contract": COMPREHENSION_CONTRACT,
+        "review_cycle": cycle,
+        "composition_id": composition,
+        "mode": str(brief.get("mode", "document")),
+        "artifact_type": str(brief.get("artifact_type", "document")),
+        "editorial_profile": str(brief.get("editorial_profile") or "principal-cloud-solution-architect"),
+        "audience": audience,
+        "topics": topics,
+        "text": text_desc,
+        "deliverables": artifacts,
+        "forbidden_paths": [
+            "brief.md",
+            "reports/evidence-policy.json",
+            "sources/sources-index.md",
+        ],
+    }
+    if isinstance(brief.get("pdf_profile"), str) and brief["pdf_profile"].strip():
+        payload["pdf_profile"] = brief["pdf_profile"].strip()
+    return payload
+
+
 def initialize(swarm: Path) -> dict[str, Any]:
+    from scripts.checks.gate import COMPREHENSION_CONTRACT, requires_goldfish
     root = swarm.resolve(strict=True)
     brief = brief_data(root)
     if brief.get("evidence_contract") != CONTRACT:
@@ -234,6 +290,12 @@ def initialize(swarm: Path) -> dict[str, Any]:
     auditor = nonempty(brief.get("evidence_auditor"), "evidence_auditor")
     if factual not in reviewers or auditor in reviewers:
         raise InputError("factual reviewer must be assigned; auditor must be independent")
+    goldfish = requires_goldfish(brief)
+    editorial_rev = None
+    if goldfish:
+        editorial_rev = nonempty(brief.get("editorial_reviewer"), "editorial_reviewer")
+        if editorial_rev not in reviewers or editorial_rev == factual:
+            raise InputError("editorial_reviewer under goldfish-v1 must be an assigned form reviewer distinct from factual_reviewer")
     agent_files = {}
     for path in sorted((root / "agents").rglob("*.md")):
         meta = frontmatter_text(file_bytes(root, path.relative_to(root).as_posix()).decode("utf-8"))
@@ -254,6 +316,9 @@ def initialize(swarm: Path) -> dict[str, Any]:
               "reviewers": reviewers, "factual_reviewer": factual, "auditor": auditor,
               "agents": agent_files, "deliverables": brief.get("deliverables"),
               "adopted_brief": descriptor(root, "brief.md")}
+    if goldfish:
+        policy["comprehension_contract"] = COMPREHENSION_CONTRACT
+        policy["editorial_reviewer"] = editorial_rev
     if not isinstance(policy["deliverables"], list) or not policy["deliverables"]:
         raise InputError("brief must list final deliverables")
     for name in policy["deliverables"]:
@@ -299,6 +364,14 @@ def verify_policy(root: Path, policy: dict[str, Any]) -> None:
                           ("evidence_auditor", policy["auditor"])):
         if brief.get(key) != expected:
             raise InputError(f"brief {key} differs from recorded policy")
+    from scripts.checks.gate import COMPREHENSION_CONTRACT, requires_goldfish
+    if policy.get("comprehension_contract") == COMPREHENSION_CONTRACT:
+        if not requires_goldfish(brief):
+            raise InputError("adopted goldfish-v1 comprehension contract cannot be removed from the brief")
+        if brief.get("editorial_reviewer") != policy.get("editorial_reviewer"):
+            raise InputError("brief editorial_reviewer differs from recorded policy")
+    elif brief.get("comprehension_contract") is not None:
+        raise InputError("brief comprehension_contract differs from recorded policy")
     deliverables = brief.get("deliverables")
     if (not isinstance(deliverables, list) or not all(isinstance(p, str) for p in deliverables)
             or sorted(PurePosixPath(p).suffix for p in deliverables) !=
@@ -324,9 +397,19 @@ def candidate(history: list[dict[str, Any]], key: str) -> dict[str, Any]:
 
 
 def verify_candidate(root: Path, data: dict[str, Any]) -> None:
+    from scripts.checks.gate import COMPREHENSION_CONTRACT
     for item in [data["source"], data["text"], *data["artifacts"],
                  *[s["artifact"] for s in data["sources"]], *data["bundles"]]:
         checked(root, item)
+    if "reader_context" in data:
+        rc_obj = object_file(root, data["reader_context"])
+        if (
+            rc_obj.get("comprehension_contract") != COMPREHENSION_CONTRACT
+            or rc_obj.get("text") != data["text"]
+            or rc_obj.get("deliverables") != data["artifacts"]
+            or "brief.md" not in rc_obj.get("forbidden_paths", [])
+        ):
+            raise InputError("candidate reader_context is invalid or out of sync with frozen artifacts")
     checked(root, data["manifest"])
     reviewed = " ".join(checked(root, data["text"]).decode("utf-8").split())
     pdfs = [a for a in data["artifacts"] if a["path"].lower().endswith(".pdf")]
@@ -417,12 +500,24 @@ def freeze(swarm: Path, spec: dict[str, Any]) -> dict[str, Any]:
                 raise InputError(f"duplicate source id: {sid}")
             seen.add(sid)
             sources.append({"id": sid, "artifact": descriptor(root, source["path"])})
+        text_desc = descriptor(root, spec["text"])
         data = {"schema_version": VERSION, "evidence_contract": CONTRACT,
                 "review_cycle": cycle, "composition_id": composition,
-                "source": descriptor(root, spec["source"]), "text": descriptor(root, spec["text"]),
+                "source": descriptor(root, spec["source"]), "text": text_desc,
                 "artifacts": artifacts, "sources": sources,
                 "bundles": [descriptor(root, name) for name in sorted(bundle_names)],
                 "policy_sha256": digest(policy)}
+        from scripts.checks.gate import COMPREHENSION_CONTRACT
+        if policy.get("comprehension_contract") == COMPREHENSION_CONTRACT:
+            rc_payload = build_reader_context(root, brief_data(root), cycle, composition, text_desc, artifacts)
+            rc_rel = f"reports/evidence/reader-context/{composition}-c{cycle:02d}.json"
+            rc_path = inside(root, rc_rel)
+            if rc_path.exists():
+                if json.loads(file_bytes(root, rc_rel)) != rc_payload:
+                    raise InputError("immutable reader context altered")
+            else:
+                write_json_atomic(rc_path, rc_payload)
+            data["reader_context"] = descriptor(root, rc_rel)
         if presentation:
             data["presentation"] = presentation
         key = digest(data)
@@ -437,7 +532,10 @@ def freeze(swarm: Path, spec: dict[str, Any]) -> dict[str, Any]:
         verify_candidate(root, data)
         seq = append(db, history, "candidate", key, data)
         db.execute("INSERT OR IGNORE INTO candidates VALUES (?,?,?,?)", (key, cycle, composition, seq))
-        for item in [data["source"], data["text"], *artifacts, *data["bundles"]]:
+        candidate_items = [data["source"], data["text"], *artifacts, *data["bundles"]]
+        if "reader_context" in data:
+            candidate_items.append(data["reader_context"])
+        for item in candidate_items:
             db.execute("INSERT OR IGNORE INTO artifacts VALUES (?,?,?)", (key, item["path"], item["sha256"]))
         for source in sources:
             db.execute("INSERT OR IGNORE INTO sources VALUES (?,?,?,?)",
@@ -451,6 +549,34 @@ def span(lines: list[str], data: dict[str, Any], label: str) -> set[int]:
     if end < start or end > len(lines) or data.get("quote") != "\n".join(lines[start - 1:end]):
         raise InputError(f"{label} quote/location differs from candidate text: {start}-{end}")
     return set(range(start, end + 1))
+
+
+def verify_citations(
+    root: Path,
+    cand: dict[str, Any],
+    citations: Any,
+    *,
+    require_source: bool = False,
+) -> None:
+    if not isinstance(citations, list) or not citations or len(citations) > 20:
+        raise InputError("contested resolution requires between 1 and 20 verifiable citations")
+    cand_lines = checked(root, cand["text"]).decode("utf-8").splitlines()
+    sources = {s["id"]: s for s in cand["sources"]}
+    has_source_citation = False
+    for index, cit in enumerate(citations, 1):
+        if not isinstance(cit, dict) or set(cit) != {"target", "start", "end", "quote"}:
+            raise InputError(f"contest citation[{index}] requires target, start, end, and quote")
+        target = identifier(cit.get("target"), f"citation[{index}].target")
+        if target == "candidate":
+            span(cand_lines, cit, f"contest candidate citation[{index}]")
+        else:
+            if target not in sources:
+                raise InputError(f"contest citation[{index}] references unknown source: {target}")
+            source_lines = checked(root, sources[target]["artifact"]).decode("utf-8").splitlines()
+            span(source_lines, cit, f"contest source citation[{index}] ({target})")
+            has_source_citation = True
+    if require_source and not has_source_citation:
+        raise InputError("contesting a factual reviewer finding requires at least one verifiable corpus source citation")
 
 
 def validate_inventory(root: Path, cand: dict[str, Any], data: dict[str, Any]) -> None:
@@ -542,6 +668,12 @@ def validate_report(root: Path, cand: dict[str, Any], inventory: dict[str, Any],
         positions = finding.get("occurrences")
         if not isinstance(positions, list) or not positions or not set(positions) <= all_occurrences:
             raise InputError("finding must enumerate valid affected occurrences")
+    from scripts.checks.gate import (
+        COMPREHENSION_CONTRACT,
+        reject_verbatim_paraphrase,
+        validate_blind_paraphrase,
+    )
+    goldfish = policy.get("comprehension_contract") == COMPREHENSION_CONTRACT
     if reviewer == policy["auditor"]:
         if type(data.get("critical")) is not bool:
             raise InputError("independent audit requires a boolean critical")
@@ -551,6 +683,49 @@ def validate_report(root: Path, cand: dict[str, Any], inventory: dict[str, Any],
             raise InputError("independent auditor must inspect every assigned review")
         if data.get("inventory_complete") is not True:
             raise InputError("auditor must assess full-document inventory completeness")
+        if goldfish or "paraphrase_check" in data:
+            pcheck = data.get("paraphrase_check")
+            if not isinstance(pcheck, dict):
+                raise InputError("independent auditor requires paraphrase_check under goldfish-v1")
+            if pcheck.get("reviewer") != policy.get("editorial_reviewer"):
+                raise InputError("paraphrase_check.reviewer must match policy editorial_reviewer")
+            if pcheck.get("brief_sha256") != descriptor(root, "brief.md")["sha256"]:
+                raise InputError("paraphrase_check.brief_sha256 differs from current brief.md")
+            if type(pcheck.get("matches_brief")) is not bool:
+                raise InputError("paraphrase_check.matches_brief must be boolean")
+            nonempty(pcheck.get("justification"), "paraphrase_check.justification")
+            if not pcheck["matches_brief"] and (
+                not data["critical"] or not any(f["severity"] == "blocking" for f in findings)
+            ):
+                raise InputError("blind paraphrase mismatch with brief.md must set critical=true and record a blocking finding")
+        seen_contest = set()
+        for ruling in data.get("contest_rulings", []):
+            fid = ruling["finding"]
+            if fid in seen_contest:
+                raise InputError(f"duplicate contest_rulings entry for {fid}")
+            seen_contest.add(fid)
+            if ruling["target_reviewer"] not in policy["reviewers"]:
+                raise InputError(f"contest_rulings references unassigned reviewer: {ruling['target_reviewer']}")
+            if ruling["verdict"] == "upheld" and ruling["target_reviewer"] == policy.get("editorial_reviewer"):
+                raise InputError("comprehension or clarity findings from editorial_reviewer cannot be contested")
+            if INTENT_EXCUSE_RE.search(ruling["justification"]):
+                raise InputError("author intent ('foi intencional' / 'this was intentional') is never valid contest evidence")
+            verify_citations(
+                root,
+                cand,
+                ruling["citations"],
+                require_source=(ruling["verdict"] == "upheld" and ruling["target_reviewer"] == policy["factual_reviewer"]),
+            )
+        seen_escalation = set()
+        for ruling in data.get("escalation_rulings", []):
+            fid = ruling["finding"]
+            if fid in seen_escalation:
+                raise InputError(f"duplicate escalation_rulings entry for {fid}")
+            seen_escalation.add(fid)
+            if ruling["target_reviewer"] not in policy["reviewers"]:
+                raise InputError(f"escalation_rulings references unassigned reviewer: {ruling['target_reviewer']}")
+            if INTENT_EXCUSE_RE.search(ruling["justification"]):
+                raise InputError("author intent ('foi intencional' / 'this was intentional') is never valid escalation justification")
         return
     rows = data.get("topics")
     if not isinstance(rows, list) or not rows:
@@ -569,6 +744,21 @@ def validate_report(root: Path, cand: dict[str, Any], inventory: dict[str, Any],
                 any(f["severity"] == "blocking" for f in findings)
                 or any(f.get("severity") == "blocking" for f in data.get("editorial", {}).get("findings", []))):
             raise InputError("blocking topic must identify a material finding, not just lower its grade")
+    if goldfish and reviewer == policy.get("editorial_reviewer"):
+        editorial = data.get("editorial")
+        if not isinstance(editorial, dict):
+            raise InputError("editorial reviewer under goldfish-v1 must include structured editorial review")
+        paraphrase_blocked = validate_blind_paraphrase(editorial, reviewer, required=True)
+        paraphrase = editorial["blind_paraphrase"]
+        if paraphrase.get("reader_context") != cand.get("reader_context"):
+            raise InputError("editorial blind_paraphrase must bind the exact frozen reader_context")
+        reviewed_source = " ".join(checked(root, cand["text"]).decode("utf-8").split())
+        reject_verbatim_paraphrase(paraphrase, reviewed_source)
+        if paraphrase_blocked and not (
+            any(f["severity"] == "blocking" for f in findings)
+            or any(f.get("severity") == "blocking" for f in editorial.get("findings", []))
+        ):
+            raise InputError("unconnected_sections in blind_paraphrase requires a blocking finding")
     if reviewer != policy["factual_reviewer"]:
         return
     if data.get("inventory_complete") is not True:
@@ -626,6 +816,19 @@ def register(swarm: Path, kind: str, key: str, path: str | None = None,
                     find(history, "review", f"{key}:{name}")
             payload = {"candidate_id": key, "reviewer": reviewer,
                        "agent": policy["agents"][reviewer]}
+            from scripts.checks.gate import COMPREHENSION_CONTRACT
+            if policy.get("comprehension_contract") == COMPREHENSION_CONTRACT:
+                if reviewer == policy.get("editorial_reviewer"):
+                    payload["isolation"] = COMPREHENSION_CONTRACT
+                    payload["fresh_task_required"] = True
+                    payload["reader_context"] = cand["reader_context"]
+                    payload["forbidden_paths"] = [
+                        "brief.md",
+                        "reports/evidence-policy.json",
+                        "sources/sources-index.md",
+                    ]
+                else:
+                    payload["isolation"] = "full_brief"
             event_id = f"{key}:{reviewer}"
         else:
             src_artifact = descriptor(root, nonempty(path, "record path"))
@@ -654,8 +857,7 @@ def register(swarm: Path, kind: str, key: str, path: str | None = None,
                         raise InputError("auditor must bind the actual original reviewer files")
                 event_id = f"{key}:{reviewer}"
             else:
-                event_id = f"{key}:{identifier(data.get('finding'), 'finding')}"
-                verify_resolution(history, key, data, policy)
+                event_id = verify_resolution(root, history, key, data, policy)
             payload = {"artifact": artifact, "record": data}
         seq = append(db, history, kind, event_id, payload)
         if kind == "inventory":
@@ -672,6 +874,15 @@ def register(swarm: Path, kind: str, key: str, path: str | None = None,
     return payload
 
 
+def resolution_closes_finding(record: dict[str, Any]) -> bool:
+    status = record.get("status", "fixed")
+    if status in {"fixed", "contested"}:
+        return True
+    if status == "escalate":
+        return record.get("decision_state") == "decided" and record.get("effect") == "waive_finding"
+    return False
+
+
 def open_findings(history: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     findings = {}
     for row in history:
@@ -686,36 +897,289 @@ def open_findings(history: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
                         "occurrences": sorted(set(item["occurrences"]) | set(previous["occurrences"] if previous else [])),
                     }
         elif row["kind"] == "resolution":
-            findings.pop(row["data"]["record"]["finding"], None)
+            record = row["data"]["record"]
+            if resolution_closes_finding(record):
+                findings.pop(record["finding"], None)
     return findings
 
 
-def verify_resolution(history: list[dict[str, Any]], key: str, data: dict[str, Any],
-                      policy: dict[str, Any]) -> None:
-    finding = open_findings(history).get(data.get("finding"))
+def pending_escalations(history: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    pending: dict[str, dict[str, Any]] = {}
+    for row in history:
+        if row["kind"] != "resolution":
+            continue
+        record = row["data"]["record"]
+        fid = record["finding"]
+        status = record.get("status", "fixed")
+        if status == "escalate" and record.get("decision_state") == "pending_user":
+            pending[fid] = record
+        elif status == "escalate" and record.get("decision_state") == "decided":
+            pending.pop(fid, None)
+        elif resolution_closes_finding(record):
+            pending.pop(fid, None)
+    return pending
+
+
+def special_resolutions(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for row in history:
+        if row["kind"] != "resolution":
+            continue
+        rec = row["data"]["record"]
+        status = rec.get("status", "fixed")
+        if status in {"contested", "escalate"}:
+            entry: dict[str, Any] = {
+                "finding": rec["finding"],
+                "status": status,
+                "candidate_id": rec["candidate_id"],
+                "reviewer": rec.get("reviewer", ""),
+            }
+            if status == "escalate":
+                entry["decision_state"] = rec.get("decision_state", "")
+                if "effect" in rec:
+                    entry["effect"] = rec["effect"]
+            items.append(entry)
+    return items
+
+
+def verify_resolution(
+    root: Path,
+    history: list[dict[str, Any]],
+    key: str,
+    data: dict[str, Any],
+    policy: dict[str, Any],
+) -> str:
+    finding_id = identifier(data.get("finding"), "finding")
+    finding = open_findings(history).get(finding_id)
     if not finding:
         raise InputError("resolution requires an open blocking finding")
-    if data.get("reviewer") not in {finding["reviewer"], policy["auditor"]}:
-        raise InputError("only finding owner or independent auditor may resolve it")
-    for label in ("correction", "reassessment", "family_inspection"):
-        nonempty(data.get(label), label)
-    record = find(history, "review", f"{key}:{data['reviewer']}")["record"]
-    if any(item["id"] == data["finding"] for item in record["evidence_findings"]):
-        raise InputError("current reassessment still reports the finding")
-    factual = find(history, "review", f"{key}:{policy['factual_reviewer']}")["record"]
-    if any(a["conclusion"] != "supported" for a in factual["assessments"]) or any(
-            not b["accepted"] for b in factual["block_checks"]):
-        raise InputError("family cannot close while current factual reassessment still rejects evidence")
-    if record.get("critical"):
-        raise InputError("family cannot close while independent auditor still records a veto")
-    inventory = find(history, "inventory", key)["record"]
-    occurrences = ({o["id"] for c in inventory["claims"] for o in c["occurrences"]}
-                   | {b["id"] for b in inventory["blocks"]})
-    checked_occurrences = data.get("occurrences")
-    if not isinstance(checked_occurrences, list) or set(checked_occurrences) != occurrences:
-        raise InputError("family resolution must enumerate the whole current occurrence inventory")
-    if not set(data.get("previous_occurrences", [])) >= set(finding["occurrences"]):
-        raise InputError("resolution must account for every previously affected occurrence")
+    status = data.get("status", "fixed")
+    if status not in {"fixed", "contested", "escalate"}:
+        raise InputError("resolution status must be fixed, contested or escalate")
+
+    if status == "fixed":
+        if data.get("reviewer") not in {finding["reviewer"], policy["auditor"]}:
+            raise InputError("only finding owner or independent auditor may resolve it")
+        for label in ("correction", "reassessment", "family_inspection"):
+            nonempty(data.get(label), label)
+        record = find(history, "review", f"{key}:{data['reviewer']}")["record"]
+        if any(item["id"] == finding_id for item in record["evidence_findings"]):
+            raise InputError("current reassessment still reports the finding")
+        factual = find(history, "review", f"{key}:{policy['factual_reviewer']}")["record"]
+        if any(a["conclusion"] != "supported" for a in factual["assessments"]) or any(
+                not b["accepted"] for b in factual["block_checks"]):
+            raise InputError("family cannot close while current factual reassessment still rejects evidence")
+        if record.get("critical"):
+            raise InputError("family cannot close while independent auditor still records a veto")
+        inventory = find(history, "inventory", key)["record"]
+        occurrences = ({o["id"] for c in inventory["claims"] for o in c["occurrences"]}
+                       | {b["id"] for b in inventory["blocks"]})
+        checked_occurrences = data.get("occurrences")
+        if not isinstance(checked_occurrences, list) or set(checked_occurrences) != occurrences:
+            raise InputError("family resolution must enumerate the whole current occurrence inventory")
+        if not set(data.get("previous_occurrences", [])) >= set(finding["occurrences"]):
+            raise InputError("resolution must account for every previously affected occurrence")
+        return f"{key}:{finding_id}"
+
+    if status == "contested":
+        if finding["reviewer"] == policy.get("editorial_reviewer"):
+            raise InputError(
+                "comprehension or clarity findings from editorial_reviewer cannot be contested; clarify the text or use escalate"
+            )
+        if data.get("reviewer") != policy["auditor"]:
+            raise InputError("contested resolution must be adjudicated by the independent auditor")
+        rationale = nonempty(data.get("rationale"), "rationale")
+        if len(rationale.strip()) < 30:
+            raise InputError("contested rationale must be at least 30 characters")
+        if INTENT_EXCUSE_RE.search(rationale):
+            raise InputError(
+                "author intent ('foi intencional' / 'this was intentional') is never valid contest evidence; cite verifiable text or source lines"
+            )
+        cand = candidate(history, key)
+        verify_citations(
+            root,
+            cand,
+            data.get("citations"),
+            require_source=(finding["reviewer"] == policy["factual_reviewer"]),
+        )
+        audit_record = find(history, "review", f"{key}:{policy['auditor']}")["record"]
+        if audit_record.get("critical") or any(item["id"] == finding_id for item in audit_record["evidence_findings"]):
+            raise InputError("contested resolution cannot close while independent auditor records a veto or repeats the finding")
+        rulings = [r for r in audit_record.get("contest_rulings", []) if r.get("finding") == finding_id]
+        if (
+            len(rulings) != 1
+            or rulings[0].get("verdict") != "upheld"
+            or rulings[0].get("target_reviewer") != finding["reviewer"]
+        ):
+            raise InputError("contested resolution requires an upheld contest_rulings entry from the independent auditor")
+        if rulings[0].get("citations") != data.get("citations"):
+            raise InputError("contested resolution citations must match the auditor's upheld contest_rulings citations")
+        return f"{key}:{finding_id}"
+
+    # status == "escalate"
+    decision_state = data.get("decision_state")
+    if decision_state not in {"pending_user", "decided"}:
+        raise InputError("escalate resolution requires decision_state pending_user or decided")
+    nonempty(data.get("missing_decision"), "missing_decision")
+    nonempty(data.get("ask_user_question"), "ask_user_question")
+    allowed_actors = {*policy["reviewers"], policy["auditor"], "coordinator"}
+    if decision_state == "pending_user":
+        if data.get("reviewer") not in allowed_actors:
+            raise InputError("escalate pending_user must name an assigned reviewer, auditor or coordinator")
+        return f"{key}:{finding_id}:escalate_pending"
+
+    nonempty(data.get("user_decision"), "user_decision")
+    effect = data.get("effect")
+    if effect not in {"update_document", "waive_finding"}:
+        raise InputError("decided escalate resolution requires effect update_document or waive_finding")
+    if effect == "update_document":
+        if data.get("reviewer") not in allowed_actors:
+            raise InputError("escalate update_document must name an assigned reviewer, auditor or coordinator")
+        return f"{key}:{finding_id}:escalate_decided"
+
+    if data.get("reviewer") != policy["auditor"]:
+        raise InputError("escalate waive_finding must be confirmed by the independent auditor")
+    if finding["reviewer"] == policy["factual_reviewer"]:
+        factual = find(history, "review", f"{key}:{policy['factual_reviewer']}")["record"]
+        if any(a["conclusion"] != "supported" for a in factual["assessments"]) or any(
+            not b["accepted"] for b in factual["block_checks"]
+        ):
+            raise InputError("cannot waive unsupported factual claims via escalate; update the document or sources")
+    audit_record = find(history, "review", f"{key}:{policy['auditor']}")["record"]
+    if audit_record.get("critical") or any(item["id"] == finding_id for item in audit_record["evidence_findings"]):
+        raise InputError("escalate waive_finding cannot close while independent auditor records a veto or repeats the finding")
+    rulings = [r for r in audit_record.get("escalation_rulings", []) if r.get("finding") == finding_id]
+    if (
+        len(rulings) != 1
+        or rulings[0].get("verdict") != "accepted_out_of_band"
+        or rulings[0].get("target_reviewer") != finding["reviewer"]
+    ):
+        raise InputError(
+            "escalate waive_finding requires an accepted_out_of_band escalation_rulings entry from the independent auditor"
+        )
+    return f"{key}:{finding_id}"
+
+
+def candidate_overrides(
+    history: list[dict[str, Any]],
+    key: str,
+    originals: list[dict[str, Any]],
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    audit_rows = [r for r in history if r["kind"] == "review" and r["id"] == f"{key}:{policy['auditor']}"]
+    if not audit_rows:
+        return {"topics": {}, "claims": set(), "blocks": set()}
+    audit_record = audit_rows[0]["data"]["record"]
+    if audit_record.get("critical"):
+        return {"topics": {}, "claims": set(), "blocks": set()}
+
+    contest_by_finding = {
+        r["finding"]: r for r in audit_record.get("contest_rulings", []) if r.get("verdict") == "upheld"
+    }
+    escalation_by_finding = {
+        r["finding"]: r for r in audit_record.get("escalation_rulings", []) if r.get("verdict") == "accepted_out_of_band"
+    }
+    still_open = open_findings(history)
+    originals_by_rev = {rep["reviewer"]: rep for rep in originals}
+
+    overturned_findings_by_rev: dict[str, set[str]] = {}
+    pending_ruling_entries: list[tuple[str, str, str, dict[str, Any]]] = []
+    for row in history:
+        if row["kind"] != "resolution":
+            continue
+        rec = row["data"]["record"]
+        if rec.get("candidate_id") != key:
+            continue
+        fid = rec["finding"]
+        status = rec.get("status", "fixed")
+        if status == "contested" and fid in contest_by_finding:
+            ruling = contest_by_finding[fid]
+            rev = ruling["target_reviewer"]
+            overturned_findings_by_rev.setdefault(rev, set()).add(fid)
+            pending_ruling_entries.append((rev, fid, "contested", ruling))
+        elif (
+            status == "escalate"
+            and rec.get("decision_state") == "decided"
+            and rec.get("effect") == "waive_finding"
+            and fid in escalation_by_finding
+        ):
+            ruling = escalation_by_finding[fid]
+            rev = ruling["target_reviewer"]
+            overturned_findings_by_rev.setdefault(rev, set()).add(fid)
+            pending_ruling_entries.append((rev, fid, "escalate", ruling))
+
+    topics_map: dict[tuple[str, str], dict[str, str]] = {}
+    claims_set: set[str] = set()
+    blocks_set: set[str] = set()
+
+    for rev, fid, mode, ruling in pending_ruling_entries:
+        rep = originals_by_rev.get(rev)
+        if rep is None:
+            continue
+        rev_blocking_ids = {
+            f["id"] for f in rep.get("evidence_findings", []) if f.get("severity") == "blocking"
+        }
+        has_editorial_blocking = any(
+            f.get("severity") == "blocking" for f in rep.get("editorial", {}).get("findings", [])
+        )
+        has_open_owned = any(f["reviewer"] == rev for f in still_open.values())
+        if (rev_blocking_ids - overturned_findings_by_rev.get(rev, set())) or has_editorial_blocking or has_open_owned:
+            continue
+        for tid in ruling.get("overturned_topics", []):
+            topics_map[(tid, rev)] = {
+                "overturned_reviewer": rev,
+                "finding": fid,
+                "status": mode,
+                "adjudicated_by": policy["auditor"],
+            }
+        if mode == "contested" and rev == policy["factual_reviewer"]:
+            claims_set.update(ruling.get("overturned_claims", []))
+            blocks_set.update(ruling.get("overturned_blocks", []))
+
+    return {"topics": topics_map, "claims": claims_set, "blocks": blocks_set}
+
+
+def compute_consolidated_topics(
+    originals: list[dict[str, Any]],
+    overrides: dict[str, Any],
+) -> list[dict[str, Any]]:
+    from scripts.checks.common import GRADE_INDEX, normalize_grade
+    topic_order: list[str] = []
+    by_topic: dict[str, list[tuple[str, str]]] = {}
+    for report in originals:
+        for item in report["topics"]:
+            tid = item["topic"]
+            if tid not in by_topic:
+                topic_order.append(tid)
+                by_topic[tid] = []
+            by_topic[tid].append((normalize_grade(item["grade"]), report["reviewer"]))
+    consolidated: list[dict[str, Any]] = []
+    for tid in topic_order:
+        rows = by_topic[tid]
+        if len(rows) != len(originals):
+            raise InputError(f"every assigned reviewer must inspect topic {tid}")
+        effective_rows: list[tuple[str, str]] = []
+        applied_overrides: list[dict[str, str]] = []
+        for grade, rev in rows:
+            ov = overrides["topics"].get((tid, rev))
+            if ov is not None and grade not in {"A", "A+"}:
+                applied_overrides.append({**ov, "original_grade": grade})
+            else:
+                effective_rows.append((grade, rev))
+        if not effective_rows:
+            effective_rows = rows
+            applied_overrides = []
+        min_grade, min_rev = min(effective_rows, key=lambda pair: GRADE_INDEX[pair[0]])
+        entry: dict[str, Any] = {
+            "topico": tid,
+            "nota_minima": min_grade,
+            "revisor_da_minima": min_rev,
+            "bloqueia": min_grade not in {"A", "A+"},
+        }
+        if applied_overrides:
+            entry["contested_override"] = applied_overrides
+        consolidated.append(entry)
+    return consolidated
 
 
 def select(swarm: Path, cycle: int, key: str | None = None) -> tuple[str, dict[str, Any]]:
@@ -764,30 +1228,48 @@ def verify_delivery(data: dict[str, Any], swarm: Path) -> dict[str, Any]:
                 **cand["presentation"], "reviews": [
                     row for report in originals for row in report.get("presentation_reviews", [])]}:
             raise InputError("presentation consolidation differs from frozen artifacts or original reviews")
-        by_topic = {}
-        from scripts.checks.common import GRADE_INDEX, normalize_grade
-        for report in originals:
-            for item in report["topics"]:
-                by_topic.setdefault(item["topic"], []).append((normalize_grade(item["grade"]), report["reviewer"]))
+        overrides = candidate_overrides(history, key, originals, policy)
+        expected_topics = compute_consolidated_topics(originals, overrides)
+        expected_by_id = {item["topico"]: item for item in expected_topics}
         matrix = {item.get("topico"): item for item in data["topics"]}
-        if set(matrix) != set(by_topic) or len(matrix) != len(data["topics"]):
+        if set(matrix) != set(expected_by_id) or len(matrix) != len(data["topics"]):
             raise InputError("consolidated topics differ from original reviewers")
-        for topic, rows in by_topic.items():
-            if len(rows) != len(originals):
-                raise InputError(f"every assigned reviewer must inspect topic {topic}")
-            grade, _ = min(rows, key=lambda row: GRADE_INDEX[row[0]])
+        for topic, exp in expected_by_id.items():
             minimum = matrix[topic]
-            if (minimum.get("nota_minima") != grade or minimum.get("bloqueia") != (grade not in {"A", "A+"})
-                    or (grade, minimum.get("revisor_da_minima")) not in rows):
+            valid_reviewers = {
+                r["reviewer"]
+                for r in originals
+                for item in r["topics"]
+                if item["topic"] == topic
+                and item["grade"] == exp["nota_minima"]
+                and (topic, r["reviewer"]) not in overrides["topics"]
+            } or {
+                r["reviewer"]
+                for r in originals
+                for item in r["topics"]
+                if item["topic"] == topic and item["grade"] == exp["nota_minima"]
+            }
+            if (
+                minimum.get("nota_minima") != exp["nota_minima"]
+                or minimum.get("bloqueia") != exp["bloqueia"]
+                or minimum.get("revisor_da_minima") not in valid_reviewers
+                or minimum.get("contested_override") != exp.get("contested_override")
+            ):
                 raise InputError(f"consolidation changed the original minimum for {topic}")
         for report in originals:
             if report["reviewer"] == policy["factual_reviewer"]:
                 for block in report["block_checks"]:
-                    if not block["accepted"]:
+                    if not block["accepted"] and block["id"] not in overrides["blocks"]:
                         blocked.append({"kind": "evidence", "name": block["id"], "grade": ""})
                 for item in report["assessments"]:
-                    if item["conclusion"] != "supported":
+                    if item["conclusion"] != "supported" and item["claim"] not in overrides["claims"]:
                         blocked.append({"kind": "evidence", "name": item["claim"], "grade": ""})
+        from scripts.checks.gate import COMPREHENSION_CONTRACT
+        if (
+            policy.get("comprehension_contract") == COMPREHENSION_CONTRACT
+            and data.get("comprehension_contract") != COMPREHENSION_CONTRACT
+        ):
+            raise InputError("consolidated review must preserve adopted goldfish-v1 comprehension_contract")
         audit_rows = [r for r in history if r["kind"] == "review" and r["id"] == f"{key}:{policy['auditor']}"]
         if not audit_rows:
             blocked.append({"kind": "evidence", "name": "audit_pending", "grade": ""})
@@ -800,24 +1282,43 @@ def verify_delivery(data: dict[str, Any], swarm: Path) -> dict[str, Any]:
             expected = [find(history, "review", f"{key}:{r}")["artifact"] for r in policy["reviewers"]]
             if audit["record"]["review_artifacts"] != expected:
                 raise InputError("audit references different reviewer artifacts")
-            if data["rubberduck"] != {"critico": audit["record"]["critical"],
-                                     "achados": audit["record"]["evidence_findings"]}:
+            expected_duck: dict[str, Any] = {
+                "critico": audit["record"]["critical"],
+                "achados": audit["record"]["evidence_findings"],
+            }
+            if "paraphrase_check" in audit["record"]:
+                expected_duck["paraphrase_check"] = audit["record"]["paraphrase_check"]
+            if "contest_rulings" in audit["record"]:
+                expected_duck["contest_rulings"] = audit["record"]["contest_rulings"]
+            if "escalation_rulings" in audit["record"]:
+                expected_duck["escalation_rulings"] = audit["record"]["escalation_rulings"]
+            if data["rubberduck"] != expected_duck:
                 raise InputError("consolidation differs from independent audit")
             if audit["record"]["critical"]:
                 blocked.append({"kind": "evidence", "name": "critical audit", "grade": ""})
+            if audit["record"].get("paraphrase_check", {}).get("matches_brief") is False:
+                blocked.append({"kind": "evidence", "name": "blind_paraphrase_mismatch", "grade": ""})
         # Validate historical original records, but not their obsolete delivery files.
         for row in history:
             if row["kind"] in {"inventory", "review", "resolution"}:
                 checked(root, row["data"]["artifact"])
+                if row["kind"] == "resolution" and object_file(root, row["data"]["artifact"]) != row["data"]["record"]:
+                    raise InputError("resolution record differs from original artifact")
         findings = open_findings(history)
-        blocked.extend({"kind": "evidence", "name": key, "grade": ""} for key in findings)
+        blocked.extend({"kind": "evidence", "name": fkey, "grade": ""} for fkey in findings)
+        for esc_id in sorted(pending_escalations(history)):
+            blocked.append({"kind": "evidence", "name": f"escalate_pending:{esc_id}", "grade": ""})
         if diagnosis_required(history):
             blocked.append({"kind": "evidence", "name": "diagnosis_required", "grade": ""})
-        return {"candidate_id": key, "review_cycle": cand["review_cycle"],
-                "composition_id": cand["composition_id"], "claims": len(inv["record"]["claims"]),
-                "blocks": len(inv["record"]["blocks"]), "open_findings": len(findings),
-                "audit": "recorded" if audit_rows else "audit_pending",
-                "diagnosis_required": diagnosis_required(history), "blocked": blocked}
+        summary = {"candidate_id": key, "review_cycle": cand["review_cycle"],
+                   "composition_id": cand["composition_id"], "claims": len(inv["record"]["claims"]),
+                   "blocks": len(inv["record"]["blocks"]), "open_findings": len(findings),
+                   "audit": "recorded" if audit_rows else "audit_pending",
+                   "diagnosis_required": diagnosis_required(history), "blocked": blocked}
+        special = special_resolutions(history)
+        if special:
+            summary["special_resolutions"] = special
+        return summary
 
 
 def consolidate(swarm: Path, cycle: int, key: str | None = None) -> dict[str, Any]:
@@ -828,20 +1329,16 @@ def consolidate(swarm: Path, cycle: int, key: str | None = None) -> dict[str, An
         policy = current_policy(history)
         records = [find(history, "review", f"{key}:{r}")["record"] for r in policy["reviewers"]]
         audit_rows = [r for r in history if r["kind"] == "review" and r["id"] == f"{key}:{policy['auditor']}"]
-    from scripts.checks.common import GRADE_INDEX, normalize_grade
-    rows = {}
-    for record in records:
-        for item in record["topics"]:
-            grade = normalize_grade(item["grade"])
-            row = {"topico": item["topic"], "nota_minima": grade,
-                   "revisor_da_minima": record["reviewer"], "bloqueia": grade not in {"A", "A+"}}
-            if item["topic"] not in rows or GRADE_INDEX[grade] < GRADE_INDEX[rows[item["topic"]]["nota_minima"]]:
-                rows[item["topic"]] = row
+    overrides = candidate_overrides(history, key, records, policy)
+    consolidated_topics = compute_consolidated_topics(records, overrides)
+    from scripts.checks.gate import COMPREHENSION_CONTRACT
     brief = brief_data(root)
     result = {"schema_version": 1, "skill_version": brief["skill_version"], "mode": brief.get("mode", "document"),
               "quality_contract": "editorial-v1", "evidence_contract": CONTRACT, "candidate_id": key,
-              "cycle": cycle, "max_cycles": policy["max_cycles"], "topics": list(rows.values()),
+              "cycle": cycle, "max_cycles": policy["max_cycles"], "topics": consolidated_topics,
               "rubberduck": {"critico": False, "achados": [], "status": "audit_pending"}}
+    if policy.get("comprehension_contract") == COMPREHENSION_CONTRACT:
+        result["comprehension_contract"] = COMPREHENSION_CONTRACT
     for record in records:
         if record["reviewer"] == brief.get("editorial_reviewer"):
             result["editorial"] = record.get("editorial")
@@ -850,7 +1347,14 @@ def consolidate(swarm: Path, cycle: int, key: str | None = None) -> dict[str, An
             row for record in records for row in record.get("presentation_reviews", [])]}
     if audit_rows:
         audit = audit_rows[0]["data"]["record"]
-        result["rubberduck"] = {"critico": audit["critical"], "achados": audit["evidence_findings"]}
+        duck_out: dict[str, Any] = {"critico": audit["critical"], "achados": audit["evidence_findings"]}
+        if "paraphrase_check" in audit:
+            duck_out["paraphrase_check"] = audit["paraphrase_check"]
+        if "contest_rulings" in audit:
+            duck_out["contest_rulings"] = audit["contest_rulings"]
+        if "escalation_rulings" in audit:
+            duck_out["escalation_rulings"] = audit["escalation_rulings"]
+        result["rubberduck"] = duck_out
     verify_delivery(result, root)
     return result
 
@@ -871,13 +1375,28 @@ def close_cycle(swarm: Path, review_path: str) -> dict[str, Any]:
             key=canonical)])
                             for claim in inventory["claims"] for assessment in factual["assessments"]
                             if assessment["claim"] == claim["id"] and assessment["conclusion"] == "supported")
-        resolved = sorted(r["data"]["record"]["finding"] for r in history if r["kind"] == "resolution")
+        resolved = sorted(
+            r["data"]["record"]["finding"]
+            for r in history
+            if r["kind"] == "resolution" and resolution_closes_finding(r["data"]["record"])
+        )
+        decided_escalations = sorted(
+            r["id"]
+            for r in history
+            if r["kind"] == "resolution"
+            and r["data"]["record"].get("status") == "escalate"
+            and r["data"]["record"].get("decision_state") == "decided"
+        )
         prior = [r["data"] for r in history if r["kind"] == "cycle" and r["data"]["cycle"] < review["cycle"]]
-        previous = prior[-1] if prior else {"supported": [], "resolved": []}
-        gains = {"new_supported_evidence": len(set(signatures) - set(previous["supported"])),
-                 "resolved_findings": len(set(resolved) - set(previous["resolved"]))}
+        previous = prior[-1] if prior else {"supported": [], "resolved": [], "decided_escalations": []}
+        gains = {
+            "new_supported_evidence": len(set(signatures) - set(previous["supported"])),
+            "resolved_findings": len(set(resolved) - set(previous["resolved"])),
+            "decided_escalations": len(set(decided_escalations) - set(previous.get("decided_escalations", []))),
+        }
         payload = {"cycle": review["cycle"], "candidate_id": key, "review": artifact,
                    "outcome": decision["outcome"], "result": decision, "supported": signatures, "resolved": resolved,
+                   "decided_escalations": decided_escalations,
                    "gains": {k: v for k, v in gains.items() if v}}
         append(db, history, "cycle", str(review["cycle"]), payload)
     export(root)
@@ -960,7 +1479,10 @@ def recover(swarm: Path, path: str, reason: str) -> dict[str, Any]:
                     key = row["id"]
                     db.execute("INSERT INTO candidates VALUES (?,?,?,?)",
                                (key, data["review_cycle"], data["composition_id"], row["seq"]))
-                    for item in [data["source"], data["text"], *data["artifacts"], *data["bundles"]]:
+                    candidate_items = [data["source"], data["text"], *data["artifacts"], *data["bundles"]]
+                    if "reader_context" in data:
+                        candidate_items.append(data["reader_context"])
+                    for item in candidate_items:
                         db.execute("INSERT OR IGNORE INTO artifacts VALUES (?,?,?)", (key, item["path"], item["sha256"]))
                     for source in data["sources"]:
                         db.execute("INSERT INTO sources VALUES (?,?,?,?)",
@@ -1001,7 +1523,9 @@ def state(swarm: Path) -> dict[str, Any]:
             "first_review_cycle": policy["first_review_cycle"],
             "review_cycles": len([r for r in history if r["kind"] == "cycle"]),
             "compositions": len([r for r in history if r["kind"] == "candidate"]),
-            "open_findings": len(open_findings(history)), "diagnosis_required": diagnosis_required(history),
+            "open_findings": len(open_findings(history)),
+            "pending_escalations": sorted(pending_escalations(history)),
+            "diagnosis_required": diagnosis_required(history),
             "closed_cycles": [{"cycle": r["data"]["cycle"], "outcome": r["data"]["outcome"]}
                               for r in history if r["kind"] == "cycle"],
             "candidate_cycles": sorted({r["data"]["review_cycle"] for r in history if r["kind"] == "candidate"}),

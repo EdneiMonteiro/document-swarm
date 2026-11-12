@@ -23,6 +23,7 @@ from scripts.checks.pdf_contract import verify_pdf_inspections
 from scripts.checks.presentation_contract import verify_presentation
 
 EDITORIAL_SURFACES = ("titles", "openings", "body", "captions", "conclusions")
+COMPREHENSION_CONTRACT = "goldfish-v1"
 REGRESSION_CAUSES = ("text_changed_regression", "factual_or_cross_table_contradiction",
                      "newly_discovered_defect")
 
@@ -31,6 +32,76 @@ def requires_editorial(data: dict[str, Any]) -> bool:
     version = re.match(r"^(\d+)\.(\d+)(?:\.|$)", str(data.get("skill_version", "")))
     return ("editorial" in data or data.get("quality_contract") == "editorial-v1"
             or bool(version and tuple(map(int, version.groups())) >= (3, 2)))
+
+
+def requires_goldfish(data: dict[str, Any]) -> bool:
+    if not isinstance(data, dict):
+        return False
+    if "comprehension_contract" in data and data["comprehension_contract"] != COMPREHENSION_CONTRACT:
+        raise InputError("unknown comprehension contract")
+    editorial = data.get("editorial")
+    has_paraphrase = isinstance(editorial, dict) and "blind_paraphrase" in editorial
+    version = re.match(r"^(\d+)\.(\d+)(?:\.|$)", str(data.get("skill_version", "")))
+    return (
+        data.get("comprehension_contract") == COMPREHENSION_CONTRACT
+        or has_paraphrase
+        or bool(version and tuple(map(int, version.groups())) >= (4, 1))
+    )
+
+
+def validate_blind_paraphrase(
+    editorial: dict[str, Any],
+    reviewer: str,
+    *,
+    required: bool = False,
+) -> list[dict[str, str]]:
+    if "blind_paraphrase" not in editorial:
+        if required:
+            raise InputError("editorial review requires blind_paraphrase under goldfish-v1")
+        return []
+    paraphrase = editorial["blind_paraphrase"]
+    if not isinstance(paraphrase, dict):
+        raise InputError("editorial blind_paraphrase must be an object")
+    allowed = {"reader_context", "central_thesis", "how_parts_connect", "unconnected_sections"}
+    unknown = set(paraphrase) - allowed
+    if unknown:
+        raise InputError(f"editorial blind_paraphrase has unknown keys: {sorted(unknown)}")
+    for key in ("central_thesis", "how_parts_connect"):
+        text = required_text(paraphrase, key)
+        compact = " ".join(text.split())
+        if len(compact) < 30 or len(text) > 2500:
+            raise InputError(f"editorial blind_paraphrase.{key} must be between 30 and 2500 characters")
+    if " ".join(paraphrase["central_thesis"].split()) == " ".join(paraphrase["how_parts_connect"].split()):
+        raise InputError("editorial blind_paraphrase central_thesis and how_parts_connect must be distinct")
+    if "reader_context" in paraphrase:
+        artifact_descriptor(paraphrase["reader_context"])
+    unconnected = paraphrase.get("unconnected_sections")
+    if not isinstance(unconnected, list) or len(unconnected) > 100:
+        raise InputError("editorial blind_paraphrase.unconnected_sections must be a list of up to 100 entries")
+    cleaned: list[str] = []
+    for entry in unconnected:
+        if not isinstance(entry, str) or not entry.strip():
+            raise InputError("editorial blind_paraphrase.unconnected_sections entries must be non-empty strings")
+        cleaned.append(entry.strip())
+    if len(set(cleaned)) != len(cleaned):
+        raise InputError("editorial blind_paraphrase.unconnected_sections must not contain duplicates")
+    return [{"kind": "editorial", "name": f"blind_paraphrase:{sec}", "grade": "", "reviewer": reviewer} for sec in cleaned]
+
+
+def reject_verbatim_paraphrase(paraphrase: dict[str, Any], source: str) -> None:
+    normalized_source = " ".join(source.split())
+    for field_name in ("central_thesis", "how_parts_connect"):
+        normalized_field = " ".join(str(paraphrase[field_name]).split())
+        candidates = [normalized_field]
+        candidates.extend(
+            seg.strip()
+            for seg in re.split(r"(?<=[.!?])\s+", normalized_field)
+            if len(seg.strip()) >= 35
+        )
+        if any(candidate in normalized_source for candidate in candidates):
+            raise InputError(
+                f"blind_paraphrase.{field_name} must be written in the reviewer's own words, not copied verbatim from the text"
+            )
 
 
 def required_text(item: dict[str, Any], key: str) -> str:
@@ -55,7 +126,13 @@ def artifact_descriptor(item: Any) -> tuple[str, str]:
     return logical.as_posix(), digest
 
 
-def editorial_blockers(data: dict[str, Any], cycle: int, required: bool) -> list[dict[str, str]]:
+def editorial_blockers(
+    data: dict[str, Any],
+    cycle: int,
+    required: bool,
+    *,
+    require_paraphrase: bool = False,
+) -> list[dict[str, str]]:
     if not required:
         return []
     editorial = data.get("editorial")
@@ -115,6 +192,14 @@ def editorial_blockers(data: dict[str, Any], cycle: int, required: bool) -> list
             blocked.append({"kind": "editorial", "name": item["location"], "grade": "", "reviewer": reviewer})
     if findings and not has_blocking_finding and blocked:
         raise InputError("editorial surface cannot be graded below A when all editorial findings are minor")
+    paraphrase_blocked = validate_blind_paraphrase(
+        editorial,
+        reviewer,
+        required=require_paraphrase or requires_goldfish(data),
+    )
+    if paraphrase_blocked and not has_blocking_finding and not blocked:
+        raise InputError("unconnected_sections in blind_paraphrase requires a blocking editorial finding or surface below A")
+    blocked.extend(paraphrase_blocked)
     return blocked
 
 
@@ -182,6 +267,26 @@ def verify_editorial_artifacts(data: dict[str, Any], swarm: Path, brief: dict[st
     for item in [*editorial["surfaces"], *editorial["findings"]]:
         if "quote" in item and " ".join(item["quote"].split()) not in source:
             raise InputError(f"editorial evidence quote is absent from the reviewed text: {item.get('location', '')}")
+    goldfish_active = requires_goldfish(brief) or requires_goldfish(data)
+    validate_blind_paraphrase(editorial, editorial["reviewer"], required=goldfish_active)
+    if "blind_paraphrase" in editorial:
+        paraphrase = editorial["blind_paraphrase"]
+        reject_verbatim_paraphrase(paraphrase, source)
+        if data.get("evidence_contract") == "evidence-v1" and goldfish_active and "reader_context" not in paraphrase:
+            raise InputError("blind_paraphrase under goldfish-v1 and evidence-v1 must bind reader_context")
+        if "reader_context" in paraphrase:
+            rc_raw = checked(paraphrase["reader_context"], text=True)
+            if rc_raw is None:
+                raise InputError("reader_context artifact could not be read")
+            rc_obj = json.loads(rc_raw)
+            if (
+                not isinstance(rc_obj, dict)
+                or rc_obj.get("comprehension_contract") != COMPREHENSION_CONTRACT
+                or rc_obj.get("text") != editorial["text"]
+                or rc_obj.get("deliverables") != editorial["artifacts"]
+                or "brief.md" not in rc_obj.get("forbidden_paths", [])
+            ):
+                raise InputError("reader_context does not match the frozen editorial text, deliverables, or goldfish isolation")
     findings = editorial.get("findings", [])
     only_minor_findings = bool(findings) and all(item.get("severity") == "minor" for item in findings)
     for row in report.get("topics", []):
@@ -423,7 +528,8 @@ def evaluate_current(data: Any, swarm: Path | None) -> dict[str, Any]:
         brief = frontmatter_text((swarm / "brief.md").read_text(encoding="utf-8"))
     if "quality_contract" in brief and brief["quality_contract"] != "editorial-v1":
         raise InputError("unknown brief quality contract")
-    result = evaluate(data, require_editorial=requires_editorial(brief))
+    goldfish_brief = requires_goldfish(brief)
+    result = evaluate(data, require_editorial=requires_editorial(brief), require_paraphrase=goldfish_brief)
     if evidence.required(brief, swarm) or evidence.required(data):
         if swarm is None:
             raise InputError("evidence validation requires the swarm database and original artifacts")
@@ -431,6 +537,15 @@ def evaluate_current(data: Any, swarm: Path | None) -> dict[str, Any]:
         result["blocked"] = [b for b in result["blocked"] if b["kind"] != "evidence_binding"]
         result["blocked"].extend(details.pop("blocked"))
         result["evidence"] = details
+    if swarm is not None and (swarm / "brief.md").exists():
+        duck = value(data, "rubberduck", "rubber_duck")
+        pcheck = duck.get("paraphrase_check") if isinstance(duck, dict) else None
+        if isinstance(pcheck, dict):
+            brief_digest = hashlib.sha256((swarm / "brief.md").read_bytes()).hexdigest()
+            if pcheck.get("brief_sha256") != brief_digest:
+                raise InputError("paraphrase_check brief_sha256 differs from current brief.md")
+            if brief.get("editorial_reviewer") and pcheck.get("reviewer") != brief.get("editorial_reviewer"):
+                raise InputError("paraphrase_check reviewer differs from brief editorial_reviewer")
     if requires_editorial(data) or requires_editorial(brief):
         if swarm is None or not brief:
             raise InputError("editorial validation requires the swarm brief and artifacts")
@@ -484,12 +599,18 @@ def items_below(section: Any, labels: tuple[str, ...]) -> list[dict[str, str]]:
     return blocked
 
 
-def evaluate(data: Any, *, require_editorial: bool = False) -> dict[str, Any]:
+def evaluate(
+    data: Any,
+    *,
+    require_editorial: bool = False,
+    require_paraphrase: bool = False,
+) -> dict[str, Any]:
     """Return a machine-readable gate decision and its blocking facts."""
     if not isinstance(data, dict):
         raise InputError("review root must be a mapping")
     if "quality_contract" in data and data["quality_contract"] != "editorial-v1":
         raise InputError("unknown quality contract")
+    goldfish = require_paraphrase or requires_goldfish(data)
     cycle = value(data, "cycle", "ciclo")
     maximum = value(data, "max_cycles", "max_ciclos", "maximum_cycles")
     if type(cycle) is not int or type(maximum) is not int or cycle < 1 or maximum < 1:
@@ -523,7 +644,14 @@ def evaluate(data: Any, *, require_editorial: bool = False) -> dict[str, Any]:
         raise InputError("rubberduck requires boolean critico/critical and list achados/findings")
     if critical:
         blocked.append({"kind": "rubberduck", "name": "critical finding", "grade": ""})
-    blocked.extend(editorial_blockers(data, cycle, require_editorial or requires_editorial(data)))
+    blocked.extend(
+        editorial_blockers(
+            data,
+            cycle,
+            require_editorial or requires_editorial(data) or goldfish,
+            require_paraphrase=goldfish,
+        )
+    )
     # Historical deck reviews must retain their original blocking criteria.
     blocked.extend(items_below(value(data, "slides", "slide_reviews"), ("slide", "name", "titulo", "title")))
     blocked.extend(items_below(value(data, "deck_dimensions", "deckDimensions"), ("dimension", "dimensao", "name")))
@@ -533,6 +661,30 @@ def evaluate(data: Any, *, require_editorial: bool = False) -> dict[str, Any]:
             raise InputError("rubberduck skipped_reason must be matrix_rejected when present")
         if not blocked:
             raise InputError("rubberduck audit cannot be skipped when the reviewer matrix has no blockers")
+    pcheck = duck.get("paraphrase_check")
+    if pcheck is None:
+        if goldfish and skipped_reason is None and duck.get("status") != "audit_pending":
+            raise InputError("rubberduck requires paraphrase_check under goldfish-v1")
+    else:
+        if not isinstance(pcheck, dict):
+            raise InputError("rubberduck paraphrase_check must be a mapping")
+        allowed_pc = {"reviewer", "brief_sha256", "matches_brief", "justification"}
+        if set(pcheck) != allowed_pc:
+            raise InputError("rubberduck paraphrase_check requires reviewer, brief_sha256, matches_brief, and justification")
+        if not isinstance(pcheck["reviewer"], str) or not re.fullmatch(r"reviewer-[A-Za-z0-9_-]+", pcheck["reviewer"]):
+            raise InputError("rubberduck paraphrase_check.reviewer must be a valid reviewer name")
+        if isinstance(data.get("editorial"), dict) and pcheck["reviewer"] != data["editorial"].get("reviewer"):
+            raise InputError("rubberduck paraphrase_check.reviewer must match editorial.reviewer")
+        if not isinstance(pcheck["brief_sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", pcheck["brief_sha256"]):
+            raise InputError("rubberduck paraphrase_check.brief_sha256 must be a lowercase SHA-256")
+        if type(pcheck["matches_brief"]) is not bool:
+            raise InputError("rubberduck paraphrase_check.matches_brief must be boolean")
+        if not isinstance(pcheck["justification"], str) or len(pcheck["justification"].strip()) < 20:
+            raise InputError("rubberduck paraphrase_check.justification must be at least 20 characters")
+        if not pcheck["matches_brief"]:
+            if not critical:
+                raise InputError("rubberduck paraphrase_check mismatch with brief.md must set critico/critical=true")
+            blocked.append({"kind": "rubberduck", "name": "blind_paraphrase_mismatch", "grade": ""})
     outcome = "approved" if not blocked else "escalate" if cycle >= maximum else "rejected"
     return {"schema_version": 1, "cycle": cycle, "max_cycles": maximum, "outcome": outcome, "blocked": blocked}
 

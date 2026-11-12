@@ -18,7 +18,12 @@ from scripts.checks.common import (
     GRADE_INDEX, InputError, load_data, normalize_grade, write_json_atomic,
 )
 from scripts.checks.gate import (
-    _duck_contested, editorial_blockers, requires_editorial, value,
+    COMPREHENSION_CONTRACT,
+    _duck_contested,
+    editorial_blockers,
+    requires_editorial,
+    requires_goldfish,
+    value,
 )
 from scripts.checks.lint_agents import frontmatter_text
 
@@ -762,6 +767,18 @@ def render_reviewer_markdown(report: dict[str, Any], topics: dict[str, str]) -> 
                     f"| {name} | {surf.get('grade', '')} | {surf.get('location', '')} "
                     f"| {surf.get('justification', '')} | {surf.get('action', '') or '—'} |"
                 )
+        paraphrase = editorial.get("blind_paraphrase")
+        if isinstance(paraphrase, dict):
+            unconnected = paraphrase.get("unconnected_sections") or []
+            unconnected_label = ", ".join(str(s) for s in unconnected) if unconnected else "Nenhuma"
+            lines.extend([
+                "",
+                "### Paráfrase às Cegas (`goldfish-v1`)",
+                "",
+                f"- **Tese central compreendida:** {str(paraphrase.get('central_thesis', '')).strip()}",
+                f"- **Conexão entre partes:** {str(paraphrase.get('how_parts_connect', '')).strip()}",
+                f"- **Seções desconectadas:** {unconnected_label}",
+            ])
     return "\n".join(lines) + "\n"
 
 
@@ -1006,6 +1023,8 @@ def consolidate(
         review_data["quality_contract"] = "editorial-v1"
         if editorial_block is not None:
             review_data["editorial"] = editorial_block
+    if requires_goldfish(brief) or (isinstance(editorial_block, dict) and "blind_paraphrase" in editorial_block):
+        review_data["comprehension_contract"] = COMPREHENSION_CONTRACT
 
     pdf_inspections = _build_pdf_inspections(root, brief, primary)
     if pdf_inspections:

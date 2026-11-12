@@ -1,6 +1,6 @@
 ---
 name: document-swarm
-skill_version: "4.0.0"
+skill_version: "4.1.0"
 description: "Use ONLY when the user explicitly asks for a document swarm (e.g., 'use document-swarm', 'monte um swarm', 'rode o doc-swarm') or explicitly wants a full multi-agent swarm cycle with deterministic gates. Do NOT invoke automatically for ordinary document reviews, edits, modifications, summaries, or single-pass writing. If loaded on a request that did not explicitly ask for a swarm, your FIRST action MUST be to ask the user via ask_user whether to use Document Swarm or handle the task directly without it."
 ---
 
@@ -144,6 +144,15 @@ brief um perfil adequado (`magazine-feature`, `progressive-book`, `illustrated-a
 - Nas decisões arquiteturais, explicite critérios, alternativas relevantes,
   recomendação, trade-offs e condições que mudariam a escolha. Em vez de apenas
   dizer "depende", identifique os fatores e como alteram a decisão.
+- Distinga **limites reais** (invariantes teóricos ou físicos, limites/SLAs de
+  provedores, tetos de orçamento/prazo e restrições regulatórias fixadas no
+  brief) de **falsos compromissos** causados por acoplamentos resolvíveis com
+  padrões arquiteturais estabelecidos (como extração/sidecar, fila durável/outbox,
+  ação preliminar/cache, *cushioning*/backpressure, segmentação ou workers
+  efêmeros). Não apresente um acoplamento evitável como dilema inevitável; ao
+  recomendar um padrão para eliminá-lo, declare obrigatoriamente os **passivos
+  operacionais secundários** introduzidos (latência extra, consistência eventual,
+  idempotência, novos artefatos operacionais ou consumo ocioso).
 - Considere segurança, confiabilidade, desempenho, custo, governança e operação
   conforme o assunto. Não repita todos os pilares como checklist em cada seção.
 - Diferencie fatos verificados, premissas, estimativas e recomendações. Não
@@ -589,6 +598,8 @@ por data: `<YYYY-MM-DD>-SWARM-<XX>`.
 │  │  ├─ evidence.sqlite
 │  │  ├─ events.json
 │  │  ├─ candidates/<candidate_id>.json
+│  │  ├─ inventories/<candidate_id>.json
+│  │  ├─ reader-context/<composition_id>-c0N.json
 │  │  └─ responses/<candidate_id>/
 │  ├─ cycle-0N-authors.md
 │  ├─ cycle-0N-review.md
@@ -689,10 +700,10 @@ D-  D  D+  C-  C  C+  B-  B  B+  A-  A  A+
 | Dimensão / Papel | Classe (`sources_min`) | Critérios avaliados | Condição para nota `A` / `A+` | O que rebaixa para `<= A-` (`blocking`) |
 | --- | :---: | --- | --- | --- |
 | **Precisão Factual (`reviewer-*-facts`)** | `fact` (`>= 5`) | Exatidão de contagens, somas, SKUs, limites, SLAs, regiões, datas, citações `[Fxx]` e separação explícita entre fato medido, premissa, estimativa e recomendação. | 100% dos números, nomes de recursos e capacidades conferem com os insumos e fontes oficiais atuais; limitações de escopo declaradas. | Número/soma divergente, recurso inexistente no inventário, capacidade/SLA sem fonte oficial ou suposição apresentada como fato medido. |
-| **Completude Decisória / Progressão / Narrativa / Curadoria (`reviewer-*-decision` \| `progression` \| `narrative` \| `curation`)** | `form` (`0`) | Em `technical-report`: problema medido, critérios, alternativas, recomendação, trade-offs, aceite e reversão.<br>Em `book`: curva pedagógica em 3 camadas (leigo → evolução → domínio), clareza didática e integração de gravuras/boxes.<br>Em `magazine`: força do *lead* narrativo, ritmo jornalístico, *pull-quotes*, boxes de bastidores e fotos.<br>Em `almanac`: fichas catalográficas (`factbox`), quadros *"Você Sabia?"* (`callout`), cronologias e leitura não-linear. | Em `technical-report`: recomendação completa com trade-offs e reversão.<br>Em `book`/`magazine`/`almanac`: texto envolvente, progressão contínua sem saltos de jargão, ausência de metatexto burocrático e uso rico de imagens, *callouts*, *pull-quotes* e *factboxes*. | Em `technical-report`: recomendação vaga ou sem aceite/reversão.<br>Em `book`/`magazine`/`almanac`: abertura burocrática de laudo, salto abrupto de jargão para leigos, ausência de fotos/boxes previstos no brief ou fórmulas/matrizes artificiais. |
-| **Clareza e Público (`reviewer-*-clarity` / `editorial-v1`)** | `form` (`0`) | **Linguagem** (direta, afirmativa, verbos concretos), **Referentes** (sem "isso"/"esse caso" vagos), **Tom** (sênior, sem slogans, clichês, travessões longos ou "diário do arquiteto") e **Autonomia** (títulos, tabelas, figuras e legendas compreensíveis isoladamente, siglas expandidas no 1º uso). | As 5 superfícies (`titles`, `openings`, `body`, `captions`, `conclusions`) e os tópicos têm `0` achados `blocking`, leitura autônoma e terminologia uniforme. | Slogan promocional, metatexto de coleta/versão anterior, negativa defensiva vazia, código/sigla opaco sem definição no ponto de leitura ou referente ambíguo que esconda condição técnica. |
+| **Completude Decisória / Progressão / Narrativa / Curadoria (`reviewer-*-decision` \| `progression` \| `narrative` \| `curation`)** | `form` (`0`) | Em `technical-report`/`textbook`: problema medido, critérios, alternativas, recomendação, trade-offs, aceite, reversão e **auditoria de falsos compromissos (TRIZ)** com Passo 0 anti-*over-engineering* (`"Nenhum falso compromisso detectado"` quando a arquitetura já estiver equilibrada ou restrita por invariante real) e exigência de declarar passivos operacionais secundários de cada padrão sugerido.<br>Em `book`: curva pedagógica em 3 camadas (leigo → evolução → domínio), clareza didática e integração de gravuras/boxes.<br>Em `magazine`: força do *lead* narrativo, ritmo jornalístico, *pull-quotes*, boxes de bastidores e fotos.<br>Em `almanac`: fichas catalográficas (`factbox`), quadros *"Você Sabia?"* (`callout`), cronologias e leitura não-linear. | Em `technical-report`/`textbook`: recomendação completa com trade-offs reais, reversão, passivos secundários declarados e ausência de falso dilema central não examinado (ou Passo 0 confirmado sem falsos compromissos).<br>Em `book`/`magazine`/`almanac`: texto envolvente, progressão contínua sem saltos de jargão, ausência de metatexto burocrático e uso rico de imagens, *callouts*, *pull-quotes* e *factboxes*. | Em `technical-report`/`textbook`: recomendação vaga, sem aceite/reversão, ou sustentada por falso dilema central que invalida a escolha arquitetural (acoplamentos periféricos são `minor` e não rebaixam `< A`; proibido rebaixar exigindo filas/sidecars sem contradição real).<br>Em `book`/`magazine`/`almanac`: abertura burocrática de laudo, salto abrupto de jargão para leigos, ausência de fotos/boxes previstos no brief ou fórmulas/matrizes artificiais. |
+| **Clareza e Público (`reviewer-*-clarity` / `editorial-v1` + `goldfish-v1`)** | `form` (`0`) | **Isolamento Goldfish** (avalia apenas a candidata congelada e o `reader_context` público, sem ler `brief.md`, `sources/` ou pareceres anteriores), **Paráfrase às Cegas** (`blind_paraphrase` em palavras próprias: tese central, conexão entre seções e `unconnected_sections`), **Linguagem** (direta, afirmativa, verbos concretos), **Referentes** (sem "isso"/"esse caso" vagos), **Tom** (sênior, sem slogans, clichês, travessões longos ou "diário do arquiteto") e **Autonomia** (títulos, tabelas, figuras e legendas compreensíveis isoladamente, siglas expandidas no 1º uso). | As 5 superfícies (`titles`, `openings`, `body`, `captions`, `conclusions`) e os tópicos têm `0` achados `blocking`, leitura autônoma, terminologia uniforme e `blind_paraphrase` coesa (`unconnected_sections: []`) que coincide com o `brief.md` quando auditada pelo `rubber-duck`. | Slogan promocional, metatexto de coleta/versão anterior, negativa defensiva vazia, código/sigla opaco sem definição no ponto de leitura, referente ambíguo, seção desconectada (`unconnected_sections` não vazio) ou paráfrase às cegas que diverge da intenção real do `brief.md`. |
 | **Inspeção Visual e Funcional (`PDF` / `presentation`)** | `form` (`0`) | Quebra de números/identificadores em tabelas, sobreposição, cortes (`clipping`), linhas órfãs de total, contraste, hierarquia tipográfica, navegação (`interaction`) e editabilidade nativa (`editability`). | `inspection.json` com `status: pass` (`0` erros mecânicos) e páginas/slides legíveis, sem truncamento de dados ou cabeçalhos partidos ao meio. | Número ou identificador partido de forma ambígua na tabela impressa, sobreposição visual, corte de texto/figura ou falha de navegação/edição. |
-| **Auditoria Independente (`rubber-duck`)** | `rubber-duck` (`0`) | Contradições entre seções, omissões, notas `A` infladas (sem justificativa na dimensão ou contraditas pelo artefato), falhas de checks e integridade de hashes `.md` ↔ `.json` ↔ `.yaml`. | `critico: false` — todas as notas `A` se sustentam na evidência real do ciclo e os checks determinísticos (`sources`, `tables`, `gate`) fecham sem ressalvas ocultas. | `critico: true` — nota `A` atribuída sobre tabela/plano contraditório, justificativa que avalia outra dimensão por procuração ou etapa de qualidade pulada. |
+| **Auditoria Independente (`rubber-duck`)** | `rubber-duck` (`0`) | Confronto obrigatório da `blind_paraphrase` de `reviewer-*-clarity` contra o `brief.md` (`paraphrase_check`), contradições entre seções, omissões, notas `A` infladas (sem justificativa na dimensão ou contraditas pelo artefato), falhas de checks e integridade de hashes `.md` ↔ `.json` ↔ `.yaml`. | `critico: false` e `paraphrase_check.matches_brief: true` — a paráfrase às cegas reflete fielmente o objetivo do `brief.md`, todas as notas `A` se sustentam na evidência real do ciclo e os checks determinísticos (`sources`, `tables`, `gate`) fecham sem ressalvas ocultas. | `critico: true` — `paraphrase_check.matches_brief: false` (o leitor às cegas entendeu tese/arquitetura diferente da pretendida no `brief.md`), nota `A` atribuída sobre tabela/plano contraditório, justificativa que avalia outra dimensão por procuração ou etapa de qualidade pulada. |
 
 ### 6.3. Tabela das superfícies editoriais (`editorial-v1`) e severidades
 
@@ -711,8 +722,9 @@ Além do relatório Markdown, cada ciclo deve gerar
 
 ```yaml
 schema_version: 1
-skill_version: "4.0.0"
+skill_version: "4.1.0"
 quality_contract: editorial-v1
+comprehension_contract: goldfish-v1
 evidence_contract: evidence-v1
 candidate_id: <ID SHA-256 da candidata congelada>
 mode: document
@@ -727,6 +739,11 @@ topics:
 rubberduck:
   critico: false
   achados: []
+  paraphrase_check:
+    reviewer: reviewer-02-clarity
+    brief_sha256: <sha256 real do brief.md>
+    matches_brief: true
+    justification: "A paráfrase às cegas captura fielmente a tese e o encadeamento definidos no brief.md."
 ```
 
 O rubber duck deve conferir a consistência entre `.md` e `.yaml`. O portão usa o
@@ -778,7 +795,20 @@ O JSON do revisor indicado em `brief.editorial_reviewer` também contém um bloc
 - somente `captions` pode usar `not_applicable` com justificativa em vez de
   nota, quando o documento realmente não tiver legendas/rótulos;
 - `findings`: lista explícita de achados com `severity: blocking|minor`,
-  `location`, `quote`, `reason` e `action`, ou lista vazia.
+  `location`, `quote`, `reason` e `action`, ou lista vazia;
+- `blind_paraphrase` (`comprehension_contract: goldfish-v1`, obrigatório a
+  partir da `4.1.0`): objeto com `reader_context` (`path`/`sha256` do manifesto
+  sanitizado `reports/evidence/reader-context/<composition_id>-c<NN>.json`),
+  `central_thesis` (30 a 2.500 caracteres, em palavras próprias, descrevendo o
+  que o documento propõe, defende ou narra exclusivamente segundo o texto
+  entregue), `how_parts_connect` (30 a 2.500 caracteres, em palavras próprias,
+  explicando como as seções/capítulos se encadeiam do início ao fechamento — e,
+  em `technical-report`, como o sistema/estado funciona segundo o texto) e
+  `unconnected_sections` (lista das seções cuja conexão não pôde ser
+  compreendida pelo texto isolado, ou `[]`). Cópia literal de frases do
+  documento em `central_thesis` ou `how_parts_connect` é recusada pelo gate
+  (`exit 3`), e qualquer item em `unconnected_sections` exige achado `blocking`
+  e reprova o ciclo.
 
 O exemplo completo está em [docs/editorial-review.md](docs/editorial-review.md).
 Cada superfície aplicável precisa de A ou A+ e nenhum achado `blocking` pode
@@ -1016,8 +1046,31 @@ entram se o portão estiver aprovado.
 - critérios de sucesso;
 - prazo e `max_cycles` (padrão 10; qualquer teto explícito prevalece).
 
-Se o usuário omitir algo ou recusar o formulário, registre um padrão sensato.
-No modo evolução, pergunte somente o que mudou.
+Se o usuário omitir escolhas mecânicas ou editoriais com padrão único defensável
+(como estrutura interna de pastas, formatação, idioma idêntico ao pedido ou
+`max_cycles: 10`), decida diretamente e registre o padrão sensato no `brief.md`.
+
+**Gate de decisão arquitetural (`Author Decides Architecture`):** em RFCs,
+arquiteturas prescritivas, especificações de engenharia e playbooks de construção
+(`technical-report`), quando houver **bifurcação estrutural real** não decidida
+pelo usuário (mais de um desenho defensável para fronteiras de componentes,
+modelo de dados/estado, protocolo síncrono vs. orientado a eventos ou topologia
+de isolamento/implantação), **não escolha silenciosamente um caminho favorito**
+antes de rodar o enxame:
+
+1. apresente via `ask_user` **até 3 caminhos arquiteturais neutros**, descrevendo
+   para cada um o mecanismo central, os trade-offs operacionais e as condições em
+   que falha, **sem ranquear opções nem marcar `(Recomendado)`**;
+2. se o usuário escolher um caminho, registre a decisão como restrição explícita
+   no `brief.md`;
+3. **escape para delegação ou estudo comparativo (sem loop):** se o usuário
+   responder *"decida/recomende no documento"*, recusar o formulário ou já tiver
+   pedido um comparativo/ADR, **não reapresente o mesmo gate em loop** — converta
+   os caminhos nas alternativas formais do `brief.md` para que o enxame as avalie
+   sob critérios explícitos antes de recomendar.
+
+No modo evolução, pergunte somente o que mudou (aplicando o mesmo gate neutro se
+a evolução introduzir uma nova bifurcação estrutural prescritiva).
 
 ### Fase 1 — Setup e brief
 
@@ -1028,12 +1081,14 @@ No modo evolução, pergunte somente o que mudou.
 ```yaml
 ---
 swarm_id: <swarm_id>
-skill_version: "4.0.0"
+skill_version: "4.1.0"
 mode: document
 max_cycles: 10
 editorial_profile: <perfil definido no enquadramento>
+audience: "<descrição concisa de 1 linha (<= 240 caracteres) do público-alvo para o reader_context>"
 monitor: true
 quality_contract: editorial-v1
+comprehension_contract: goldfish-v1
 evidence_contract: evidence-v1
 factual_reviewer: reviewer-01-facts
 evidence_auditor: rubber-duck
@@ -1176,13 +1231,26 @@ Você é o coordenador. Para cada ciclo `N`:
    incluindo aberturas, tabelas, legendas e conclusões; blocos não factuais
    recebem classificação justificada. Execute `evidence.py inventory` antes
    da revisão. Despache os revisores em paralelo, registrando `evidence.py dispatch`
-   antes da ferramenta real. Cada revisor entrega seu JSON original atual,
+   antes da ferramenta real:
+   - **Isolamento Goldfish do `editorial_reviewer` (`goldfish-v1`):** `brief.md`
+     completo é entregue **somente** para `reviewer-*-facts`, `reviewer-*-decision`
+     (e demais revisores que precisem auditar escopo/decisão) e `rubber-duck`.
+     O `editorial_reviewer` (`reviewer-*-clarity`) **NUNCA** lê `brief.md`,
+     `reports/evidence-policy.json`, `sources/` ou relatórios de ciclos
+     anteriores, e **DEVE ser despachado sempre via chamada nova de `task`**
+     (proibido usar `write_agent` reaproveitando memória conversacional de ciclos
+     passados). No congelamento, `evidence.py freeze` gera automaticamente
+     `reports/evidence/reader-context/<composition_id>-c<NN>.json` contendo
+     apenas público-alvo, perfil editorial, mapa conciso de IDs de tópicos e
+     descritores da candidata congelada — único contexto externo permitido ao
+     revisor de clareza, vinculado por hash em `editorial.blind_paraphrase.reader_context`.
+   Cada revisor entrega seu JSON original atual,
    registrado por `evidence.py review`. Todos leem a candidata integral; o diff
-   orienta atenção, mas `carry_forward` não certifica aprovação.
+   orienta atenção dos revisores não isolados, mas `carry_forward` não certifica aprovação.
    Registre os despachos e as passagens efetivas de artefatos; notas pendentes
    continuam pendentes na interface.
-   O revisor editorial lê a redação final do ciclo, preenche `editorial`
-   e fundamenta as notas com trechos. A revisão visual não pode aprovar essa
+   O revisor editorial lê a redação final do ciclo a frio, preenche `editorial`
+   (incluindo `blind_paraphrase` em palavras próprias) e fundamenta as notas com trechos. A revisão visual não pode aprovar essa
    dimensão por procuração.
    Para PDF, no Ciclo 1 e na candidata final à aprovação, os revisores conferem
    as prévias PNG de todas as páginas; nos ciclos intermediários (`N >= 2` com
@@ -1214,9 +1282,19 @@ Você é o coordenador. Para cada ciclo `N`:
      agente `rubber-duck` para auditar autores, revisores, coordenador, resultados
      dos scripts e consistência. Registre despacho e JSON original por
      `evidence.py`, com candidata, todos os revisores e hashes de seus pareceres.
-     Grave também o parecer humano. Achados críticos permanecem abertos entre
+     grave também o parecer humano. Achados críticos permanecem abertos entre
      ciclos até resolução registrada pelo responsável ou auditor, com
      reavaliação atual e inspeção da família completa.
+   - **Confronto da paráfrase às cegas (`paraphrase_check`):** o `rubber-duck`
+     lê `brief.md` e confronta `editorial.blind_paraphrase` de `editorial_reviewer`
+     com a intenção real e o encadeamento previstos no `brief.md`, gravando
+     `paraphrase_check` (`reviewer`, `brief_sha256`, `matches_brief`,
+     `justification`) no seu JSON original. Se um leitor qualificado sem
+     contexto dos bastidores entendeu uma proposta central diferente da do
+     `brief.md` ou não conseguiu conectar as seções (`matches_brief: false`), o
+     `rubber-duck` **obrigatoriamente** marca `critical: true` e registra um
+     achado `blocking` em `evidence_findings` apontando onde a prosa falhou em
+     transmitir a intenção (bloqueio estrutural no gate).
    Confira se slogans, títulos genéricos, antíteses decorativas e metatexto
    foram realmente avaliados em todas as superfícies. Conteste A sustentado
    somente por layout ou pela aprovação de um ciclo anterior.
@@ -1225,9 +1303,32 @@ Você é o coordenador. Para cada ciclo `N`:
    motivo; não edite sua nota em silêncio.
    Confira códigos sem definição, significados conflitantes e legendas
    dependentes de glossário distante. Exija fonte quando se alegar padrão externo.
-8. **Reconsolide após auditoria.** Registre o original do auditor e execute o
-   mesmo `consolidate --candidate`. Não edite o YAML para retirar veto. Use
-   `evidence.py resolution` para encerramento fundamentado de achado antigo.
+8. **Reconsolide após auditoria e protocolo `fixed` / `contested` / `escalate`.**
+   Registre o original do auditor e execute o mesmo `consolidate --candidate`.
+   Não edite o YAML nem o JSON original de um revisor para retirar veto. Em
+   `evidence.py resolution`, classifique cada fechamento/impasse em um dos três
+   status:
+   - **`status: "fixed"` (padrão):** o texto/evidência foi corrigido e o
+     responsável ou auditor reavaliou toda a família atual (`occurrences` e
+     `previous_occurrences`);
+   - **`status: "contested"` (crítica imprecisa do revisor, julgada pelo
+     `rubber-duck`):** proibido para lacunas de clareza/compreensão do
+     `editorial_reviewer` (se o leitor às cegas não entendeu, falta contexto no
+     texto) e proibido alegar intenção autoral (`"foi intencional"` / `"this was
+     intentional"` é recusado com `exit 3`). Exige `citations` verificadas linha
+     a linha na candidata congelada ou no corpus (`sources/` — obrigatório para
+     achados factuais) e `contest_rulings` com `verdict: "upheld"` no JSON do
+     `rubber-duck`, preservando intacto o JSON original do revisor e registrando
+     `contested_override` auditável na matriz consolidada quando couber;
+   - **`status: "escalate"` (decisão de negócio/convenção fora do corpus):**
+     quando a crítica depender de informação que nem autores nem revisores podem
+     ler nos artefatos, registre primeiro `decision_state: "pending_user"` com
+     `missing_decision` e `ask_user_question` (bloqueando o gate sem degradar o
+     texto nem girar 2 ciclos até `diagnosis_required`), chame `ask_user` e
+     então registre `decision_state: "decided"` com `user_decision` e
+     `effect: "update_document"` (atualizando a próxima candidata) ou
+     `effect: "waive_finding"` (validado por `escalation_rulings` do
+     `rubber-duck`, nunca permitido para contradições factuais contra fontes).
 9. **Portão por exit code.**
 
    ```bash
@@ -1395,6 +1496,10 @@ Produzir os tópicos atribuídos no nível, tom e escopo do brief.
   conecte resultados de negócio e operação a critérios, alternativas,
   recomendação, trade-offs e condições que mudariam a escolha. Explique de que
   depende, sem impor esse roteiro a trechos que não contêm uma decisão.
+  Distinga limites reais (invariantes físicos/teóricos, SLAs, orçamento ou
+  restrições do brief) de acoplamentos resolvíveis por padrões conhecidos; ao
+  propor um padrão para eliminar um falso dilema, explicite os passivos
+  operacionais secundários que ele introduz.
 - Separe fatos, premissas, estimativas e recomendações. Não invente valores,
   capacidades ou referências; verifique informações voláteis em fontes oficiais
   e explicite o que não foi possível confirmar. Não force equivalências multicloud.
@@ -1502,6 +1607,36 @@ acionável. `A` exige atendimento à dimensão sem lacunas materiais; não premi
 apenas fluência nem exija estruturas desnecessárias. Justifique critérios não
 aplicáveis. As notas alimentam a matriz por tópico e o portão existente.
 
+## Auditoria de falsos compromissos, quando designado como `reviewer-*-decision` em `technical-report` / `textbook`
+Não aplique esta seção aos modos `magazine`, `book` ou `almanac`. Em relatórios
+técnicos, RFCs e playbooks arquiteturais, examine se o texto aceita falsos
+dilemas como inevitáveis (por exemplo, tratar "maior vazão exige sacrificar
+durabilidade" ou "extensibilidade exige hierarquia rígida" como leis imutáveis
+quando um padrão estabelecido resolve o acoplamento):
+
+0. **Passo 0 — Verificar existência real de contradição (trava anti-*over-engineering*):**
+   antes de sugerir qualquer padrão, confira se o trade-off aceito decorre de um
+   invariante teórico/físico, SLA externo, teto de custo/prazo ou escolha
+   deliberada de simplicidade operacional registrada no `brief.md`. Se a
+   arquitetura já estiver equilibrada para o escopo, registre explicitamente
+   `"Nenhum falso compromisso detectado"` na justificativa e **não fabrique
+   transformações especulativas** (proibido rebaixar nota exigindo filas,
+   sidecars, CQRS ou microsserviços sem contradição real).
+1. **Desfazer acoplamentos evitáveis com padrões concretos:** quando houver falso
+   compromisso real, aponte o acoplamento e indique o padrão arquitetural
+   pertinente (segmentação/sharding, extração/sidecar, ação preliminar/cache,
+   *beforehand cushioning*/circuit breaker/backpressure, inversão de fluxo,
+   intermediário/fila durável/outbox, *self-service*/reconciliação ou workers
+   efêmeros).
+2. **Declarar passivos operacionais secundários:** toda recomendação de padrão
+   deve explicitar o novo custo operacional introduzido (hops extras, latência de
+   IPC, consistência eventual, idempotência no consumidor, manutenção de fallback
+   ou memória ociosa).
+3. **Calibrar severidade:** falso compromisso periférico é consultivo
+   (`severity: minor`, mantendo nota `>= A`); classifique como `blocking` (`<= A-`)
+   somente quando o falso dilema invalidar materialmente a recomendação central
+   ou ocultar risco operacional grave sob aparência de inevitabilidade.
+
 ## Revisão editorial, quando designada no brief
 Leia toda a redação final deste ciclo, inclusive capa, títulos, aberturas, corpo,
 chamadas, legendas e conclusões. Identifique slogans, metatexto vazio, títulos
@@ -1541,8 +1676,18 @@ Registre `editorial` no seu JSON: versão 1, ciclo atual, seu nome, escopo
 `full_document`, texto integral (`text.path`/`sha256`), todos os arquivos de
 entrega (`artifacts` com path/sha256), cinco `surfaces` (titles, openings, body,
 captions, conclusions) com `grade`, `location`, `quote`, `justification`, `action`,
-e `findings` com `severity` (blocking/minor), `location`, `quote`, `reason`,
-`action`. Somente legendas realmente ausentes podem receber
+`findings` com `severity` (blocking/minor), `location`, `quote`, `reason`,
+`action`, e `blind_paraphrase` (`reader_context` com `path`/`sha256` exato do
+manifesto sanitizado `reports/evidence/reader-context/<composition_id>-c<NN>.json`,
+`central_thesis` e `how_parts_connect` escritos em suas próprias palavras entre
+30 e 2.500 caracteres sem copiar trechos literais da candidata, e
+`unconnected_sections` listando seções cuja conexão não ficou inteligível pelo
+texto isolado ou `[]`). Quando designado como `editorial_reviewer` sob
+`goldfish-v1`, leia **exclusivamente** o `reader-context` congelado e os
+artefatos da candidata — **nunca** leia `brief.md`, `reports/evidence-policy.json`,
+`sources/` ou relatórios anteriores; se precisar adivinhar a intenção dos
+bastidores para conectar duas seções, registre-as em `unconnected_sections` com
+achado `blocking`. Somente legendas realmente ausentes podem receber
 `not_applicable` justificado sem nota. Trechos devem existir no texto examinado.
 O coordenador copia esse bloco sem reinterpretá-lo. Revisor de outra dimensão
 não preenche a avaliação editorial em seu lugar.
@@ -1587,19 +1732,32 @@ editorial_guidance_version: "3.2.2"
 Registre `evidence-v1` com `evidence.py init`, congele candidatas antes dos
 despachos e preserve originais. Exija inventário, revisão factual integral e
 auditor independente registrado. `audit_pending` nunca aprova. Resolva vetos
-somente por reavaliação de família registrada; não os apague na consolidação.
+somente por reavaliação de família registrada (`fixed`), contestação com citação
+verificável julgada pelo `rubber-duck` (`contested`, nunca `"foi intencional"` e
+nunca contra lacuna de compreensão do `editorial_reviewer`) ou escalação ao
+usuário via `ask_user` quando faltar decisão de negócio fora do corpus
+(`escalate`); não os apague na consolidação nem degrade o texto para agradar uma
+crítica comprovadamente incorreta.
 Use teto padrão 10, respeite teto explícito, registre fechamento de revisões e
 diagnostique duas rodadas sem progresso antes de continuar. Composição não
 incrementa revisão. Não crie executor, workflow ou controle de agentes no monitor.
 
 Materialize o perfil editorial e o público do brief nos contratos de cada
-agente. Garanta cobertura de clareza e completude decisória pelos revisores
+agente. Na Fase 0 de documentos prescritivos (`technical-report`, RFCs e
+playbooks de construção), aplique o gate neutro de até 3 caminhos arquiteturais
+via `ask_user` antes de fixar uma bifurcação estrutural em aberto — convertendo
+os caminhos em alternativas formais do `brief.md` sem repetir o gate em loop se
+o usuário delegar a recomendação. Garanta cobertura de clareza e completude decisória pelos revisores
 existentes. Na consolidação, uniformize voz, terminologia e profundidade sem
-apagar ressalvas ou inventar fatos. Devolva divergências técnicas aos autores;
+apagar ressalvas, inventar fatos ou induzir *over-engineering*. Devolva divergências técnicas aos autores;
 revisores não reescrevem conteúdo.
 Submeta alterações de conteúdo à revisão, não a uma edição posterior ao portão.
 Designe o revisor editorial no brief e registre todas as entregas em
-`deliverables`. Prepare documento-fonte e formatos finais antes da avaliação;
+`deliverables`. Aplique o isolamento Goldfish (`comprehension_contract: goldfish-v1`):
+entregue `brief.md` completo apenas aos revisores de fatos/decisão e ao
+`rubber-duck`, e despache `editorial_reviewer` sempre em sessão `task` limpa
+(nunca `write_agent`), fornecendo somente `reports/evidence/reader-context/<composition_id>-c<NN>.json`
+e a candidata congelada. Prepare documento-fonte e formatos finais antes da avaliação;
 o renderizador apenas compõe a redação existente. Exija revisão integral de
 títulos, aberturas, corpo, legendas e conclusões, separada da diagramação.
 Copie o bloco `editorial` do JSON individual sem mudar notas, trechos ou hashes.
@@ -1667,14 +1825,35 @@ inteiras, inclusive defeitos descobertos em texto inalterado já aprovado.
 Grave JSON independente com `schema_version: 1`, `evidence_contract: evidence-v1`,
 `candidate_id`, `cycle`, seu `reviewer`, `scope: full_document`, `justification`,
 `inventory_complete: true`, `critical`, `reviewed_reviewers`, `review_artifacts`
-com hashes dos originais e `evidence_findings`. Cada crítico precisa de achado
+com hashes dos originais, `paraphrase_check` (`reviewer`, `brief_sha256`,
+`matches_brief`, `justification`) e `evidence_findings`. Cada crítico (inclusive
+quando `paraphrase_check.matches_brief: false`) precisa de achado
 `blocking` persistente, ID/família, motivo, ação, evidência e ocorrências.
 Sem esse JSON, a candidata fica pendente. Não substitua notas dos revisores.
 
 ## Checagens obrigatórias
+- confronto obrigatório da `editorial.blind_paraphrase` do `editorial_reviewer`
+  com o `brief.md` real (`paraphrase_check`): se a tese central ou a conexão
+  entre as partes descritas às cegas divergir do que o `brief.md` pretendia
+  comunicar, marque `matches_brief: false`, `critical: true` e registre achado
+  `blocking` apontando a falha estrutural de compreensão no texto;
+- julgamento independente de contestações (`contest_rulings`) e escalações fora
+  de banda (`escalation_rulings`): acolha `verdict: "upheld"` em `contest_rulings`
+  **somente** quando houver citação literal verificável por linha na candidata
+  congelada ou no corpus (`sources/` obrigatório contra `factual_reviewer`),
+  rejeitando `"foi intencional"` e qualquer tentativa de contestar falha de
+  compreensão do `editorial_reviewer`; acolha `verdict: "accepted_out_of_band"`
+  em `escalation_rulings` apenas para decisões de negócio/convenções externas
+  confirmadas pelo usuário via `ask_user`, nunca para encobrir contradição factual;
 - contradições, omissões, fuga de escopo e notas infladas;
 - aderência ao perfil e ao público do brief: estilo ou fluência não podem
   mascarar falta de evidência, trade-offs omitidos ou ressalvas removidas;
+- em `technical-report`/`textbook`, falsos compromissos centrais aceitos sem
+  exame (acoplamentos evitáveis tratados como leis inevitáveis ou padrões
+  recomendados sem passivos operacionais secundários) **e**, no sentido inverso,
+  reprovações especulativas de `reviewer-*-decision` que violem o Passo 0
+  exigindo filas, sidecars ou abstrações contra uma arquitetura já equilibrada
+  ou restrita pelo `brief.md`;
 - fonte acessível que não sustenta a afirmação;
 - falhas ou avisos dos checks determinísticos;
 - aritmética relevante não marcada;
@@ -1763,9 +1942,19 @@ no gate usando apenas a biblioteca padrão.
 ## 15. Checklist — documento
 
 - [ ] `brief.md` registra versão, modo, teto, tópicos e `evidence-v1` adotado no ledger.
+- [ ] Bifurcações arquiteturais prescritivas em aberto na Fase 0 passaram pelo
+      gate neutro de até 3 caminhos (ou foram registradas como alternativas
+      formais a comparar quando delegadas pelo usuário).
+- [ ] Em `technical-report`/`textbook`, `reviewer-*-decision` executou o Passo 0
+      da auditoria de falsos compromissos (sem fabricar *over-engineering* e
+      explicitando passivos secundários quando sugerir padrões).
 - [ ] Candidata congelada antes do despacho; fontes versionadas e originais preservados.
 - [ ] Inventário integral, avaliações de relações/ocorrências e auditor independente registrados.
-- [ ] Famílias de defeitos fechadas por reavaliação atual, sem apagar vetos antigos.
+- [ ] Famílias de defeitos fechadas por reavaliação atual (`fixed`), por
+      contestação com citação verificável acolhida pelo `rubber-duck`
+      (`contested`, sem `"foi intencional"` nem contestação de clareza) ou por
+      decisão explícita do usuário via `ask_user` (`escalate`), sem apagar vetos
+      antigos nem editar pareceres originais.
 - [ ] Perfil editorial e público estão registrados no brief e materializados
       nos contratos dos agentes, preservando especialidades e responsabilidades.
 - [ ] Memória consultada e reutilizações registradas.
@@ -1774,8 +1963,12 @@ no gate usando apenas a biblioteca padrão.
 - [ ] Autores e revisores de fatos cumprem sua exigência de fontes.
 - [ ] Cada ciclo tem relatórios humanos, check de fontes, check de tabelas e YAML.
 - [ ] JSONs individuais dos revisores correspondem ao Markdown e ao consolidado.
-- [ ] Revisão editorial integral atual, com trechos e notas próprias, separada
-      da avaliação visual; todas as superfícies aplicáveis em A ou A+.
+- [ ] Revisão editorial integral atual sob isolamento Goldfish (`goldfish-v1`:
+      sessão `task` limpa sem acesso ao `brief.md`, vinculada ao
+      `reader-context` congelado), com `blind_paraphrase` em palavras próprias,
+      trechos e notas próprias separadas da avaliação visual; todas as
+      superfícies aplicáveis em A ou A+ e `paraphrase_check` validada pelo
+      `rubber-duck` contra o `brief.md`.
 - [ ] Texto revisado e todas as entregas correspondem aos hashes da avaliação;
       nenhum texto autoral foi acrescentado pelo gerador depois dela.
 - [ ] Se houver PDF, composição e inspeção passaram antes dos revisores;
