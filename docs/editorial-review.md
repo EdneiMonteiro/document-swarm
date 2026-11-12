@@ -79,6 +79,42 @@ não demonstra essa adequação: o revisor precisa fundamentar sua decisão.
 Os hashes corretos continuam sendo fatos de integridade, sem validar o argumento
 usado para atribuir A.
 
+## Completude decisória e falsos compromissos (`technical-report` / `textbook`)
+
+Enquanto o revisor de clareza responde por `editorial-v1`, o revisor de
+completude decisória (`reviewer-*-decision`) avalia critérios, alternativas,
+trade-offs, aceite e reversão nos modos `technical-report` e `textbook` (nunca
+em `magazine`, `book` ou `almanac`). Para evitar que autores aceitem acoplamentos
+evitáveis como leis imutáveis — e, ao mesmo tempo, impedir que revisores forcem
+complexidade desnecessária —, essa rubrica segue quatro regras:
+
+1. **Passo 0 obrigatório (trava anti-*over-engineering*):** antes de sugerir
+   qualquer transformação, verificar se o limite citado é um invariante
+   teórico/físico, SLA externo, teto de custo/prazo ou escolha deliberada de
+   simplicidade operacional registrada no `brief.md`. Quando a arquitetura já
+   estiver equilibrada, registrar `"Nenhum falso compromisso detectado"` na
+   justificativa e manter a avaliação livre de exigências especulativas (filas,
+   sidecars, CQRS ou microsserviços sem contradição real).
+2. **Padrão resolutivo concreto:** quando houver falso dilema real (como tratar
+   "maior vazão exige abrir mão de durabilidade" como inevitável), apontar o
+   acoplamento e indicar o padrão arquitetural estabelecido que o resolve
+   (segmentação, extração/sidecar, ação preliminar/cache, *cushioning*/backpressure,
+   inversão, intermediário/fila durável/outbox, *self-service* ou workers efêmeros).
+3. **Passivos operacionais secundários:** toda sugestão de padrão deve declarar
+   os novos custos operacionais introduzidos (hops extras, consistência eventual,
+   idempotência no consumidor, manutenção de fallback ou memória ociosa).
+4. **Severidade calibrada:** acoplamentos periféricos geram observações
+   consultivas (`severity: minor`, sem derrubar nota abaixo de `A`); apenas um
+   falso compromisso central que invalide a recomendação arquitetural ou oculte
+   risco operacional grave bloqueia o tópico (`<= A-`, `severity: blocking`).
+
+O rubber duck audita as duas pontas: contesta recomendações aprovadas sobre um
+falso dilema central não examinado e devolve ao `reviewer-*-decision` notas
+rebaixadas por *over-engineering* especulativo que ignore o Passo 0, sem
+substituir silenciosamente a nota do revisor. Os casos anotados de referência
+estão em
+[`tests/fixtures/editorial/false-compromise-calibration.json`](../tests/fixtures/editorial/false-compromise-calibration.json).
+
 ## Siglas e códigos na entrega
 
 Desde a orientação 3.2.2, o padrão é usar nomes descritivos. Códigos como T1,
@@ -139,9 +175,11 @@ o texto e não a apresente como prova de cobertura completa.
 O brief informa:
 
 ```yaml
-skill_version: "4.0.0"
+skill_version: "4.1.0"
 quality_contract: editorial-v1
+comprehension_contract: goldfish-v1
 evidence_contract: evidence-v1
+audience: "Arquitetos e engenheiros de plataforma responsáveis por operar AKS em produção"
 editorial_reviewer: reviewer-03-clarity
 pdf_engine: reportlab-v1
 deliverables:
@@ -246,13 +284,45 @@ registros reais. Os trechos abaixo são ilustrativos, não notas de uma entrega:
       "action": ""
     }
   ],
-  "findings": []
+  "findings": [],
+  "blind_paraphrase": {
+    "reader_context": {
+      "path": "reports/evidence/reader-context/composition-01-c01.json",
+      "sha256": "<sha256 real do reader-context congelado>"
+    },
+    "central_thesis": "O relatório compara os requests reais dos pods com a capacidade alocável dos node pools do AKS para recomendar redimensionamento seguro condicionado à validação prévia.",
+    "how_parts_connect": "A abertura define o recorte de capacidade alocável, o corpo demonstra a relação entre requests e reservas dos nós, e a conclusão vincula qualquer mudança em produção a uma etapa explícita de validação.",
+    "unconnected_sections": []
+  }
 }
 ```
 
 Todas as superfícies aplicáveis precisam de A ou A+. Apenas `captions` ausente
 pode ser justificada sem nota. Cada trecho deve existir no texto examinado;
 espaços e quebras de linha são normalizados para a conferência.
+
+### Isolamento Goldfish e Paráfrase às Cegas (`goldfish-v1`)
+
+A partir da versão `4.1.0` (`comprehension_contract: goldfish-v1`), o
+`editorial_reviewer` (`reviewer-*-clarity`) opera sob contexto zero dos
+bastidores:
+
+- **Sem acesso ao `brief.md`:** `brief.md` completo é entregue somente aos
+  revisores de fatos/decisão e ao `rubber-duck`. O `editorial_reviewer` é
+  despachado sempre por uma chamada nova de `task` (nunca `write_agent`),
+  recebendo apenas `reports/evidence/reader-context/<composition_id>-c<NN>.json`
+  (público-alvo conciso de uma linha, perfil editorial, mapa de IDs de tópicos e
+  hashes das entregas) e a candidata congelada;
+- **Paráfrase em palavras próprias (`blind_paraphrase`):** `central_thesis` e
+  `how_parts_connect` (30 a 2.500 caracteres cada, distintos entre si) não
+  podem copiar trechos literais da candidata (`gate.py` e `evidence.py` recusam
+  cópia verbatim com `exit 3`). Se uma seção exigir conhecimento oculto do
+  briefing para se conectar às demais, ela deve constar em
+  `unconnected_sections` acompanhada de achado `blocking`;
+- **Confronto pelo `rubber-duck` (`paraphrase_check`):** o auditor independente
+  compara `blind_paraphrase` com o `brief.md` real (`brief_sha256`). Quando
+  `matches_brief` é `false`, o auditor registra `critical: true` e um achado
+  `blocking`, vetando a entrega no gate.
 
 Achados não resolvidos também entram em `findings`:
 

@@ -14,7 +14,7 @@ de notas e relatório final.
 
 > **Fonte da verdade:** [`SKILL.md`](./SKILL.md)
 >
-> **Versão atual:** `4.0.0`
+> **Versão atual:** `4.1.0`
 >
 > **Histórico:** [`CHANGELOG.md`](./CHANGELOG.md)
 
@@ -57,9 +57,31 @@ de jargão com executivos nem substitui a especialidade dos autores.
 
 Não há agente novo: autores aplicam a diretriz, revisores existentes avaliam
 clareza, completude decisória e fatos, e o coordenador mantém a uniformidade.
+Em RFCs e arquiteturas prescritivas na Fase 0, bifurcações estruturais em aberto
+passam por até três caminhos arquiteturais neutros via `ask_user` (ou viram
+alternativas formais avaliadas no documento quando o usuário delega a escolha,
+sem travar em loop). Em `technical-report`/`textbook`, o `reviewer-*-decision`
+inclui auditoria de falsos compromissos com trava obrigatória de Passo 0 contra
+*over-engineering* (`"Nenhum falso compromisso detectado"` quando a arquitetura
+já está equilibrada) e declaração dos passivos operacionais secundários de cada
+padrão sugerido.
 Outros domínios adaptam o perfil no enquadramento, sem forçar conteúdo de nuvem.
 As regras e a distribuição por papel estão no
 [contrato editorial](./SKILL.md#21-perfil-editorial-técnico).
+
+Na versão 4.1 (`comprehension_contract: goldfish-v1`), o revisor editorial
+(`reviewer-*-clarity`) opera em isolamento Goldfish: é despachado em sessão
+`task` limpa sem ler o `brief.md` (recebendo apenas o `reader-context` sanitizado
+e a candidata congelada), registra uma paráfrase às cegas (`blind_paraphrase`)
+em palavras próprias da tese e da conexão entre as partes, e o `rubber-duck`
+confronta essa paráfrase contra o `brief.md` (`paraphrase_check`), vetando
+entregas cuja intenção real não se sustente pelo texto isolado. Para evitar que
+autores degradem o texto para agradar revisores equivocados ou travem por duas
+rodadas, `evidence.py resolution` também suporta `status: contested` (válido
+apenas com citação literal verificável na candidata ou no corpus, nunca `"foi
+intencional"` nem contra falha de clareza, julgado pelo `rubber-duck`) e
+`status: escalate` (aciona `ask_user` quando faltar decisão de negócio fora do
+corpus).
 
 Na versão 3.2, a revisão editorial é explícita e separada da diagramação:
 títulos, aberturas, corpo, legendas e conclusões recebem avaliação da redação.

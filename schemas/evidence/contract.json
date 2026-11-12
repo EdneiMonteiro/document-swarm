@@ -99,6 +99,15 @@
         "critical": {"type": "boolean"},
         "reviewed_reviewers": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
         "review_artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+        "paraphrase_check": {"$ref": "#/$defs/paraphrase_check"},
+        "contest_rulings": {"type": "array", "items": {"$ref": "#/$defs/contest_ruling"}},
+        "escalation_rulings": {"type": "array", "items": {"$ref": "#/$defs/escalation_ruling"}},
+        "editorial": {
+          "type": "object",
+          "properties": {
+            "blind_paraphrase": {"$ref": "#/$defs/blind_paraphrase"}
+          }
+        },
         "topics": {
           "type": "array", "minItems": 1,
           "items": {
@@ -139,6 +148,71 @@
             }
           }
         }
+      }
+    },
+    "blind_paraphrase": {
+      "type": "object",
+      "required": ["central_thesis", "how_parts_connect", "unconnected_sections"],
+      "additionalProperties": false,
+      "properties": {
+        "reader_context": {"$ref": "#/$defs/artifact"},
+        "central_thesis": {"type": "string", "minLength": 30, "maxLength": 2500},
+        "how_parts_connect": {"type": "string", "minLength": 30, "maxLength": 2500},
+        "unconnected_sections": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/text"}
+        }
+      }
+    },
+    "paraphrase_check": {
+      "type": "object",
+      "required": ["reviewer", "brief_sha256", "matches_brief", "justification"],
+      "additionalProperties": false,
+      "properties": {
+        "reviewer": {"$ref": "#/$defs/id"},
+        "brief_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "matches_brief": {"type": "boolean"},
+        "justification": {"type": "string", "minLength": 20, "maxLength": 3000}
+      }
+    },
+    "citation": {
+      "type": "object",
+      "required": ["target", "start", "end", "quote"],
+      "additionalProperties": false,
+      "properties": {
+        "target": {"$ref": "#/$defs/id"},
+        "start": {"type": "integer", "minimum": 1},
+        "end": {"type": "integer", "minimum": 1},
+        "quote": {"$ref": "#/$defs/text"}
+      }
+    },
+    "contest_ruling": {
+      "type": "object",
+      "required": ["finding", "target_reviewer", "verdict", "justification", "citations"],
+      "additionalProperties": false,
+      "properties": {
+        "finding": {"$ref": "#/$defs/id"},
+        "target_reviewer": {"$ref": "#/$defs/id"},
+        "verdict": {"enum": ["upheld", "rejected"]},
+        "justification": {"type": "string", "minLength": 20, "maxLength": 3000},
+        "citations": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"$ref": "#/$defs/citation"}},
+        "overturned_topics": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "overturned_claims": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "overturned_blocks": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}
+      }
+    },
+    "escalation_ruling": {
+      "type": "object",
+      "required": ["finding", "target_reviewer", "verdict", "justification"],
+      "additionalProperties": false,
+      "properties": {
+        "finding": {"$ref": "#/$defs/id"},
+        "target_reviewer": {"$ref": "#/$defs/id"},
+        "verdict": {"enum": ["accepted_out_of_band", "rejected"]},
+        "justification": {"type": "string", "minLength": 20, "maxLength": 3000},
+        "overturned_topics": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}
       }
     }
   }

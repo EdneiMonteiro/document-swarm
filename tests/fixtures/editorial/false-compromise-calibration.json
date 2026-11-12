@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "profile": "technical-report",
+  "purpose": "Casos anotados de calibração para a auditoria de falsos compromissos em reviewer-*-decision (technical-report/textbook) e para o gate neutro de bifurcações arquiteturais na Fase 0. Não são um detector automatizado de arquitetura.",
+  "excluded_modes": ["magazine", "book", "almanac"],
+  "step_zero_sentinel": "Nenhum falso compromisso detectado",
+  "phase_zero_gate": {
+    "max_options": 3,
+    "neutral_presentation": true,
+    "forbid_recommended_badge": true,
+    "delegation_escape": "convert_to_formal_compared_alternatives_without_looping"
+  },
+  "cases": [
+    {
+      "id": "balanced-monolith-step-zero",
+      "topic": "T01",
+      "constraint_kind": "explicit_brief_budget_and_team_invariant",
+      "passage": "O serviço opera em instância única com PostgreSQL gerenciado e réplica síncrona zonada, atendendo ao pico medido de 40 req/s dentro do teto mensal fixado no brief.",
+      "expected_step_zero": "Nenhum falso compromisso detectado: o limite decorre do teto operacional e do volume medido de 40 req/s registrados no brief, sem acoplamento que invalide os requisitos.",
+      "expected_grade": "A",
+      "expected_severity": null,
+      "overengineering_review": {
+        "reviewer": "reviewer-02-decision",
+        "grade": "B+",
+        "justification": "Acoplamento síncrono no banco limita escala futura; introduzir barramento Kafka, sidecar e CQRS.",
+        "action": "Redesenhar com Kafka, outbox e projeções assíncronas.",
+        "rubberduck_challenge": "Violação do Passo 0 da auditoria de falsos compromissos: a arquitetura atende aos 40 req/s e ao teto do brief sem contradição real; rebaixamento especulativo devolvido ao reviewer-02-decision sem substituição silenciosa de nota."
+      }
+    },
+    {
+      "id": "peripheral-export-coupling-minor",
+      "topic": "T01",
+      "constraint_kind": "peripheral_avoidable_coupling",
+      "passage": "A geração mensal do relatório CSV administrativo compartilha o pool de conexões principal fora da janela comercial.",
+      "expected_step_zero": "Acoplamento periférico identificado na exportação mensal; não invalida a recomendação arquitetural central.",
+      "expected_grade": "A",
+      "expected_severity": "minor",
+      "proposed_pattern": "Extraction / pool segregado de leitura ou réplica analítica sob demanda",
+      "secondary_liabilities": "Configuração adicional de credenciais/pool e eventual defasagem de segundos caso use réplica de leitura."
+    },
+    {
+      "id": "core-throughput-durability-false-dilemma",
+      "topic": "T01",
+      "constraint_kind": "core_false_compromise",
+      "before": "Para sustentar 2.500 pedidos/s no checkout, a API publica o evento diretamente no broker antes do commit e aceita perda ou fantasma de mensagens em falhas de rede como custo inevitável de vazão.",
+      "before_grade": "B+",
+      "before_severity": "blocking",
+      "before_reason": "Trata como dilema inevitável entre vazão e durabilidade um acoplamento resolvível no caminho crítico de pedidos.",
+      "proposed_pattern": "Intermediary + Transactional Outbox com relay assíncrono em lote",
+      "secondary_liabilities": "Consistência eventual na publicação downstream, exigência de consumidores idempotentes por chave de negócio e monitoramento de atraso da tabela outbox.",
+      "incomplete_after_missing_liabilities": "A API grava o pedido e o evento na mesma transação local usando Transactional Outbox com relay em lote, eliminando perda de mensagens.",
+      "incomplete_after_grade": "B+",
+      "after": "A API grava o pedido e o registro de outbox na mesma transação ACID local, e um worker de relay publica em lote no broker com confirmação at-least-once. Esse desenho preserva vazão e durabilidade transacional, introduzindo como passivos operacionais secundários a consistência eventual para consumidores downstream, a obrigatoriedade de idempotência por chave do pedido e o monitoramento de retenção/atraso do outbox.",
+      "after_grade": "A"
+    }
+  ]
+}

@@ -26,7 +26,11 @@ arquitetura, preservando a coerência do documento.
 ### Enquadramento
 
 A skill confirma objetivo, público, extensão, frameworks, idioma e limites
-antes de registrar o brief. Para este cenário, as escolhas poderiam ser:
+antes de registrar o brief. Escolhas mecânicas omitidas recebem padrão sensato;
+já bifurcações arquiteturais prescritivas em aberto passam por até três caminhos
+neutros via `ask_user` (ou entram como alternativas formais a comparar no
+documento quando o usuário delega a recomendação). Para este cenário, as
+escolhas poderiam ser:
 
 | Campo | Escolha ilustrativa |
 |---|---|
