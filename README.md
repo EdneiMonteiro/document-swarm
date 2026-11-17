@@ -1,7 +1,7 @@
 # Document Swarm 🐝
 
 [![ORCID](https://img.shields.io/badge/ORCID-0009--0006--0765--4201-A6CE39?logo=orcid&logoColor=white)](https://orcid.org/0009-0006-0765-4201)
-[![License: CC BY 4.0](https://img.shields.io/badge/License-CC%20BY%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![GitHub Copilot CLI](https://img.shields.io/badge/GitHub%20Copilot-CLI%20Skill-000000?logo=githubcopilot&logoColor=white)](https://github.com/github/copilot-cli)
 [![Last commit](https://img.shields.io/github/last-commit/EdneiMonteiro/document-swarm)](https://github.com/EdneiMonteiro/document-swarm/commits)
 
@@ -444,5 +444,6 @@ Mudanças em `SKILL.md` devem atualizar `CHANGELOG.md`. Veja
 
 ## Licença e suporte
 
-Distribuído sob [CC BY 4.0](./LICENSE). Consulte
-[`DISCLAIMER.md`](./DISCLAIMER.md) e [`SUPPORT.md`](./SUPPORT.md).
+Distribuído sob a [licença MIT](./LICENSE) (as fontes incluídas sem modificação
+em `scripts/pdf/fonts/` preservam sua licença original SIL Open Font License
+1.1). Consulte [`DISCLAIMER.md`](./DISCLAIMER.md) e [`SUPPORT.md`](./SUPPORT.md).
