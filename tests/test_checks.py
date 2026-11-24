@@ -526,6 +526,51 @@ class LintAgentsTests(WorkTest):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_backport_effort_intra_family_fallback_and_rubberduck_json_consolidation(self):
+        swarm = self.work / "SWARM_BP"
+        (swarm / "agents").mkdir(parents=True)
+        (swarm / "output").mkdir(parents=True)
+        (swarm / "reports").mkdir(parents=True)
+        cross_fb = swarm / "agents" / "bad.md"
+        cross_fb.write_text(
+            "---\nname: r1\nkind: reviewer\nmodel: gemini-4-hydrogen\n"
+            "fallback_model: gpt-5.3-codex\nreasoning_effort: low\nswarm: SWARM_BP\n---\n",
+            encoding="utf-8",
+        )
+        self.assertTrue(any("fallback_model" in err for err in lint_agents.lint([cross_fb])))
+        cross_fb.write_text(
+            "---\nname: r1\nkind: reviewer\nmodel: gemini-4-hydrogen\n"
+            "fallback_model: gemini-3.8-flash\nreasoning_effort: low\nswarm: SWARM_BP\n---\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(lint_agents.lint([cross_fb]), [])
+
+        (swarm / "brief.md").write_text(
+            "---\nswarm_id: SWARM_BP\nskill_version: \"3.6.0\"\nmode: document\n"
+            "topics:\n  T01: \"Cache\"\ndeliverables:\n  - output/doc.md\n---\n# Brief\n",
+            encoding="utf-8",
+        )
+        (swarm / "output" / "doc.md").write_text("# Doc\n\nTexto.\n", encoding="utf-8")
+        (swarm / "reports" / "cycle-01-reviewer-01.json").write_text(
+            json.dumps({
+                "schema_version": 1, "cycle": 1, "reviewer": "reviewer-01",
+                "topics": {"T01": {"grade": "A", "justification": "Ok", "action": ""}},
+            }),
+            encoding="utf-8",
+        )
+        (swarm / "reports" / "cycle-01-swarm-rubber-duck.json").write_text(
+            json.dumps({
+                "schema_version": 1, "cycle": 1, "reviewer": "swarm-rubber-duck",
+                "critico": True, "achados": ["Faltou exemplo"],
+            }),
+            encoding="utf-8",
+        )
+        cycle_artifacts.assemble(swarm, 1)
+        consolidated = cycle_artifacts.consolidate(swarm, 1)
+        self.assertTrue(consolidated["rubberduck"]["critico"])
+        self.assertEqual(consolidated["rubberduck"]["achados"], ["Faltou exemplo"])
+        self.assertTrue((swarm / "reports" / "cycle-01-rubberduck.md").is_file())
+
 
 class DocumentScopeTests(unittest.TestCase):
     def test_templates_and_review_modes_are_document_only(self):

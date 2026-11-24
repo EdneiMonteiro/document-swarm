@@ -668,7 +668,7 @@ class EditorialTests(unittest.TestCase):
     def test_goldfish_isolation_and_blind_paraphrase_materialized_in_skill_templates(self):
         skill_text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         meta = frontmatter_text(skill_text)
-        self.assertEqual(meta.get("skill_version"), "4.1.0")
+        self.assertEqual(meta.get("skill_version"), "4.2.0")
         self.assertIn("comprehension_contract: goldfish-v1", skill_text)
         self.assertIn("blind_paraphrase", skill_text)
         self.assertIn("paraphrase_check", skill_text)
