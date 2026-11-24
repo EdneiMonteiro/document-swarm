@@ -855,6 +855,11 @@ def register(swarm: Path, kind: str, key: str, path: str | None = None,
                     expected = [find(history, "review", f"{key}:{r}")["artifact"] for r in policy["reviewers"]]
                     if refs != expected:
                         raise InputError("auditor must bind the actual original reviewer files")
+                resp_snap_rel = f"reports/evidence/responses/{key}/{PurePosixPath(src_artifact['path']).name}"
+                resp_snap_path = inside(root, resp_snap_rel)
+                if not resp_snap_path.is_file():
+                    resp_snap_path.parent.mkdir(parents=True, exist_ok=True)
+                    resp_snap_path.write_bytes(file_bytes(root, src_artifact["path"]))
                 event_id = f"{key}:{reviewer}"
             else:
                 event_id = verify_resolution(root, history, key, data, policy)
@@ -1300,7 +1305,22 @@ def verify_delivery(data: dict[str, Any], swarm: Path) -> dict[str, Any]:
                 blocked.append({"kind": "evidence", "name": "blind_paraphrase_mismatch", "grade": ""})
         # Validate historical original records, but not their obsolete delivery files.
         for row in history:
-            if row["kind"] in {"inventory", "review", "resolution"}:
+            if row["kind"] == "review":
+                art = row["data"]["artifact"]
+                row_cand_id = row["id"].split(":", 1)[0]
+                if row_cand_id == key:
+                    checked(root, art)
+                else:
+                    try:
+                        checked(root, art)
+                    except InputError:
+                        archived = {
+                            "path": f"reports/evidence/responses/{row_cand_id}/{PurePosixPath(art['path']).name}",
+                            "sha256": art["sha256"],
+                        }
+                        if object_file(root, archived) != row["data"]["record"]:
+                            raise InputError("review record differs from original response")
+            elif row["kind"] in {"inventory", "resolution"}:
                 checked(root, row["data"]["artifact"])
                 if row["kind"] == "resolution" and object_file(root, row["data"]["artifact"]) != row["data"]["record"]:
                     raise InputError("resolution record differs from original artifact")

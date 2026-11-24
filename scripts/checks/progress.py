@@ -18,6 +18,7 @@ from scripts.checks.gate import GRADE_INDEX, SCALE, evaluate, evaluate_current, 
 from scripts.checks.lint_agents import frontmatter_text
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
+MAX_LEDGER_EXPORT_BYTES = 32 * 1024 * 1024
 MAX_ARTIFACTS = 1000
 KINDS = {"author", "reviewer", "coordinator", "rubber-duck"}
 
@@ -26,11 +27,16 @@ def bounded_file(root: Path, path: Path) -> bytes:
     resolved = path.resolve()
     if resolved != root and root not in resolved.parents:
         raise InputError(f"artifact escapes swarm: {path.name}")
-    if not resolved.is_file() or resolved.stat().st_size > MAX_FILE_BYTES:
+    limit = (
+        MAX_LEDGER_EXPORT_BYTES
+        if resolved == (root / "reports/evidence/events.json").resolve()
+        else MAX_FILE_BYTES
+    )
+    if not resolved.is_file() or resolved.stat().st_size > limit:
         raise InputError(f"artifact is missing or exceeds size limit: {path.name}")
     with resolved.open("rb") as stream:
-        raw = stream.read(MAX_FILE_BYTES + 1)
-    if len(raw) > MAX_FILE_BYTES:
+        raw = stream.read(limit + 1)
+    if len(raw) > limit:
         raise InputError(f"artifact exceeds size limit: {path.name}")
     return raw
 
@@ -128,7 +134,15 @@ def snapshot(swarm: Path) -> dict[str, Any]:
             for row in history:
                 if row["kind"] == "candidate":
                     evidence_artifacts.add(root / row["data"]["manifest"]["path"])
-                elif row["kind"] in {"inventory", "review", "resolution"}:
+                elif row["kind"] == "review":
+                    art_path = root / row["data"]["artifact"]["path"]
+                    row_cand_id = row["id"].split(":", 1)[0]
+                    archived_path = root / "reports/evidence/responses" / row_cand_id / art_path.name
+                    if archived_path.is_file():
+                        evidence_artifacts.add(archived_path)
+                    if art_path.is_file():
+                        evidence_artifacts.add(art_path)
+                elif row["kind"] in {"inventory", "resolution"}:
                     evidence_artifacts.add(root / row["data"]["artifact"]["path"])
         except (InputError, OSError, UnicodeError, ValueError) as exc:
             result["evidence"] = {"status": "invalid", "error": str(exc)}

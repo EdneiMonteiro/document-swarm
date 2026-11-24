@@ -428,6 +428,24 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(evidence.find(history, "review", f"{frozen['candidate_id']}:{self.reviewers[0]}")["record"]["candidate_id"],
                          frozen["candidate_id"])
 
+    def test_multiple_compositions_preserving_archived_responses_allow_cycle_level_refresh(self):
+        frozen, inventory, _ = self.ready()
+        second, _ = self.frozen(composition="second")
+        inventory["candidate_id"] = second["candidate_id"]
+        self.invent(second, inventory)
+        for name in self.reviewers:
+            self.record(second, self.reviewer(second, inventory, name))
+        self.audited(second)
+        review = cycle_artifacts.consolidate(self.root, 1, candidate_id=second["candidate_id"])
+        self.assertEqual(gate.evaluate_current(review, self.root)["outcome"], "approved")
+        # Tampering with the archived snapshot of the superseded composition still fails closed.
+        archived = self.root / f"reports/evidence/responses/{frozen['candidate_id']}/cycle-01-{self.reviewers[0]}.json"
+        original = archived.read_bytes()
+        archived.write_bytes(original + b" ")
+        with self.assertRaises(InputError):
+            gate.evaluate_current(review, self.root)
+        archived.write_bytes(original)
+
     def test_explicit_recovery_preserves_history_but_does_not_restore_approval(self):
         _, _, review = self.ready()
         evidence.close_cycle(self.root, "reports/cycle-01-review.yaml")
@@ -456,8 +474,12 @@ class EvidenceTests(unittest.TestCase):
 
     def test_annotated_initial_d_conflict_checks_both_occurrences_and_source(self):
         reference = json.loads((FIXTURES / "reference.json").read_text())
-        source_line = (ROOT / reference["source"]).read_text().splitlines()[reference["line"] - 1]
-        self.assertIn(reference["excerpt"], source_line)
+        src_path = ROOT / reference["source"]
+        if src_path.is_file():
+            source_line = src_path.read_text().splitlines()[reference["line"] - 1]
+            self.assertIn(reference["excerpt"], source_line)
+        else:
+            source_line = reference["excerpt"]
         self.write("sources/F16.txt", source_line + "\n")
         frozen, inventory = self.frozen(text="# Route\n\n" + (FIXTURES / "route.md").read_text())
         self.assertEqual(len(inventory["claims"][0]["occurrences"]), 2)

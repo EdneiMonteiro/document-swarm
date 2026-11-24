@@ -1305,7 +1305,7 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
         elif block.kind == "toc":
             toc = TableOfContents()
             toc_font = profile.body_font if profile.name == "book" else "DSBody"
-            toc.levelStyles = [ParagraphStyle("toc", fontName=toc_font, fontSize=9.8 if is_a5 else 11.3, leading=14.8 if is_a5 else 17.5, textColor=INK, rightIndent=22 if is_a5 else 28, spaceBefore=5 if is_a5 else 7, spaceAfter=4 if is_a5 else 5)]
+            toc.levelStyles = [ParagraphStyle("toc", fontName=toc_font, fontSize=9.4 if is_a5 else 11.3, leading=13.5 if is_a5 else 17.5, textColor=INK, rightIndent=22 if is_a5 else 28, spaceBefore=3.5 if is_a5 else 7, spaceAfter=3.0 if is_a5 else 5)]
             orig_toc_split = toc.split
 
             def _tracked_toc_split(availWidth, availHeight, _orig=orig_toc_split, _bid=block.id):
@@ -1343,8 +1343,13 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                             opener_label = "Abertura do Epílogo"
                         else:
                             opener_label = f"Abertura do Capítulo {chap_idx}"
-                        cap_txt = (b_item.spec or {}).get("caption") or opener_label
-                        short_cap = cap_txt.split(":")[0].strip() if ":" in cap_txt else cap_txt[:68]
+                        cap_txt = (b_item.spec or {}).get("title") or (b_item.spec or {}).get("caption") or opener_label
+                        if ":" in cap_txt:
+                            short_cap = cap_txt.split(":")[0].strip()
+                        elif "." in cap_txt and len(cap_txt.split(".")[0].strip()) <= 85:
+                            short_cap = cap_txt.split(".")[0].strip()
+                        else:
+                            short_cap = cap_txt.strip()
                         plate_entries.append((f"Prancha {chap_idx:02d}", f"{opener_label}: {short_cap}"))
                     elif b_item.kind == "figure" and (b_item.spec or {}).get("kind") == "image" and (b_item.spec or {}).get("title"):
                         plate_entries.append(("Ilustração", str(b_item.spec["title"])))

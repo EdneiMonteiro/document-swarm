@@ -833,7 +833,7 @@ objeto `regression` no item rebaixado:
   "regression": {
     "cause": "text_changed_regression",
     "quote": "explicam a quase totalidade das falhas de plano de dados",
-    "previous_quote": "tratam 52,18% dos eventos 5xx de apim-sinbm-prd",
+    "previous_quote": "tratam 52,18% dos eventos 5xx de apim-payments-prd",
     "evidence": "O parágrafo foi reescrito no ciclo atual e trocou o percentual medido por generalização."
   }
 }

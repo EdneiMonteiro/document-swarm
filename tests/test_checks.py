@@ -191,17 +191,17 @@ class VerifyTablesTests(WorkTest):
             '<!-- check: refs source="inv" column="Ação" pattern="apim-[a-z0-9-]+" -->\n'
             "| Código | Ação |\n"
             "| --- | --- |\n"
-            "| P06 | Revisar apim-sinbm-prd e apim-hab-prd |\n\n"
+            "| P06 | Revisar apim-payments-prd e apim-core-prd |\n\n"
             '<!-- check: rows id="inv" count=2 key=1 pattern="apim-[a-z0-9-]+" unique=true -->\n'
             "| Instância | SKU |\n"
             "| --- | --- |\n"
-            "| 1. apim-sinbm-prd | Premium |\n"
-            "| 2. apim-hab-prd | Premium |\n\n"
+            "| 1. apim-payments-prd | Premium |\n"
+            "| 2. apim-core-prd | Premium |\n\n"
             '<!-- check: match_keys source="inv" column=1 -->\n'
             "| Instância | Ação |\n"
             "| --- | --- |\n"
-            "| 1. apim-sinbm-prd | Manter |\n"
-            "| 2. apim-hab-prd | Migrar |\n",
+            "| 1. apim-payments-prd | Manter |\n"
+            "| 2. apim-core-prd | Migrar |\n",
             encoding="utf-8",
         )
         passed = verify_tables.check_file(document)
@@ -212,35 +212,35 @@ class VerifyTablesTests(WorkTest):
             '<!-- check: refs source="inv" column="Ação" pattern="apim-[a-z0-9-]+" -->\n'
             "| Código | Ação |\n"
             "| --- | --- |\n"
-            "| P08 | Redimensionar apim-sinbm-prd e apim-cartao-prd |\n\n"
+            "| P08 | Redimensionar apim-payments-prd e apim-orders-prd |\n\n"
             '<!-- check: rows id="inv" count=2 key=1 pattern="apim-[a-z0-9-]+" unique=true -->\n'
             "| Instância | SKU |\n"
             "| --- | --- |\n"
-            "| 1. apim-sinbm-prd | Premium |\n"
-            "| 2. apim-hab-prd | Premium |\n\n"
+            "| 1. apim-payments-prd | Premium |\n"
+            "| 2. apim-core-prd | Premium |\n\n"
             '<!-- check: match_keys source="inv" column=1 -->\n'
             "| Instância | Ação |\n"
             "| --- | --- |\n"
-            "| 1. apim-sinbm-prd | Manter |\n"
-            "| 2. apim-fundos-prd | Migrar |\n",
+            "| 1. apim-payments-prd | Manter |\n"
+            "| 2. apim-catalog-prd | Migrar |\n",
             encoding="utf-8",
         )
         failed = verify_tables.check_file(bad)
         self.assertEqual(failed["failures"], 2)
-        self.assertEqual(failed["checks"][0]["mismatches"][0]["unknown_refs"], ["apim-cartao-prd"])
-        self.assertEqual(failed["checks"][2]["mismatches"][0]["unknown_keys"], ["apim-fundos-prd"])
+        self.assertEqual(failed["checks"][0]["mismatches"][0]["unknown_refs"], ["apim-orders-prd"])
+        self.assertEqual(failed["checks"][2]["mismatches"][0]["unknown_keys"], ["apim-catalog-prd"])
 
     def test_external_json_validates_inventory_counts_against_raw_json(self):
         raw_json = self.work / "services-analysis.json"
         raw_json.write_text(
             json.dumps([
                 {
-                    "name": "apim-siacx-des",
+                    "name": "apim-gateway-dev",
                     "backends": [{"id": i} for i in range(13)],
                     "namedValues": [{"secret": True}] * 2,
                 },
                 {
-                    "name": "apim-sinbm-prd",
+                    "name": "apim-payments-prd",
                     "backends": [],
                     "namedValues": [{"secret": True}] * 4 + [{"secret": False}] * 5,
                 },
@@ -252,8 +252,8 @@ class VerifyTablesTests(WorkTest):
             '<!-- check: external_json file="services-analysis.json" key=1 json_key="name" pattern="apim-[a-z0-9-]+" map="objetos Backend:len(backends);Named Values secretos:count(namedValues,secret=true)" -->\n'
             "| Instância | Ação |\n"
             "| --- | --- |\n"
-            "| 44. apim-siacx-des | Implantar circuitBreaker nos 13 objetos Backend |\n"
-            "| 60. apim-sinbm-prd | Migrar 4 Named Values secretos para Key Vault |\n",
+            "| 44. apim-gateway-dev | Implantar circuitBreaker nos 13 objetos Backend |\n"
+            "| 60. apim-payments-prd | Migrar 4 Named Values secretos para Key Vault |\n",
             encoding="utf-8",
         )
         self.assertEqual(verify_tables.check_file(good_doc)["failures"], 0)
@@ -263,8 +263,8 @@ class VerifyTablesTests(WorkTest):
             '<!-- check: external_json file="services-analysis.json" key=1 json_key="name" pattern="apim-[a-z0-9-]+" map="objetos Backend:len(backends);Named Values secretos:count(namedValues,secret=true)" -->\n'
             "| Instância | Ação |\n"
             "| --- | --- |\n"
-            "| 44. apim-siacx-des | Implantar circuitBreaker nos 5 objetos Backend |\n"
-            "| 60. apim-sinbm-prd | Migrar 6 Named Values secretos para Key Vault |\n",
+            "| 44. apim-gateway-dev | Implantar circuitBreaker nos 5 objetos Backend |\n"
+            "| 60. apim-payments-prd | Migrar 6 Named Values secretos para Key Vault |\n",
             encoding="utf-8",
         )
         bad_report = verify_tables.check_file(bad_doc)
