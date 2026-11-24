@@ -5,6 +5,17 @@ All notable changes to this skill are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the skill uses semantic versioning for behavior changes in `SKILL.md`.
 
+## [4.2.0] - 2026-11-24
+
+### Added
+
+- **Model Effort Calibration & Intra-Family Fallback (`scripts/checks/lint_agents.py`, `SKILL.md`)**: validates `reasoning_effort` (`low|medium|high|xhigh|max`), enforces same-family `fallback_model` parity (e.g. `gemini-4-hydrogen`, `grok-4.6`), and checks `--available-tools` compatibility (`apply_patch` for Codex models).
+- **Parallel Audit DAG & Zero-LLM Markdown Rendering (`scripts/checks/cycle_artifacts.py`)**: `consolidate()` automatically ingests `reports/cycle-NN-*rubber-duck.json` alongside reviewer JSONs and renders Markdown views with zero LLM tokens, enabling simultaneous parallel execution of reviewers and `swarm-rubber-duck` without duplicate `.md` generation.
+
+### Fixed
+
+- **Embedded Font in PDF Tables & Bullets (`scripts/pdf/render.py`)**: explicitly binds `("FONTNAME", (0, 0), (-1, -1), ...)` on all ReportLab `TableStyle` blocks and `bulletFontName` in `styles()`, eliminating `unembedded_fonts: page 1: /F1` failures on documents with tables or bullet lists.
+
 ## [4.1.0] - 2026-11-12
 
 ### Added

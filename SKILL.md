@@ -1,6 +1,6 @@
 ---
 name: document-swarm
-skill_version: "4.1.0"
+skill_version: "4.2.0"
 description: "Use ONLY when the user explicitly asks for a document swarm (e.g., 'use document-swarm', 'monte um swarm', 'rode o doc-swarm') or explicitly wants a full multi-agent swarm cycle with deterministic gates. Do NOT invoke automatically for ordinary document reviews, edits, modifications, summaries, or single-pass writing. If loaded on a request that did not explicitly ask for a swarm, your FIRST action MUST be to ask the user via ask_user whether to use Document Swarm or handle the task directly without it."
 ---
 
@@ -546,6 +546,13 @@ existente, procure `reports/resume.json` antes de qualquer outra coisa:
 
 A projeção segue o contrato do ciclo descrito na Fase 3. Mudanças nesse contrato
 exigem atualizar `resume.py` junto.
+
+### 2.7. Perfis Calibrados de Modelos e DAG Paralelo (`v4.2.0`)
+
+- **Calibragem de `reasoning_effort` e `fallback_model` intra-família (`lint_agents.py`)**:
+  sempre propagar `reasoning_effort` explicitamente em `task()` (`low` em revisores estruturados JSON, `swarm-rubber-duck` e coordenador leve; `low`/`medium` em autores curtos) e declarar `fallback_model` da **mesma família** (ex.: `gemini-4-hydrogen` p/ `gemini-4-carbon`, `grok-4.6` p/ `grok-4.7`) para evitar filas sem quebrar o isolamento multi-família. No CLI, usar `swarm-rubber-duck` para não colidir com o agente embutido `rubber-duck`.
+- **Relatórios apenas em JSON + DAG Paralelo**:
+  revisores e `swarm-rubber-duck` gravam **somente** `reports/cycle-NN-<name>.json` (sem `.md` duplicado manual: `cycle_artifacts.py consolidate` renderiza todas as visões `.md` e incorpora `cycle-NN-swarm-rubber-duck.json` com zero tokens LLM), permitindo despachar revisores e `swarm-rubber-duck` **simultaneamente em paralelo na Onda 2** após `cycle_artifacts.py assemble --from-sections`.
 
 ## 3. Convenções de caminho e versão
 

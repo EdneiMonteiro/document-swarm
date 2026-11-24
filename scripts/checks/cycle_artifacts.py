@@ -873,6 +873,13 @@ def consolidate(
         if "cycle" not in report:
             report["cycle"] = cycle
         reviewer = str(report.get("reviewer") or "")
+        raw_topics = report.get("topics", [])
+        if isinstance(raw_topics, dict):
+            report["topics"] = [
+                dict(val, topic=str(key))
+                for key, val in raw_topics.items()
+                if isinstance(val, dict)
+            ]
         for item in report.get("topics", []):
             if isinstance(item, dict):
                 if "topic" not in item and "id" in item:
@@ -893,6 +900,8 @@ def consolidate(
             for surf in ed_obj.get("surfaces", []):
                 if not isinstance(surf, dict):
                     continue
+                if "justification" not in surf and "critique" in surf:
+                    surf["justification"] = surf.pop("critique")
                 nested_findings = surf.pop("findings", [])
                 if isinstance(nested_findings, list):
                     for nf in nested_findings:
@@ -1037,7 +1046,36 @@ def consolidate(
     )
     has_blockers = any(item["bloqueia"] for item in consolidated_topics) or bool(ed_blocked)
     duck_md_path = reports_dir / f"cycle-{cycle:02d}-rubberduck.md"
-    if has_blockers and not require_rubberduck:
+    duck_json_candidates = [
+        reports_dir / f"cycle-{cycle:02d}-swarm-rubber-duck.json",
+        reports_dir / f"cycle-{cycle:02d}-rubber-duck.json",
+        reports_dir / f"cycle-{cycle:02d}-rubberduck.json",
+    ]
+    duck_json_path = next((cand for cand in duck_json_candidates if cand.is_file()), None)
+    if duck_json_path is not None:
+        duck_raw = json.loads(duck_json_path.read_text(encoding="utf-8"))
+        if not isinstance(duck_raw, dict):
+            raise InputError(f"invalid rubber-duck JSON report {duck_json_path.name}")
+        duck_entry: dict[str, Any] = {
+            "critico": bool(duck_raw.get("critico") or duck_raw.get("critical")),
+            "achados": list(duck_raw.get("achados") or duck_raw.get("findings") or []),
+        }
+        if isinstance(duck_raw.get("paraphrase_check"), dict):
+            pc = dict(duck_raw["paraphrase_check"])
+            brief_file = root / "brief.md"
+            if brief_file.is_file() and not pc.get("brief_sha256"):
+                pc["brief_sha256"] = sha256_file(brief_file)
+            duck_entry["paraphrase_check"] = pc
+        review_data["rubberduck"] = duck_entry
+        if not duck_md_path.is_file():
+            achados_md = "\n".join(f"- {a}" for a in duck_entry["achados"]) or "- Nenhum achado bloqueante."
+            duck_md_path.write_text(
+                f"# Parecer do rubber duck — Ciclo {cycle}\n\n"
+                f"- **Crítico:** {'Sim' if duck_entry['critico'] else 'Não'}\n\n"
+                f"## Achados\n\n{achados_md}\n",
+                encoding="utf-8",
+            )
+    elif has_blockers and not require_rubberduck:
         review_data["rubberduck"] = {
             "critico": False,
             "achados": [],

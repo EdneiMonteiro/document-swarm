@@ -961,7 +961,7 @@ def styles(profile: Profile):
     body_font = profile.body_font
 
     def style(name, font, size, leading, **kwargs):
-        options = {"textColor": INK, **kwargs}
+        options = {"textColor": INK, "bulletFontName": font, **kwargs}
         return ParagraphStyle(name, fontName=font, fontSize=size, leading=leading, **options)
     return {
         "paragraph": style("body", body_font, profile.body_size, profile.leading, alignment=TA_JUSTIFY, justifyLastLine=0, spaceAfter=profile.paragraph_space),
@@ -1260,6 +1260,7 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                     splitByRow=1, splitInRow=0, element_id=blurb_table_id, element_kind="back-cover-blurbs",
                 )
                 b_table.setStyle(TableStyle([
+                    ("FONTNAME", (0, 0), (-1, -1), profile.body_font),
                     ("LINEABOVE", (0, 0), (-1, 0), 0.8, accent),
                     ("LINEBELOW", (0, -1), (-1, -1), 0.8, accent),
                     ("LEFTPADDING", (0, 0), (-1, -1), 8),
@@ -1457,6 +1458,7 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                 splitByRow=1, splitInRow=0, element_id=block.id, element_kind="pullquote",
             )
             pq_table.setStyle(TableStyle([
+                ("FONTNAME", (0, 0), (-1, -1), profile.body_font),
                 ("NOSPLIT", (0, 0), (-1, -1)),
                 ("BACKGROUND", (0, 0), (-1, -1), box_bg),
                 ("LINEABOVE", (0, 0), (-1, 0), 2.0, accent),
@@ -1498,6 +1500,7 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                 splitByRow=1, splitInRow=0, element_id=block.id, element_kind="callout",
             )
             co_table.setStyle(TableStyle([
+                ("FONTNAME", (0, 0), (-1, -1), profile.body_font),
                 ("NOSPLIT", (0, 0), (-1, -1)),
                 ("BACKGROUND", (0, 0), (-1, -1), box_bg),
                 ("LINEBEFORE", (0, 0), (0, -1), 3.5, tone_color),
@@ -1538,6 +1541,7 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                 element_id=block.id, element_kind="factbox",
             )
             fb_table.setStyle(TableStyle([
+                ("FONTNAME", (0, 0), (1, -1), profile.body_font),
                 ("SPAN", (0, 0), (1, 0)),
                 ("BACKGROUND", (0, 0), (1, 0), accent),
                 ("ROWBACKGROUNDS", (0, 1), (1, -1), [colors.white, box_bg]),
@@ -1614,6 +1618,7 @@ def compose(document: Document, destination: Path, profile_name: str, language: 
                     col_widths[c] += rem * (col_weights[c] / total_w)
             table = TrackedTable(cells, colWidths=col_widths, repeatRows=1, hAlign="LEFT", splitByRow=1, splitInRow=0, element_id=f"{block.id}-layout")
             table_rules = [
+                ("FONTNAME", (0, 0), (-1, -1), "DSBody"),
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(profile.accent_hex)),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor(profile.box_bg_hex)]),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
